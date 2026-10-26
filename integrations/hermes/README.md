@@ -1,113 +1,189 @@
 # Pallium for Hermes
 
-This is a frozen, disposable-profile qualification package for Hermes v0.22.2. It installs a native Hermes plugin, the discoverable `pallium-memory` skill, and the plugin-owned Pallium MCP bridge. Setup never creates a global `mcp_servers` connection and does not modify model/provider, toolset, Tool Search, other plugin, credential, or data settings.
+Install Pallium's native Hermes plugin, bundled `pallium-memory` skill and
+plugin-owned MCP bridge into an explicit profile. Relay and Session History are
+enabled by default; memory tools are optional. Setup preserves provider,
+toolset, Tool Search, other plugin, credential and data settings and creates no
+global `mcp_servers` entry.
 
-## Prepare an isolated profile
+See the [Hermes integration guide](../../docs/hermes-integration.md) for the
+capability overview and supported behavior.
 
-The setup command requires an existing explicit profile with the qualification settings already present. It refuses to repair or silently change them. The selected profile must have no other enabled plugin, select only the existing `hermes-cli` toolset, use a loopback custom provider with no fallback, and set Tool Search to the string value `"off"`:
+## Capabilities
 
-```yaml
-plugins:
-  enabled: []
-platform_toolsets:
-  cli: [hermes-cli]
-tools:
-  tool_search:
-    enabled: "off"
-model:
-  default: probe-model
-  provider: custom
-  base_url: http://127.0.0.1:57089/v1
-  api_key: local-stub
-  api_mode: chat_completions
-fallback_providers: []
-```
+The package supplies Relay, private Session History, a discoverable skill and
+profile-scoped tools. Memory tools are optional, with no automatic injection.
+Use the [integration guide](../../docs/hermes-integration.md) for the everyday
+workflow and the shared [delivery table](../../docs/agent-relay.md#delivery-and-wake-behavior)
+for a comparison with other hosts. This page is the package command reference.
 
-Use only a disposable `HERMES_HOME`, a loopback Pallium service, and a local provider stub. The installer calls the public Hermes config writer in the selected `--hermes-python` interpreter and refuses incompatible or unreadable profile config before touching package files.
+## Prerequisites
 
-Run setup and removal only while the target Hermes host and other profile config
-writers are stopped. The digest check detects edits before writing; the native
-writer provides no atomic compare-and-swap against overlapping external writes.
-Concurrent config writers and production installation remain unqualified. On an
-uncertain write, current config bytes are retained for inspection rather than
-overwritten from an older snapshot.
+<a id="prepare-an-isolated-profile"></a>
+<a id="choose-a-profile-and-interpreters"></a>
 
-## Install, inspect, and remove
+- Use an existing Hermes profile and pass its exact `HERMES_HOME` directory.
+  For a trial, choose a separate profile rather than replacing your everyday one.
+- Select the Hermes virtual environment's Python with **MCP SDK2** and a Pallium
+  Python environment with **MCP SDK1**. Setup validates both before mutation.
+- Use a running local Pallium service and explicit container, actor and private
+  visibility values. The package accepts private visibility only.
+- Keep the Pallium checkout at a stable path; the bridge configuration contains
+  absolute interpreter and checkout paths.
 
-From the Pallium checkout, pass the exact profile and both Python environments:
+Stop the target Hermes host and other profile configuration writers before
+install, update or removal. The installer uses Hermes's public config writer and
+checks ownership fingerprints, but the native writer has no atomic compare-and-swap
+against simultaneous external edits. After an uncertain config write, inspect
+the preserved configuration and reported conflict before retrying.
+
+## Setup
+
+<a id="install-inspect-and-remove"></a>
+
+From the Pallium checkout, replace the example paths and scope with your values:
 
 ```powershell
 python -m app.run setup hermes `
-  --home C:\path\to\disposable-hermes-home `
+  --home C:\path\to\hermes-profile `
   --hermes-python C:\path\to\hermes-venv\Scripts\python.exe `
-  --service-url http://127.0.0.1:29999 `
-  --container-ref git:example.test/team/hermes-e2e `
-  --actor-ref hermes-e2e `
+  --service-url http://127.0.0.1:19836 `
+  --container-ref git:example.test/team/project `
+  --actor-ref developer `
   --visibility private `
   --mcp-python C:\path\to\pallium-venv\Scripts\python.exe `
   --mcp-repo C:\path\to\Pallium
 ```
 
-`--mcp-python` defaults to the current Pallium interpreter and `--mcp-repo` to this checkout. Setup validates Pallium MCP SDK v1 and Hermes MCP SDK v2 before mutation. The `service-url`, container, actor and visibility values are explicit package scope; this release accepts private visibility only.
+`--mcp-python` defaults to the current Pallium interpreter; `--mcp-repo` defaults
+to its checkout. Pass them explicitly when your environments differ.
 
-Inspect configured files with the same explicit profile:
+Memory tools are disabled by default. Add `--memory-enabled` to opt in, including
+on later setup/update calls that should preserve the opt-in. Omitting that flag
+returns the catalog to disabled; `--no-memory-enabled` explicitly disables it.
+The catalog adds eleven memory query/write tools, not automatic memory injection.
+
+## Verify the connection
+
+Inspect the configured installation:
 
 ```powershell
-python -m app.run setup hermes --home C:\path\to\disposable-hermes-home `
+python -m app.run setup hermes --home C:\path\to\hermes-profile `
   --hermes-python C:\path\to\hermes-venv\Scripts\python.exe --status
 ```
 
-Remove only unchanged package-owned files and configuration:
+Status checks configuration, not live readiness. Start the selected profile and
+follow the [connection check](../../docs/hermes-integration.md#verify-the-connection)
+to exchange a message/reply and verify captured History.
+
+The skill is installed under `$HERMES_HOME/skills/pallium-memory/` for normal
+Hermes discovery. The default catalog contains twelve Relay and three History
+tools. The plugin supplies current host identity and private scope; callers must
+not invent replacements.
+
+## Delivery and recovery
+
+<a id="relay-behavior"></a>
+
+Incoming messages support 16,000 Unicode code points and host-bound replies
+2,400. The plugin renews the exact Relay endpoint during trusted host activity;
+background polling and MCP reads do not renew presence. Closed, replaced and
+wrong-generation endpoints are refused.
+
+The hook owns claim and ACK. It acknowledges delivery only when the complete
+context is present in the assembled host request. ACK proves host-context receipt,
+not provider completion or agent action. Never receive or ACK the same injected
+delivery again; use its reply operation when a response is needed.
+
+Pallium expands a bounded placeholder through public request middleware after
+the host's hook-output size check. Middleware needing the payload must run after
+that expansion. Removed or rewritten placeholders are not reconstructed, later
+filters remain authoritative, and global spill settings are unchanged.
+Admitted text remains available for later model calls in the same host turn,
+including after reply, without retaining reply/ACK authority. Exact turn end or
+plugin unload clears that view.
+
+An admitted wake finishes locally when its exact host turn ends, even without a
+reply. Missing or stale callbacks cannot release a newer wake; uncertain claim/ACK
+state stays fenced. Serialization is local to one plugin process. Use status and
+trace for uncertain outcomes rather than resending blindly.
+
+## History and memory
+
+<a id="session-history"></a>
+
+The `post_llm_call` hook captures private, plain-text user/final-assistant snapshots
+with stable host session, turn and message IDs. Duplicate callbacks do not create
+duplicate sources or revive forgotten sources. Capture follows existing visibility,
+redaction and forgetting rules. Hook observation is not proof of Hermes database
+commit or delivery.
+
+Each row supports up to 20,000 Unicode code points. Missing or ambiguous identity,
+unsupported/multimodal/merged/hidden rows, mismatched callback text, oversized rows
+and interrupted turns without the callback are skipped without truncation or
+backfill. Synthetic wake user markers are excluded. Observed wake assistant
+responses are labeled; provider context, tool output and Relay receipts are not
+copied into the user row. Capture failure does not interrupt Hermes and has no
+durable retry queue.
+
+Use `pallium_search_history` for topic search or
+`pallium_search_history_by_work_ref` with an exact known reference. Expand returned
+sources with `pallium_expand_source`, passing the containing page's
+`lookup_event_id` as `parent_lookup_id`. Follow returned offsets and revisions.
+Work tags require a verified current-session association; failed reads omit them.
+`actor_ref` and `source_thread_ref` are historical filters, not identity overrides.
+Completion capture supplies no current `request_source_item_id`; do not invent it.
+
+With memory enabled, source expansion can include supported memories and
+`pallium_forget_source` is available. Its optional thread selector targets that
+historical partition; omission keeps container-bounded behavior. Standard memory
+query retains the configured actor filter; expansion follows canonical
+same-container/matching-global visibility. Mutations use trusted profile and host
+session provenance. See [Session History](../../docs/session-history.md).
+
+## Update and removal
+
+Repeat the setup command to update unchanged package-owned files, including
+`--memory-enabled` if preserving that opt-in. Stop the target host and other
+profile writers first. Remove unchanged package-owned artifacts:
 
 ```powershell
-python -m app.run setup hermes --home C:\path\to\disposable-hermes-home `
+python -m app.run setup hermes --home C:\path\to\hermes-profile `
   --hermes-python C:\path\to\hermes-venv\Scripts\python.exe --uninstall
 ```
 
-Setup is repeatable. The installer stores ownership fingerprints beside the plugin and skill. It refuses unowned collisions or edited owned artifacts rather than replacing them. Removal restores the original `plugins.enabled` state, deletes only this plugin's exact config entry, and preserves unrelated nested configuration and other enabled plugins. A conflict leaves the profile untouched. Status checks file/config fingerprints only; it does not qualify a running host or live MCP connection.
+Repeating setup updates an unchanged owned installation. Edited owned files and
+unowned collisions are refused. Removal restores the original `plugins.enabled`
+state, removes this plugin's exact config entry and preserves unrelated nested
+configuration, other plugins and data. A detected ownership conflict is not
+permission to overwrite those files. Status checks fingerprints, not running-host
+or live MCP readiness.
 
-The profile skill is installed under `$HERMES_HOME/skills/pallium-memory/`, so Hermes includes it in normal skill discovery. The MCP catalog includes Relay and the three Session History tools below. Derived-memory tools remain unavailable. Relay hook deliveries own their claim and ACK; use the reply operation for an injected delivery and never receive or ACK it again.
+<a id="production-qualification-in-progress"></a>
+<a id="native-qualification-limits"></a>
+## Compatibility and troubleshooting
 
-## Session History
+<a id="compatibility-and-limits"></a>
 
-The public `post_llm_call` hook captures the current plain-text user and final
-assistant pair as private, hook-observed snapshots. Each source carries the exact
-host session, turn and logical `message_uid`, with `capture_stage=post_llm_call`.
-Stable source IDs prevent duplicate callback capture and do not revive forgotten
-sources. Pallium applies its existing redaction, visibility and forgetting rules.
-This is evidence of hook observation, not proof of Hermes database commit or
-message delivery: Hermes can still invoke this hook after a transcript write fails.
+Hermes v0.22.0 and v0.22.2 have Linux TUI and Windows Desktop/TUI integration
+coverage, with memory off and on. Admission uses public capabilities rather than
+an exact-version lock. Other releases must retain compatible plugin identity,
+hook, middleware and MCP interfaces.
 
-Capture accepts nonempty simple text up to 20,000 Unicode code points per row.
-Missing or ambiguous IDs, merged/hidden/scaffolding rows, mismatched callback text,
-multimodal rows and longer content are skipped without truncation or backfill.
-Interrupted turns without this callback are not captured. Synthetic Relay wake
-user markers are excluded; an observed final assistant response is labeled
-`capture_origin=relay_wake`. Provider context, tool output and private Relay
-receipts are never copied into the captured user row. Capture failure does not
-interrupt Hermes and has no durable retry queue.
+Windows coverage uses Server 2025/unpacked builds, not Windows 11, MSIX, native
+updater or native Quit qualification. Synthetic responses test integration
+behavior, not paid-model quality or every provider/memory combination. Busy turns,
+endpoint outages and controlled host/MCP relaunch are covered; automatic standalone
+MCP reconnection, ordinary-turn fallback and uncertain claim recovery are not guaranteed. Shared Relay
+availability can still return retryable busy errors.
 
-Use `pallium_search_history` for broad earlier-session search, or
-`pallium_search_history_by_work_ref` with an exact known reference. Capture copies
-work references only from a verified current-session Relay association. Failed
-association reads omit them, so exact-work search can miss otherwise searchable
-turns. Use `pallium_expand_source` with a returned `source_item_id` and that search
-page's `lookup_event_id` as `parent_lookup_id`. Keep returned offsets and revisions
-for subsequent pages. The bridge binds the current container, session and private
-visibility; `actor_ref` and `source_thread_ref` remain optional historical filters.
-Completion-only capture supplies no current `request_source_item_id`; do not invent
-one. Source forgetting remains available through existing Pallium controls; this
-package does not expose a new forget or ingestion tool. Source expansion excludes
-the shared opt-in supported-memory output; derived memory remains a later slice.
+Use Hermes's supported installation/update path. Dependency builds and Desktop
+URL registration can escape a temporary profile: contributor qualification needs
+a disposable OS environment, as described in
+[native validation](../../docs/designs/hermes-native-qualification.md).
 
-## Native qualification limits
+## Reference
 
-The native wake qualification remains limited to the pinned Hermes v0.22.2 source, explicit frozen local-provider profile, and loopback stubs. Run the focused host journey only with a clean pinned checkout and disposable Hermes environment:
-
-```powershell
-$env:HERMES_E2E_SOURCE = 'C:\path\to\pinned\hermes-agent'
-$env:HERMES_E2E_PYTHON = 'C:\path\to\hermes-venv\Scripts\python.exe'
-python -m pytest -m slow -q -n 0 tests/test_hermes_relay_native_e2e.py
-```
-
-This does not qualify other Hermes releases, remote providers, competing middleware, multiple-profile routing, recovery after uncertain enqueue/claim, or production use. It does not install into or alter a user's everyday Hermes profile.
+- [Hermes integration workflow](../../docs/hermes-integration.md)
+- [Session History search and expansion](../../docs/session-history.md)
+- [Native validation and coverage boundaries](../../docs/designs/hermes-native-qualification.md)

@@ -1093,6 +1093,33 @@ export function ocSourceId() {
   return "oc-" + crypto.randomUUID().replace(/-/g, "").slice(0, 12);
 }
 
+export function ocNativeMessageSourceId(role, sessionId, messageId) {
+  if ((role !== "user" && role !== "assistant") || typeof sessionId !== "string" || !sessionId ||
+      typeof messageId !== "string" || !messageId) return null;
+  const digest = crypto.createHash("sha256")
+    .update(JSON.stringify(["opencode-source/v1", role, sessionId, messageId]), "utf8")
+    .digest("hex");
+  return `oc-${role}-${digest}`;
+}
+
+export function nativeTurnId(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 512 &&
+    value === value.trim() && !/[\u0000-\u001f\u007f-\u009f]/u.test(value) ? value : null;
+}
+
+export function relayNameSnapshot(response, sessionRef, containerRef) {
+  const session = response?.session;
+  if (!session || session.runtime !== "opencode" || session.session_ref !== sessionRef ||
+      session.container_ref !== containerRef || !Object.prototype.hasOwnProperty.call(session, "alias")) {
+    return { relay_name: null, relay_attribution_state: "unavailable" };
+  }
+  if (session.alias === null) return { relay_name: null, relay_attribution_state: "unnamed" };
+  if (typeof session.alias === "string" && /^[a-z0-9][a-z0-9_-]{0,31}$/.test(session.alias)) {
+    return { relay_name: session.alias, relay_attribution_state: "named" };
+  }
+  return { relay_name: null, relay_attribution_state: "unavailable" };
+}
+
 // Short stable hash, used as an assistant-turn dedup key when a message has no id.
 export function shortHash(text) {
   return crypto.createHash("sha256").update(String(text), "utf8").digest("hex").slice(0, 16);

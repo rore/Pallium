@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from core.contracts import MemoryRetentionPolicy, ProcessResult
-from core.models import EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
+from core.models import EvidenceReference, IndexEntry, MemoryObject, MemoryTargetScope, QueryFilters, Relation, SourceItem
 from core.turn_inference import ThreadStats
 from core.visibility import VisibilityExclusion
 
@@ -47,6 +47,8 @@ class SourceItemVectorProjection:
     artifact_kind: str | None = None
     visibility: str = "private"
     forgotten_at: datetime | None = None
+    relay_name: str | None = None
+    relay_attribution_state: str = "unknown"
 
     @property
     def forgotten(self) -> bool:
@@ -210,6 +212,23 @@ class StorageProvider(ABC):
     @abstractmethod
     def find_source_item(self, source_type: str, source_id: str) -> SourceItem | None:
         raise NotImplementedError
+
+    def supports_source_turn_snapshots(self) -> bool:
+        return False
+
+    def find_source_turn_snapshot(
+        self, source_type: str, container_ref: str, thread_ref: str, source_turn_id: str
+    ) -> SourceItem | None:
+        return None
+
+    def has_incomplete_source_attribution(
+        self, *, container_ref: str, query_visibility: str | None, query_actor_ref: str | None,
+        source_type: str | None = None, role: str | None = None,
+        artifact_kind: str | None = None, thread_ref: str | None = None,
+        actor_ref: str | None = None, work_refs: tuple[str, ...] = (),
+    ) -> bool:
+        # A backend that cannot prove complete attribution must not claim it.
+        return True
 
     @abstractmethod
     def create_source_item(self, source_item: SourceItem) -> None:
@@ -464,8 +483,34 @@ class StorageProvider(ABC):
     def create_memory_object(self, memory_object: MemoryObject) -> None:
         raise NotImplementedError
 
+    def create_explicit_supersession(
+        self, old_memory_object_id: str, replacement: MemoryObject, *,
+        index_entries: list[IndexEntry], origin_session_id: str,
+        origin_agent_id: str, correction_reason: str | None = None,
+    ) -> None:
+        """Atomically check the head, persist replacement/provenance/indexes and link it."""
+        raise NotImplementedError
+
+    def forget_source_scope(
+        self, *, container_ref: str, thread_ref: str | None = None,
+        reason: str, actor_ref: str | None = None,
+        forgotten_at: datetime | None = None, target_scope: MemoryTargetScope | None = None,
+    ) -> int:
+        """Forget the bounded source scope; actor_ref is audit identity only."""
+        raise NotImplementedError
+
     @abstractmethod
     def get_memory_object(self, memory_object_id: str) -> MemoryObject:
+        raise NotImplementedError
+
+    def correct_memory_payload(
+        self,
+        memory_object_id: str,
+        *,
+        new_payload: dict,
+        correction_reason: str,
+        index_entries: list[IndexEntry] | None = None,
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod

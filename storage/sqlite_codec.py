@@ -68,6 +68,9 @@ class SQLiteCodecMixin:
             forgotten_at=SQLiteCodecMixin._normalize_datetime(getattr(record, 'forgotten_at', None)),
             forgotten_by=getattr(record, 'forgotten_by', None),
             forgotten_reason=getattr(record, 'forgotten_reason', None),
+            source_turn_id=getattr(record, 'source_turn_id', None),
+            relay_name=getattr(record, 'relay_name', None),
+            relay_attribution_state=getattr(record, 'relay_attribution_state', None) or "unknown",
             created_at=SQLiteCodecMixin._normalize_datetime(record.created_at) or utc_now(),
         )
 
@@ -91,6 +94,7 @@ class SQLiteCodecMixin:
             # (retrieval, dashboard, MCP) can honor it. Previously
             # dropped, causing tombstoned rows to be returned as active.
             is_soft_deleted=bool(getattr(record, "is_soft_deleted", 0)),
+            origin=getattr(record, "origin", None),
         )
 
     @staticmethod

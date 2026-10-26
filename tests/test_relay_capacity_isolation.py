@@ -107,27 +107,48 @@ def _observe_setup_writer(storage, monkeypatch):
 @pytest.mark.parametrize("receipt_ack", [False, True])
 @pytest.mark.parametrize("callback_failure", [False, True])
 def test_tcp_ack_receipt_precedes_owned_callback_and_shutdown_drains(
-    tmp_path, monkeypatch, caplog, receipt_ack, callback_failure,
+    tmp_path, monkeypatch, caplog, request, receipt_ack, callback_failure,
 ) -> None:
     import socket
     from contextlib import ExitStack
     from concurrent.futures import ThreadPoolExecutor
     from app import dependencies, main as app_main, codex_bridge_pipe
     from scripts.live_funnel_smoke import ScratchServer
+    import scripts.live_funnel_smoke as live_funnel_smoke
+
+    def no_proxy_health(url, timeout=10.0):
+        response = httpx.get(url, timeout=timeout, trust_env=False, follow_redirects=False)
+        response.raise_for_status()
+        return response.json()
+
+    monkeypatch.setattr(live_funnel_smoke, "http_get_json", no_proxy_health)
 
     entered, release, finished = threading.Event(), threading.Event(), threading.Event()
     closed, shutdown_started = threading.Event(), threading.Event()
     calls, dispatches, native_calls = [], [], []
     original_router = dependencies.create_router
     cleanup, original_storage = ExitStack(), app_main.build_storage_provider
+    server, pool, shutdown = None, None, None
+    retained_resources = []
+
+    def close_constructed_if_drained():
+        server_alive = server is not None and server._thread is not None and server._thread.is_alive()
+        worker_alive = pool is not None and any(worker.is_alive() for worker in tuple(pool._threads))
+        shutdown_alive = shutdown is not None and shutdown.is_alive()
+        if server_alive or worker_alive or shutdown_alive:
+            retained_resources.extend((cleanup.pop_all(), server, pool, shutdown))
+            pytest.fail("owned ACK resources retained because their owners did not drain")
+        cleanup.close()
+
+    request.addfinalizer(close_constructed_if_drained)
 
     def own_storage(*args, **kwargs):
         storage = original_storage(*args, **kwargs)
         original_close = storage.close
 
         def close():
-            closed.set()
             original_close()
+            closed.set()
 
         monkeypatch.setattr(storage, "close", close)
         cleanup.callback(storage.close)
@@ -159,6 +180,8 @@ def test_tcp_ack_receipt_precedes_owned_callback_and_shutdown_drains(
     monkeypatch.setattr(dependencies, "schedule_codex_relay_wake", schedule)
     monkeypatch.setattr(app_main, "build_storage_provider", own_storage)
     monkeypatch.setattr("app.mcp.server.create_server", lambda **_: (_ for _ in ()).throw(ImportError()))
+    # Keep periodic recovery from racing the ACK-owned scheduler observation.
+    monkeypatch.setattr(app_main, "start_claude_wake_reconciler", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(codex_bridge_pipe, "start_shadow_service", lambda *_: None)
     monkeypatch.setattr(codex_bridge_pipe, "start_inventory_service", lambda **_: None)
     monkeypatch.setattr(codex_bridge_pipe, "start_retained_service", lambda **_: None)
@@ -168,6 +191,24 @@ def test_tcp_ack_receipt_precedes_owned_callback_and_shutdown_drains(
         default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES,
         vector_index=VectorIndexConfig(enabled=False),
     ))
+    response_body_sent, invocation_returned = threading.Event(), threading.Event()
+    observed_ack_path = None
+
+    async def observe_ack_asgi(scope, receive, send):
+        if scope.get("type") != "http" or scope.get("path") != observed_ack_path:
+            await app(scope, receive, send)
+            return
+
+        async def observe_send(message):
+            await send(message)
+            if message.get("type") == "http.response.body" and not message.get("more_body", False):
+                response_body_sent.set()
+
+        try:
+            await app(scope, receive, observe_send)
+        finally:
+            invocation_returned.set()
+
     cleanup.callback(app.state.pallium_service.close)
     registry = app.state.codex_wake_registry
     assert registry.initialize(old_owner_drained=True)
@@ -175,14 +216,18 @@ def test_tcp_ack_receipt_precedes_owned_callback_and_shutdown_drains(
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
-    server = ScratchServer(app, "127.0.0.1", port)
+    server = ScratchServer(observe_ack_asgi, "127.0.0.1", port)
     pool = ThreadPoolExecutor(max_workers=1)
     shutdown = None
     response = None
     closed_by_lifespan = False
+    ack_request = None
+    worker_drained = False
     try:
         server.__enter__()
-        with httpx.Client(base_url=server.base_url, timeout=2) as client:
+        with httpx.Client(
+            base_url=server.base_url, timeout=2, trust_env=False, follow_redirects=False,
+        ) as client:
             for session in ("sender", "target"):
                 registered = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **scope}, timeout=5)
                 assert registered.status_code == 200, registered.text
@@ -209,13 +254,20 @@ def test_tcp_ack_receipt_precedes_owned_callback_and_shutdown_drains(
             assert delivery["delivery_id"] == first["delivery_id"]
             assert delivery["attempts"] == 1
             path = "/relay/deliveries/mcp-ack" if receipt_ack else "/relay/deliveries/ack"
+            observed_ack_path = path
             proof = {"receipt": delivery["receipt"]} if receipt_ack else {"claim_token": delivery["claim_token"]}
-            request = pool.submit(client.post, path, json={"delivery_id": delivery["delivery_id"], **proof, **scope}, timeout=0.5)
+            ack_request = pool.submit(client.post, path, json={"delivery_id": delivery["delivery_id"], **proof, **scope}, timeout=0.5)
             assert entered.wait(2), "actual ACK callback did not enter"
             try:
-                response = request.result(2)
+                response = ack_request.result(2)
             except httpx.TimeoutException:
                 pass
+            assert response is not None, "durable ACK response waited for callback cleanup"
+            assert response.status_code == 200, response.text
+            assert response.json()["delivery_id"] == delivery["delivery_id"]
+            assert response.json()["state"] == "delivered"
+            assert response_body_sent.is_set()
+            assert not invocation_returned.is_set() and not finished.is_set()
             retained = client.get(f"/relay/messages/{sent[0]['message_id']}", params=scope)
             assert retained.status_code == 200, retained.text
             stored, = retained.json()["deliveries"]
@@ -235,24 +287,226 @@ def test_tcp_ack_receipt_precedes_owned_callback_and_shutdown_drains(
             assert shutdown.is_alive() and not closed.is_set(), "shutdown bypassed request-owned callback"
     finally:
         release.set()
-        pool.shutdown(wait=True)
+        if ack_request is not None:
+            try:
+                ack_request.result(timeout=2)
+            except BaseException:
+                pass
+        pool.shutdown(wait=False, cancel_futures=True)
+        workers = tuple(pool._threads)
+        for worker in workers:
+            worker.join(timeout=3)
+        worker_drained = (ack_request is None or ack_request.done()) and all(not worker.is_alive() for worker in workers)
         if shutdown is not None:
             shutdown.join(10)
-        server.__exit__()
-        closed_by_lifespan = closed.is_set()
-        cleanup.close()
+        try:
+            server.__exit__()
+        finally:
+            closed_by_lifespan = closed.is_set()
+            close_constructed_if_drained()
     assert shutdown is not None and not shutdown.is_alive()
     assert server._thread is not None and not server._thread.is_alive()
-    assert finished.is_set() and closed_by_lifespan
+    assert worker_drained, "ACK request worker did not drain"
+    assert finished.is_set() and invocation_returned.is_set() and closed_by_lifespan
     assert calls == [(first["delivery_id"], "delivered", "codex")]
     assert dispatches == ([] if callback_failure else [sent[1]["deliveries"][0]["delivery_id"]])
     if callback_failure:
         assert any("Relay ACK callback failed after persistence" in record.message or
                    "Relay MCP ACK callback failed after persistence" in record.message for record in caplog.records)
-    assert response is not None, "durable ACK response waited for callback cleanup"
-    assert response.status_code == 200, response.text
-    assert response.json()["delivery_id"] == first["delivery_id"]
-    assert response.json()["state"] == "delivered"
+
+
+
+@pytest.mark.parametrize("receipt_ack", [False, True])
+def test_failed_ack_callback_recovers_next_delivery_once_through_native_fence(
+    tmp_path, monkeypatch, caplog, receipt_ack,
+) -> None:
+    from contextlib import ExitStack
+    from app import dependencies, main as app_main, codex_bridge_pipe, codex_wake
+    from core.claude_wake import ClaudeWakeRegistry
+    from core.relay import RelayService
+    from fastapi.testclient import TestClient
+
+    callback_calls, native_calls = [], []
+    original_router = dependencies.create_router
+    storage_closed = threading.Event()
+    with ExitStack() as cleanup:
+        original_storage = app_main.build_storage_provider
+
+        def own_storage(*args, **kwargs):
+            storage = original_storage(*args, **kwargs)
+            original_close = storage.close
+
+            def close():
+                storage_closed.set()
+                original_close()
+
+            storage.close = close
+            cleanup.callback(storage.close)
+            return storage
+
+        def router(service, **kwargs):
+            callback = kwargs["relay_ack_callback"]
+
+            def fail_first_callback(result, scope):
+                callback_calls.append(result["delivery_id"])
+                if len(callback_calls) == 1:
+                    raise RuntimeError("controlled ACK cleanup failure")
+                return callback(result, scope)
+
+            kwargs["relay_ack_callback"] = fail_first_callback
+            kwargs["relay_send_callback"] = None
+            return original_router(service, **kwargs)
+
+        monkeypatch.setattr(dependencies, "create_router", router)
+        monkeypatch.setattr(app_main, "build_storage_provider", own_storage)
+        monkeypatch.setattr(app_main, "start_claude_wake_reconciler", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr("app.mcp.server.create_server", lambda **_: (_ for _ in ()).throw(ImportError()))
+        monkeypatch.setattr(codex_bridge_pipe, "start_shadow_service", lambda *_: None)
+        monkeypatch.setattr(codex_bridge_pipe, "start_inventory_service", lambda **_: None)
+        monkeypatch.setattr(codex_bridge_pipe, "start_retained_service", lambda **_: None)
+        monkeypatch.setattr(codex_bridge_pipe, "retained_wake_enabled", lambda: False)
+        monkeypatch.setattr(codex_wake, "_codex_home", lambda: tmp_path)
+        monkeypatch.setattr(codex_wake, "_codex_executable", lambda: "fake-codex")
+
+        def popen(argv, **_kwargs):
+            native_calls.append(argv)
+            return SimpleNamespace(returncode=0, communicate=lambda **_args: (None, ""))
+
+        monkeypatch.setattr(codex_wake, "_popen", popen)
+        app = create_app(AppConfig(
+            storage_backend="sqlite", sqlite_url=f"sqlite:///{tmp_path / 'main.db'}",
+            relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+            default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES,
+            vector_index=VectorIndexConfig(enabled=False),
+        ))
+        cleanup.callback(app.state.pallium_service.close)
+        registry = app.state.codex_wake_registry
+        cleanup.callback(codex_wake.drain_codex_relay_wakes, registry)
+        assert registry.initialize(old_owner_drained=True)
+        client = cleanup.enter_context(TestClient(app))
+        scope = {"container_ref": "git:example.test/ack-callback-recovery"}
+
+        for session in ("sender", "target"):
+            response = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": session, **scope,
+            })
+            assert response.status_code == 200, response.text
+        sent = []
+        for payload in ("first café 東京", "next café 東京"):
+            response = client.post("/relay/messages", json={
+                "sender_runtime": "codex", "sender_session_ref": "sender",
+                "recipient": "codex:target", "payload": payload, **scope,
+            })
+            assert response.status_code == 200, response.text
+            sent.append(response.json())
+
+        first = sent[0]["deliveries"][0]
+        next_delivery = sent[1]["deliveries"][0]
+        old = registry.reserve(
+            recipient_endpoint_id=first["recipient_endpoint_id"],
+            delivery_id=first["delivery_id"], session_ref="target", **scope,
+        )
+        assert old is not None
+        claimed = client.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target", "max_messages": 1,
+            "wake_delivery_id": first["delivery_id"], **scope,
+        })
+        assert claimed.status_code == 200, claimed.text
+        delivery, = claimed.json()["deliveries"]
+        assert (delivery["delivery_id"], delivery["attempts"]) == (first["delivery_id"], 1)
+
+        path = "/relay/deliveries/mcp-ack" if receipt_ack else "/relay/deliveries/ack"
+        proof = {"receipt": delivery["receipt"]} if receipt_ack else {"claim_token": delivery["claim_token"]}
+        ack = client.post(path, json={"delivery_id": first["delivery_id"], **proof, **scope})
+        assert ack.status_code == 200, ack.text
+        assert ack.json()["state"] == "delivered"
+        assert callback_calls == [first["delivery_id"]]
+        assert any("Relay ACK callback failed after persistence" in record.message or
+                   "Relay MCP ACK callback failed after persistence" in record.message
+                   for record in caplog.records)
+        first_readback = client.get(f"/relay/messages/{sent[0]['message_id']}", params=scope)
+        assert first_readback.status_code == 200, first_readback.text
+        first_stored, = first_readback.json()["deliveries"]
+        assert (first_stored["delivery_id"], first_stored["state"], first_stored["attempts"]) == (
+            first["delivery_id"], "delivered", 1,
+        )
+        assert registry.run_if_current(old, lambda: native_calls.append("stale")) == (False, None)
+        assert native_calls == []
+
+        relay = RelayService(app.state.pallium_service._storage)
+        dependencies.recover_expired_relay_wakes(
+            relay, ClaudeWakeRegistry(), codex_registry=registry,
+        )
+        codex_wake.drain_codex_relay_wakes(registry)
+        current = registry.snapshot(next_delivery["recipient_endpoint_id"])
+        assert current is not None
+        assert current.delivery_id == next_delivery["delivery_id"]
+        assert current.recipient_endpoint_id == next_delivery["recipient_endpoint_id"]
+        assert (current.session_ref, current.container_ref) == ("target", scope["container_ref"])
+        assert current.generation > old.generation
+        assert current.outcome == "accepted"
+        assert len(native_calls) == 1
+        assert native_calls[0][:6] == [
+            "fake-codex", "queue", "--profile", "pallium-relay",
+            "--thread", "target",
+        ]
+        assert native_calls[0][6] == "--message"
+        assert next_delivery["delivery_id"] in native_calls[0][7]
+        assert registry.run_if_current(old, lambda: native_calls.append("stale")) == (False, None)
+        next_pending = client.get(f"/relay/messages/{sent[1]['message_id']}", params=scope)
+        assert next_pending.status_code == 200, next_pending.text
+        next_pending_row, = next_pending.json()["deliveries"]
+        assert (next_pending_row["delivery_id"], next_pending_row["state"], next_pending_row["attempts"]) == (
+            next_delivery["delivery_id"], "pending", 0,
+        )
+
+        for _ in range(3):
+            dependencies.recover_expired_relay_wakes(
+                relay, ClaudeWakeRegistry(), codex_registry=registry,
+            )
+            codex_wake.drain_codex_relay_wakes(registry)
+            assert registry.snapshot(next_delivery["recipient_endpoint_id"]) == current
+        assert len(native_calls) == 1
+
+        claimed_next = client.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target", "max_messages": 1,
+            "wake_delivery_id": next_delivery["delivery_id"], **scope,
+        })
+        assert claimed_next.status_code == 200, claimed_next.text
+        next_claim, = claimed_next.json()["deliveries"]
+        assert (next_claim["delivery_id"], next_claim["attempts"]) == (
+            next_delivery["delivery_id"], 1,
+        )
+        next_proof = {"receipt": next_claim["receipt"]} if receipt_ack else {
+            "claim_token": next_claim["claim_token"],
+        }
+        next_ack = client.post(path, json={
+            "delivery_id": next_delivery["delivery_id"], **next_proof, **scope,
+        })
+        assert next_ack.status_code == 200, next_ack.text
+        next_readback = client.get(f"/relay/messages/{sent[1]['message_id']}", params=scope)
+        assert next_readback.status_code == 200, next_readback.text
+        next_stored, = next_readback.json()["deliveries"]
+        assert (next_stored["delivery_id"], next_stored["state"], next_stored["attempts"]) == (
+            next_delivery["delivery_id"], "delivered", 1,
+        )
+        assert registry.run_if_current(
+            current, lambda: native_calls.append("stale-next"),
+        ) == (False, None)
+        dependencies.recover_expired_relay_wakes(
+            relay, ClaudeWakeRegistry(), codex_registry=registry,
+        )
+        codex_wake.drain_codex_relay_wakes(registry)
+        assert registry.snapshot(next_delivery["recipient_endpoint_id"]) is None
+        assert len(native_calls) == 1
+        assert callback_calls == [first["delivery_id"], next_delivery["delivery_id"]]
+        first_final = client.get(f"/relay/messages/{sent[0]['message_id']}", params=scope)
+        assert first_final.status_code == 200, first_final.text
+        first_final_row, = first_final.json()["deliveries"]
+        assert (first_final_row["delivery_id"], first_final_row["state"], first_final_row["attempts"]) == (
+            first["delivery_id"], "delivered", 1,
+        )
+    assert storage_closed.is_set()
 
 
 @pytest.mark.parametrize("failure", [
@@ -1347,10 +1601,11 @@ def test_relay_and_diagnostics_survive_saturated_memory_worker_capacity(tmp_path
             blocked = asyncio.create_task(client.get("/_test/block-memory-worker"))
             try:
                 assert await asyncio.to_thread(started.wait, 5.0)
-                health, status, queue, turn = await asyncio.wait_for(
+                health, status, queue, summary, turn = await asyncio.wait_for(
                     asyncio.gather(
                         client.get("/health"), client.get("/status"),
                         client.get("/debug/queue/health"),
+                        client.get("/dashboard/api/relay/summary"),
                         client.post("/relay/turn", json={
                             "runtime": "codex", "session_ref": "capacity-target",
                             "container_ref": "git:example.test/capacity",
@@ -1359,6 +1614,8 @@ def test_relay_and_diagnostics_survive_saturated_memory_worker_capacity(tmp_path
                     ), timeout=5.0,
                 )
                 assert health.status_code in {200, 503} and turn.status_code == 200
+                assert summary.status_code == 200
+                assert summary.json()["deliveries"]["pending_now"] == 0
                 assert set(status.json()) == {
                     "pending_items", "oldest_pending_age_seconds",
                     "total_source_items", "total_memory_objects",
@@ -2081,3 +2338,112 @@ def test_operation_tracking_early_failure_drains_before_storage_close(tmp_path, 
     assert drain_entered.is_set()
     assert drain_gate_observations and all(drain_gate_observations)
     assert close_observations and all(drained and finished for drained, finished in close_observations)
+
+
+@pytest.mark.parametrize("cancel_target", ["queued", "started"])
+def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
+    client, monkeypatch, cancel_target,
+):
+    from app import codex_readiness
+
+    app = client.app
+    first, full, release = threading.Event(), threading.Event(), threading.Event()
+    finished, closed = threading.Event(), threading.Event()
+    lock = threading.Lock()
+    started_count = completed_count = 0
+    original_read = codex_readiness.read
+
+    def held_readiness():
+        nonlocal started_count, completed_count
+        with lock:
+            started_count += 1
+            first.set()
+            if started_count == 2:
+                full.set()
+        try:
+            assert release.wait(10), "summary worker watchdog expired"
+            assert not closed.is_set(), "summary accessed closed storage"
+            return original_read()
+        finally:
+            with lock:
+                completed_count += 1
+                if completed_count == (2 if cancel_target == "queued" else 3):
+                    finished.set()
+
+    monkeypatch.setattr(codex_readiness, "read", held_readiness)
+
+    async def exercise():
+        queued = asyncio.Event()
+        original_dispatch = anyio.to_thread.run_sync
+
+        async def observe_dispatch(operation, *args, **kwargs):
+            if asyncio.current_task().get_name() == "summary-queued":
+                queued.set()
+            return await original_dispatch(operation, *args, **kwargs)
+
+        monkeypatch.setattr(anyio.to_thread, "run_sync", observe_dispatch)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+            requests = [asyncio.create_task(http.get("/dashboard/api/relay/summary"))]
+            barrier = None
+            try:
+                assert await asyncio.to_thread(first.wait, 1)
+                status, queue = await asyncio.wait_for(asyncio.gather(
+                    http.get("/status"), http.get("/debug/queue/health"),
+                ), 2)
+                assert status.status_code == queue.status_code == 200
+                requests.append(asyncio.create_task(http.get("/dashboard/api/relay/summary")))
+                assert await asyncio.to_thread(full.wait, 1)
+                requests.append(asyncio.create_task(
+                    http.get("/dashboard/api/relay/summary"), name="summary-queued",
+                ))
+                await asyncio.wait_for(queued.wait(), 1)
+                assert started_count == 2 and not requests[2].done()
+                cancelled = requests[2 if cancel_target == "queued" else 0]
+                cancelled.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await cancelled
+                barrier = await _start_operation_barrier(app)
+                await _assert_barrier_waiting(barrier)
+                assert not finished.is_set()
+                turn = await asyncio.wait_for(http.post("/relay/turn", json={
+                    "runtime": "claude-code", "session_ref": "summary-drain-target",
+                    "container_ref": "git:example.test/summary-drain",
+                }), 1)
+                assert turn.status_code == 200
+                release.set()
+                results = await asyncio.wait_for(asyncio.gather(*requests, return_exceptions=True), 2)
+                assert sum(isinstance(result, asyncio.CancelledError) for result in results) == 1
+                responses = [result for result in results if isinstance(result, httpx.Response)]
+                assert len(responses) == 2 and all(result.status_code == 200 for result in responses)
+                assert await asyncio.to_thread(finished.wait, 1)
+                assert await asyncio.wait_for(barrier, 1)
+                assert started_count == completed_count == (2 if cancel_target == "queued" else 3)
+                closed.set()
+                app.state.pallium_service._storage.close()
+            finally:
+                release.set()
+                await asyncio.gather(*requests, return_exceptions=True)
+                if barrier is not None:
+                    await asyncio.wait_for(barrier, 2)
+
+    asyncio.run(exercise())
+
+
+def test_standalone_summary_mount_preserves_sqlite_and_unsupported_responses(client):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.dashboard import mount_dashboard
+    from core.codex_wake import CodexWakeRegistry
+
+    standalone = FastAPI()
+    standalone.state.pallium_service = client.app.state.pallium_service
+    mount_dashboard(standalone, codex_wake_registry=CodexWakeRegistry())
+    with TestClient(standalone) as http:
+        response = http.get("/dashboard/api/relay/summary")
+        assert response.status_code == 200
+        assert response.json()["deliveries"]["pending_now"] == 0
+        standalone.state.pallium_service = SimpleNamespace(_storage=object())
+        unsupported = http.get("/dashboard/api/relay/summary")
+        assert unsupported.status_code == 501
+        assert unsupported.json() == {"error": "requires SQLite backend"}

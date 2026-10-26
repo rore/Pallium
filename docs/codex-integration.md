@@ -4,12 +4,14 @@ This guide connects Codex to the local Pallium service. The integration
 registers each task, records governed turns for Session History, delivers Relay
 messages, and supports Pallium's optional derived-memory behavior.
 
-## What You Get
+<a id="what-you-get"></a>
+
+## Capabilities
 
 ### Relay
 
 - send messages to another connected session; current integrations are Codex,
-  Claude Code, and OpenCode
+  Claude Code, OpenCode, and Hermes
 - receive attributed messages and reply to the sender
 - wake exact Codex tasks on qualified Windows and Linux paths
 - keep undelivered messages for the next normal turn
@@ -27,97 +29,6 @@ messages, and supports Pallium's optional derived-memory behavior.
 - retrieve or inject selected memory on later turns
 - inspect, flag, and write memory through MCP tools
 
-Windows and Linux exact-session wake are qualified for tasks already loaded by
-their Codex runtime. Supported Windows Desktop also wakes unloaded tasks through
-the retained MCP path described below. Without that capability, a persisted
-delivery stays pending for the next supported turn; native unloaded-queue
-persistence is not claimed. Windows
-additionally proves overtaken-wake suppression,
-delivery-derived reply wake of an idle loaded sender, and a bounded remediation
-round trip without manual turns. Remaining interrupted/restart lifecycle and
-macOS qualification work retains next-turn delivery where active wake is not
-qualified. Correlation telemetry is deferred until existing evidence cannot
-diagnose a concrete failure.
-
-Automatic wake is enabled by default on supported Windows Desktop. Normal
-service-owned delivery has live payload/ACK witnesses for both idle and unloaded
-tasks, each with one claim and a payload-only marker response. These checks used
-ordinary authenticated MCP activity, without trial policy files or manual target
-wakes. Normal setup forwards the host capability name
-`CODEX_APP_TOOLS_PIPE_PATH` without copying its value. A real host capability and
-authenticated source connection remain required; HTTP MCP and other platforms
-retain their existing behavior. The approved policy checks fresh Desktop state: use the existing queue for
-loaded-idle tasks and retained MCP for unloaded tasks. These trigger the prompt
-and SessionStart payload hooks respectively. Working, unknown or disconnected
-tasks remain pending. One scheduler selects one path, with no fallback after an
-attempt or uncertain result. Non-interruption is
-best-effort because the task can start working between the check and the wake.
-
-A conclusively cancelled native connection failure does not require another
-manual source turn: the next scheduled wake can reopen the same authenticated
-source's Desktop connection and revalidate its process identity and tool catalog.
-Source disconnect, identity or schema changes, and unresolved I/O stop this
-recovery. A wake that may already have been submitted stays fenced; reconnecting
-does not resend it. Legacy abandoned reservations still require their existing
-receipt or expiry reconciliation and can delay later messages.
-
-After a confirmed service exit, a previously accepted worker can re-register the
-same authenticated source. Explicit busy rejection during readiness or
-registration uses the existing bounded reconnect backoff, after resolved disposal;
-uncertain responses and changed identity or capability do not. This retries
-admission, not a message or tool call. First enrollment still requires an actual
-runtime request. Installed restart-recovery qualification remains open.
-
-New wake reservations start as `prepared`. Recovery can resume that exact
-generation after a restart, but either wake path must atomically change it to
-`uncertain` before submitting anything. Competing workers cannot submit the same
-generation twice. An expired correlated hook claim can create a new prepared
-generation under the existing claim-recovery policy; an active claim cannot.
-Existing `reserved` rows are never reclassified as unattempted, and a submitted
-or uncertain generation is never resumed merely because time has passed.
-
-Retained Codex recovery can issue a new notification for the same still-pending,
-unclaimed delivery after its persisted 60-second cooldown. Before rearming, the
-retained service reads the current server-owned endpoint target through its
-authenticated Desktop connection and requires exact idle or notLoaded state;
-the SQLite generation compare-and-swap then rechecks the active target, pending
-state, and zero attempts. This is a new notification after fresh eligibility,
-not a retry of native transport I/O. Busy, unavailable, stale, or claimed
-targets remain fenced for a later sweep. A large backward wall-clock correction
-clamps the persisted deadline once to one new cooldown. A delayed original
-notification can cause an extra empty wake; ACKed payloads are not re-emitted,
-and crash-before-ACK behavior still follows the existing claim lease rather
-than promising exactly-once execution.
-
-## Architecture
-
-```
-┌────────────────────────┐
-│     Codex CLI          │
-│                        │
-│  hooks ──────────────────── HTTP ──┐
-│  MCP tools (stdio) ─────── HTTP ──┤
-└────────────────────────┘           │
-                                     ▼
-                              ┌─────────────┐
-                              │   Pallium   │
-                              │local service│
-                              │             │
-                              │ port 19836  │
-                              └──────┬──────┘
-                                     │
-                              ┌──────▼──────┐
-                              │ ~/.pallium/ │
-                              │   data/     │
-                              └─────────────┘
-```
-
-Pallium runs as an always-on local service independent of Codex's lifecycle.
-Multiple Codex sessions (same or different repos) share one Pallium instance.
-Relay routes exact endpoint IDs and service-global `@name` addresses across
-containers on that service. Session History and configured derived memory stay
-scoped by `container_ref` (derived from the git remote URL).
-
 ## Prerequisites
 
 - Python 3.12+ with Pallium installed from source
@@ -126,7 +37,9 @@ scoped by `container_ref` (derived from the git remote URL).
   memory
 - Git (for container derivation from repos)
 
-## 1. Start Pallium
+## Setup
+
+### 1. Start Pallium
 
 Install and start the service (one-time):
 
@@ -150,7 +63,7 @@ For debugging, run in the foreground:
 pallium service run --port 19836
 ```
 
-## 2. Register with Codex
+### 2. Register with Codex
 
 ```bash
 pallium setup codex
@@ -213,19 +126,122 @@ An intentional hookless MCP integration may configure a trusted
 `PALLIUM_CONTAINER_REF`; never infer one from the working directory or session
 identifiers.
 
-To remove the integration:
-
-```bash
-pallium setup codex --uninstall
-```
-
 To use a non-default port:
 
 ```bash
 pallium setup codex --port 9999
 ```
 
-## How It Works
+<a id="verify-its-working"></a>
+
+## Verify the connection
+
+After setup, open two Codex tasks connected to the same local Pallium service.
+They may use different Git repositories.
+
+### Verify Relay
+
+1. In the second task, ask: “Use Pallium Relay to name this session `review`.”
+2. In the first task, ask it to list Relay recipients and send a short message
+   to `@review`.
+3. Confirm that the second task receives the attributed message and can reply.
+
+Qualified Windows and Linux paths can start a new turn in the exact Codex task.
+On macOS and other unqualified paths, make a normal turn in the recipient task
+to collect the pending message.
+
+### Verify Session History
+
+Use two tasks in the same repository container for this check.
+
+1. In one task, record a clear decision or investigation finding.
+2. In the other, ask it to search Session History for that earlier work.
+3. Expand the relevant result and confirm that the nearby messages provide the
+   expected context.
+
+This uses `pallium_search_history` followed by `pallium_expand_source`. It does
+not depend on automatic derived-memory injection.
+
+History retry: keep a delivered-page ledger across query repair; retry the same failed page at most twice, continue unread pages, and keep page-specific lookup lineage. Revalidate completed sources by content revision; use bounded retries. A historical recap is not live state; verify current state live. See [procedure](../integrations/codex/skills/pallium-memory/references/history-replay.md).
+
+### Optional: verify derived memory
+
+If derived memory is configured, use `pallium_query` for the earlier decision or
+inspect an automatically injected memory block. No injection is also a valid
+outcome when Pallium abstains; use `pallium_query_debug` to inspect why.
+
+<a id="how-it-works"></a>
+
+## Delivery and recovery
+
+Windows and Linux exact-session wake are qualified for tasks already loaded by
+their Codex runtime. Supported Windows Desktop also wakes unloaded tasks through
+the retained MCP path described below. Without that capability, a persisted
+delivery stays pending for the next supported turn; native unloaded-queue
+persistence is not claimed. Windows
+additionally proves overtaken-wake suppression,
+delivery-derived reply wake of an idle loaded sender, and a bounded remediation
+round trip without manual turns. Remaining interrupted/restart lifecycle and
+macOS qualification work retains next-turn delivery where active wake is not
+qualified. Correlation telemetry is deferred until existing evidence cannot
+diagnose a concrete failure.
+
+Automatic wake is enabled by default on supported Windows Desktop. Normal
+service-owned delivery has live payload/ACK witnesses for both idle and unloaded
+tasks, each with one claim and a payload-only marker response. These checks used
+ordinary authenticated MCP activity, without trial policy files or manual target
+wakes. Normal setup forwards the host capability name
+`CODEX_APP_TOOLS_PIPE_PATH` without copying its value. A real host capability and
+authenticated source connection remain required; HTTP MCP and other platforms
+retain their existing behavior. The approved policy checks fresh Desktop state: use the existing queue for
+loaded-idle tasks and retained MCP for unloaded tasks. These trigger the prompt
+and SessionStart payload hooks respectively. Working, unknown or disconnected
+tasks remain pending. One scheduler selects one path, with no fallback after an
+attempt or uncertain result. Non-interruption is
+best-effort because the task can start working between the check and the wake.
+
+A conclusively cancelled native connection failure does not require another
+manual source turn: the next scheduled wake can reopen the same authenticated
+source's Desktop connection and revalidate its process identity and tool catalog.
+Source disconnect, identity or schema changes, and unresolved I/O stop this
+recovery. A wake that may already have been submitted stays fenced; reconnecting
+does not resend it. Legacy abandoned reservations still require their existing
+receipt or expiry reconciliation and can delay later messages.
+
+After a confirmed service exit, a previously accepted worker can re-register the
+same authenticated source. Explicit busy rejection during readiness or
+registration uses the existing bounded reconnect backoff, after resolved disposal;
+uncertain responses and changed identity or capability do not. This retries
+admission, not a message or tool call. First enrollment still requires an actual
+runtime request. Installed restart-recovery qualification remains open.
+
+A previously accepted worker also attempts bounded fresh authentication after a
+resolved idle source-channel deadline or transport failure. It retains the old
+service exit witness until the attempt settles, requires unchanged capability
+and continuity, and never restores the cleared service registration. Exhausted
+or uncertain recovery stops automatic attempts; a later runtime request follows
+the existing admission rules.
+
+New wake reservations start as `prepared`. Recovery can resume that exact
+generation after a restart, but either wake path must atomically change it to
+`uncertain` before submitting anything. Competing workers cannot submit the same
+generation twice. An expired correlated hook claim can create a new prepared
+generation under the existing claim-recovery policy; an active claim cannot.
+Existing `reserved` rows are never reclassified as unattempted, and a submitted
+or uncertain generation is never resumed merely because time has passed.
+
+Retained Codex recovery can issue a new notification for the same still-pending,
+unclaimed delivery after its persisted 60-second cooldown. Before rearming, the
+retained service reads the current server-owned endpoint target through its
+authenticated Desktop connection and requires exact idle or notLoaded state;
+the SQLite generation compare-and-swap then rechecks the active target, pending
+state, and zero attempts. This is a new notification after fresh eligibility,
+not a retry of native transport I/O. Busy, unavailable, stale, or claimed
+targets remain fenced for a later sweep. A large backward wall-clock correction
+clamps the persisted deadline once to one new cooldown. A delayed original
+notification can cause an extra empty wake; ACKed payloads are not re-emitted,
+and crash-before-ACK behavior still follows the existing claim lease rather
+than promising exactly-once execution.
 
 ### Hooks (Automatic)
 
@@ -241,22 +257,11 @@ Hooks are fail-safe and budget-capped. If Pallium is unavailable, they do not
 block Codex. On a fresh start (`source: "clear"`), SessionStart skips optional
 memory orientation.
 
-### MCP Tools (Explicit)
+## History and memory
 
-The main operations are:
-
-| Need | Tools |
-|---|---|
-| Get this session's Relay address | `pallium_relay_address` (identity is resolved by the integration) |
-| Find a recipient when its container is unknown | `pallium_relay_discover_recipients` (read-only candidates; verify before sending) |
-| Send or reply through Relay | `pallium_relay_recipients`, `pallium_relay_name`, `pallium_relay_send`, `pallium_relay_reply`, `pallium_relay_status` |
-| Search earlier sessions | `pallium_search_history`, then `pallium_expand_source` for surrounding turns |
-| Use optional derived memory | `pallium_query`, `pallium_expand`, `pallium_flag_memory`, `pallium_rate_memory`, `pallium_ingest`, and the explicit memory-write tools |
-| Check the service | `pallium_status` |
-
-`pallium_relay_receive` and `pallium_relay_ack` are recovery or non-hook
-integration tools. Do not use them in a task receiving Relay automatically
-through hooks.
+Session History works without derived memory. Derived memory is optional and
+disabled by default; provider-backed packages require a configured provider and
+model.
 
 ### Scoping
 
@@ -300,41 +305,33 @@ Not everything is remembered. Short prompts (<20 chars), slash commands, and
 duplicate prompts (within 5 minutes) are filtered. Assistant responses over
 20K chars are skipped.
 
-## Verify It's Working
+## Update and removal
 
-After setup, open two Codex tasks connected to the same local Pallium service.
-They may use different Git repositories.
+Re-run `pallium setup codex` from the checkout you intend to keep after
+updating Pallium. Restart Codex to load the updated integration. Review changed
+hooks when prompted; use `--replace-existing-checkout` only for an intentional
+checkout move.
 
-### Verify Relay
+Back up your host configuration and close affected sessions before removing the
+integration:
 
-1. In the second task, ask: “Use Pallium Relay to name this session `review`.”
-2. In the first task, ask it to list Relay recipients and send a short message
-   to `@review`.
-3. Confirm that the second task receives the attributed message and can reply.
+```bash
+pallium setup codex --uninstall
+```
 
-Qualified Windows and Linux paths can start a new turn in the exact Codex task.
-On macOS and other unqualified paths, make a normal turn in the recipient task
-to collect the pending message.
+Uninstall removes this host's managed MCP registration, hooks, instructions and
+skill. It also deletes the shared `~/.pallium/hooks/state` directory, which can
+affect other active Claude Code or Codex sessions using that state. It preserves
+the service and stored History and memory.
 
-### Verify Session History
+To remove the service registration separately, use `pallium service uninstall`.
+Data is preserved unless `--remove-data` is requested. That option only deletes
+the marked default `~/.pallium` service home; custom homes are refused and must
+be inspected and removed manually.
 
-1. In one task, record a clear decision or investigation finding.
-2. In the other, ask it to search Session History for that earlier work.
-3. Expand the relevant result and confirm that the nearby messages provide the
-   expected context.
+<a id="troubleshooting"></a>
 
-This uses `pallium_search_history` followed by `pallium_expand_source`. It does
-not depend on automatic derived-memory injection.
-
-History retry: keep a delivered-page ledger across query repair; retry the same failed page at most twice, continue unread pages, and keep page-specific lookup lineage. Revalidate completed sources by content revision; use bounded retries. A historical recap is not live state; verify current state live. See [procedure](../integrations/codex/skills/pallium-memory/references/history-replay.md).
-
-### Optional: verify derived memory
-
-If derived memory is configured, use `pallium_query` for the earlier decision or
-inspect an automatically injected memory block. No injection is also a valid
-outcome when Pallium abstains; use `pallium_query_debug` to inspect why.
-
-## Troubleshooting
+## Compatibility and troubleshooting
 
 | Symptom | Check |
 |---|---|
@@ -354,9 +351,74 @@ and/or nested `x-codex-turn-metadata`, with every supplied task ID agreeing.
 Missing or conflicting metadata fails closed before a delivery is claimed.
 Normal hook delivery is independent of this recovery path.
 
-## Configuration
+### Plugin Installation (Experimental)
 
-### Optional Windows shadow observation (under review)
+The integration is also structured as a Codex plugin at `integrations/codex/`.
+Plugin-local hooks may not execute reliably in current Codex CLI versions.
+Use `pallium setup codex` as the primary installation method.
+
+For testing the plugin path:
+
+```json
+{
+  "plugins": [{
+    "name": "pallium-memory",
+    "source": { "type": "path", "path": "/path/to/pallium/integrations/codex" }
+  }]
+}
+```
+
+## Reference
+
+### Architecture
+
+```
+┌────────────────────────┐
+│     Codex CLI          │
+│                        │
+│  hooks ──────────────────── HTTP ──┐
+│  MCP tools (stdio) ─────── HTTP ──┤
+└────────────────────────┘           │
+                                     ▼
+                              ┌─────────────┐
+                              │   Pallium   │
+                              │local service│
+                              │             │
+                              │ port 19836  │
+                              └──────┬──────┘
+                                     │
+                              ┌──────▼──────┐
+                              │ ~/.pallium/ │
+                              │   data/     │
+                              └─────────────┘
+```
+
+Pallium runs as an always-on local service independent of Codex's lifecycle.
+Multiple Codex sessions (same or different repos) share one Pallium instance.
+Relay routes exact endpoint IDs and service-global `@name` addresses across
+containers on that service. Session History and configured derived memory stay
+scoped by `container_ref` (derived from the git remote URL).
+
+### MCP Tools (Explicit)
+
+The main operations are:
+
+| Need | Tools |
+|---|---|
+| Get this session's Relay address | `pallium_relay_address` (identity is resolved by the integration) |
+| Find a recipient when its container is unknown | `pallium_relay_discover_recipients` (read-only candidates; verify before sending) |
+| Send or reply through Relay | `pallium_relay_recipients`, `pallium_relay_name`, `pallium_relay_send`, `pallium_relay_reply`, `pallium_relay_status` |
+| Search earlier sessions | `pallium_search_history`, then `pallium_expand_source` for surrounding turns |
+| Use optional derived memory | `pallium_query`, `pallium_expand`, `pallium_flag_memory`, `pallium_rate_memory`, `pallium_ingest`, and the explicit memory-write tools |
+| Check the service | `pallium_status` |
+
+`pallium_relay_receive` and `pallium_relay_ack` are recovery or non-hook
+integration tools. Do not use them in a task receiving Relay automatically
+through hooks.
+
+### Configuration
+
+#### Optional Windows shadow observation (under review)
 
 This is a diagnostic development mode, not unloaded-session wake delivery.
 Ordinary setup leaves it off. An approved operator policy can be provisioned
@@ -382,34 +444,17 @@ an enrolled/eligible status as delivered. Live activation remains separately gat
 | Prompt min length | 20 chars | Hardcoded |
 | Content-length gate (Stop) | 20K chars | Hardcoded |
 
-## Differences from Claude Code Integration
+### Differences from Claude Code Integration
 
 | Aspect | Claude Code | Codex |
 |--------|-------------|-------|
 | Hook events | SessionStart, UserPromptSubmit, Stop, PreCompact | SessionStart, UserPromptSubmit, Stop |
 | PreCompact | Re-injects before context compaction | Not available (no equivalent event) |
 | Config files | `~/.claude/settings.json`, `~/.claude/CLAUDE.md` | `~/.codex/config.toml`, `~/.codex/hooks.json`, `~/.codex/AGENTS.md` |
-| MCP transport | HTTP (streamable-http) | stdio (local process) |
+| MCP transport | stdio (local process) | stdio (local process) |
 | Setup command | `pallium setup claude-code` | `pallium setup codex` |
 
-## Plugin Installation (Experimental)
-
-The integration is also structured as a Codex plugin at `integrations/codex/`.
-Plugin-local hooks may not execute reliably in current Codex CLI versions.
-Use `pallium setup codex` as the primary installation method.
-
-For testing the plugin path:
-
-```json
-{
-  "plugins": [{
-    "name": "pallium-memory",
-    "source": { "type": "path", "path": "/path/to/pallium/integrations/codex" }
-  }]
-}
-```
-
-## Concurrent Sessions
+### Concurrent Sessions
 
 Multiple Codex sessions on the same local Pallium service work correctly:
 

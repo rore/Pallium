@@ -549,27 +549,152 @@ def test_codex_hook_records_unavailable_after_committed_http_claim(
     ],
 )
 def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
-    client, monkeypatch, tmp_path, capsys, response_delay, fragmented,
+    request, monkeypatch, tmp_path, capsys, response_delay, fragmented,
     expected_state, should_emit, delay_refresh, ack_response_delay=0.0, forward_delay=0.0,
 ):
     """Exercise actual hook urllib and /relay/turn through delayed loopback HTTP."""
+    from contextlib import ExitStack
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import socket
     import threading
     import time
+    import urllib.request
 
-    from app import codex_wake
+    import httpx
+    from app import codex_wake, dependencies, main as app_main, codex_bridge_pipe
+    from app.config import AppConfig
+    from app.main import create_app
     from integrations.codex.hooks import user_prompt_submit as hook
+    from scripts.live_funnel_smoke import ScratchServer
+    from storage.vector_index import VectorIndexConfig
+    from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+
+    cleanup = ExitStack()
+    request.addfinalizer(cleanup.close)
+    retained_resources = []
+    storage_closed = threading.Event()
+    original_storage = app_main.build_storage_provider
+
+    def own_storage(*args, **kwargs):
+        storage = original_storage(*args, **kwargs)
+        original_close = storage.close
+
+        def close():
+            original_close()
+            storage_closed.set()
+
+        monkeypatch.setattr(storage, "close", close)
+        cleanup.callback(storage.close)
+        return storage
+
+    monkeypatch.setattr(app_main, "build_storage_provider", own_storage)
+    monkeypatch.setattr(dependencies, "schedule_codex_relay_wake", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("app.mcp.server.create_server", lambda **_: (_ for _ in ()).throw(ImportError()))
+    monkeypatch.setattr(app_main, "start_claude_wake_reconciler", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_bridge_pipe, "start_shadow_service", lambda *_: None)
+    monkeypatch.setattr(codex_bridge_pipe, "start_inventory_service", lambda **_: None)
+    monkeypatch.setattr(codex_bridge_pipe, "start_retained_service", lambda **_: None)
+    app = create_app(AppConfig(
+        storage_backend="sqlite", sqlite_url=f"sqlite:///{tmp_path / 'main.db'}",
+        relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+        default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    ))
+    cleanup.callback(app.state.pallium_service.close)
+    assert app.state.codex_wake_registry.initialize(old_owner_drained=True)
+
+    class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *_args, **_kwargs):
+            return None
+
+    original_build_opener = hook._common._build_opener
+    monkeypatch.setattr(hook._common, "_build_opener", lambda *handlers: original_build_opener(
+        urllib.request.ProxyHandler({}), NoRedirectHandler(), *handlers,
+    ))
+    import scripts.live_funnel_smoke as live_funnel_smoke
+
+    def no_proxy_health(url, timeout=10.0):
+        response = httpx.get(
+            url, timeout=timeout, trust_env=False, follow_redirects=False,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    monkeypatch.setattr(live_funnel_smoke, "http_get_json", no_proxy_health)
 
     scope = {"container_ref": "git:example/repo"}
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        upstream_port = reservation.getsockname()[1]
+    upstream_server = ScratchServer(app, "127.0.0.1", upstream_port)
+    upstream_client = None
+    proxy_server = None
+    server_thread = None
+    proxy_handlers = []
+    proxy_started = threading.Event()
+    owned = {"cleaned": False, "server_entered": False}
+
+    def cleanup_owned():
+        if owned["cleaned"]:
+            return
+        owned["cleaned"] = True
+        errors = []
+
+        def attempt(operation):
+            try:
+                operation()
+            except BaseException as exc:
+                errors.append(exc)
+
+        if proxy_server is not None:
+            if proxy_started.is_set():
+                attempt(proxy_server.shutdown)
+            attempt(proxy_server.server_close)
+        if server_thread is not None:
+            attempt(lambda: server_thread.join(timeout=2))
+        for handler in proxy_handlers:
+            attempt(lambda handler=handler: handler.join(timeout=3))
+        handlers_drained = all(not handler.is_alive() for handler in proxy_handlers)
+        if handlers_drained and upstream_client is not None:
+            attempt(upstream_client.close)
+        attempt(lambda: upstream_server.__exit__())
+        upstream_thread_drained = upstream_server._thread is None or not upstream_server._thread.is_alive()
+        proxy_thread_drained = server_thread is None or not server_thread.is_alive()
+        storage_closed_by_lifespan = storage_closed.is_set()
+        if handlers_drained and upstream_thread_drained and proxy_thread_drained:
+            attempt(cleanup.close)
+        else:
+            # Retain resources rather than dispose underneath an unsettled owner.
+            retained_resources.extend((cleanup.pop_all(), upstream_client, upstream_server))
+        if not proxy_thread_drained:
+            errors.append(AssertionError("proxy server thread did not stop"))
+        if not handlers_drained:
+            errors.append(AssertionError("proxy request handlers did not drain"))
+        if not upstream_thread_drained:
+            errors.append(AssertionError("ScratchServer thread did not stop"))
+        if owned["server_entered"] and not storage_closed_by_lifespan:
+            errors.append(AssertionError("app lifespan did not close owned storage"))
+        if not storage_closed.is_set():
+            errors.append(AssertionError("owned app storage cleanup did not close storage"))
+        if errors:
+            raise errors[0]
+
+    request.addfinalizer(cleanup_owned)
+    upstream_server.__enter__()
+    owned["server_entered"] = True
+    upstream_client = httpx.Client(
+        base_url=upstream_server.base_url, timeout=5,
+        trust_env=False, follow_redirects=False,
+    )
     existing_refs = [{"scope_ref": scope["container_ref"], "local_ref": "git-branch:fix/existing"}]
-    assert client.post("/relay/turn", json={
+    assert upstream_client.post("/relay/turn", json={
         "runtime": "codex", "session_ref": "target-session", **scope,
         **({"structural_work_refs": existing_refs} if delay_refresh else {}),
     }).status_code == 200
-    assert client.post("/relay/turn", json={
+    assert upstream_client.post("/relay/turn", json={
         "runtime": "claude-code", "session_ref": "sender-session", **scope,
     }).status_code == 200
-    sent = client.post("/relay/messages", json={
+    sent = upstream_client.post("/relay/messages", json={
         "sender_runtime": "claude-code", "sender_session_ref": "sender-session",
         "recipient": "codex:target-session",
         "payload": "bounded loopback response check", **scope,
@@ -592,6 +717,7 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         monkeypatch.setattr(SQLiteRelayMixin, "relay_refresh_structural_work_refs", slow_refresh)
 
     response_finished = threading.Event()
+    ack_response_finished = threading.Event()
     ack_handlers = []
 
     import anyio
@@ -630,8 +756,13 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
     class Server(ThreadingHTTPServer):
         daemon_threads = True
 
+        def serve_forever(self, *args, **kwargs):
+            proxy_started.set()
+            return super().serve_forever(*args, **kwargs)
+
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
+            proxy_handlers.append(threading.current_thread())
             if self.path == "/relay/deliveries/ack":
                 ack_handlers.append(threading.current_thread())
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
@@ -639,12 +770,14 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
             stages.append(span)
             if self.path == "/relay/turn" and forward_delay:
                 time.sleep(forward_delay)
-            response = client.request(
+            response = upstream_client.request(
                 "POST", self.path, content=body,
                 headers={"content-type": self.headers.get("Content-Type", "application/json")},
             )
             span["returned"] = time.monotonic()
             span["status"] = response.status_code
+            if self.path == "/relay/deliveries/ack" and response.status_code == 200:
+                span["response"] = response.json()
             if response.status_code != 200:
                 span["error"] = response.json()
             if self.path == "/relay/turn":
@@ -677,17 +810,20 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
                 span["send_finished"] = time.monotonic()
                 if self.path == "/relay/turn":
                     response_finished.set()
+                elif self.path == "/relay/deliveries/ack":
+                    ack_response_finished.set()
 
         def log_message(self, *_args):
             return
 
-    server = Server(("127.0.0.1", 0), Handler)
+    proxy_server = Server(("127.0.0.1", 0), Handler)
     monkeypatch.setattr(
         hook._common, "PALLIUM_BASE_URL",
-        f"http://127.0.0.1:{server.server_port}",
+        f"http://127.0.0.1:{proxy_server.server_port}",
     )
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread = threading.Thread(target=proxy_server.serve_forever, daemon=True)
     server_thread.start()
+    assert proxy_started.wait(timeout=2)
     wake_events = []
     monkeypatch.setattr(hook, "read_hook_input", lambda: {
         "cwd": str(tmp_path), "session_id": "target-session",
@@ -713,15 +849,9 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         assert exited.value.code == 0
         assert hook_elapsed < 7.0  # eight-second host limit leaves one second outside the hook
         assert response_finished.wait(timeout=3)
+        if ack_response_delay:
+            assert ack_response_finished.wait(timeout=2)
     finally:
-        server.shutdown()
-        server.server_close()
-        server_thread.join(timeout=2)
-        for handler in ack_handlers:
-            handler.join(timeout=3)
-            settled = not handler.is_alive()
-            handler.join()
-            assert settled
         print("pallium delayed-http stages: " + json.dumps({
             "stages": stages[:32], "truncated": len(stages) > 32,
         }), file=sys.stderr)
@@ -729,7 +859,7 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
             json.dumps(stages), encoding="utf-8",
         )
 
-    trace_response = client.get(f"/relay/messages/{message_id}/trace")
+    trace_response = upstream_client.get(f"/relay/messages/{message_id}/trace")
     assert trace_response.status_code == 200, trace_response.text
     snapshot = next(
         row for row in trace_response.json()["delivery_snapshots"]
@@ -747,7 +877,7 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         assert snapshot["attempts"] == 1
     assert refresh_calls == []  # Exact delivery never enters optional post-claim work.
     if delay_refresh:
-        refs = client.get("/relay/sessions/work-refs", params={
+        refs = upstream_client.get("/relay/sessions/work-refs", params={
             "runtime": "codex", "session_ref": "target-session", **scope,
         })
         assert refs.status_code == 200, refs.text
@@ -773,8 +903,11 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
             "wake_events": wake_events[:16], "events_truncated": len(wake_events) > 16,
             "stderr": captured.err[:4000], "stderr_truncated": len(captured.err) > 4000,
         }
+        ack_span, = [span for span in stages if span.get("path") == "/relay/deliveries/ack"]
+        assert ack_span["status"] == 200
+        assert ack_span["response"]["delivery_id"] == delivery_id
+        assert ack_span["response"]["state"] == "delivered"
         if ack_response_delay:
-            ack_span, = [span for span in stages if span.get("path") == "/relay/deliveries/ack"]
             # Prove the response exceeds the ACK budget, not an exact sleep-duration SLA.
             assert ack_span["delay_finished"] - ack_span["delay_entered"] > 0.5
             assert "send_finished" in ack_span and len(ack_handlers) == 1
@@ -902,10 +1035,10 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
 
 
 def test_codex_exact_wake_late_ack_response_keeps_durable_delivery_without_confirmation(
-    client, monkeypatch, tmp_path, capsys,
+    request, monkeypatch, tmp_path, capsys,
 ):
     test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
-        client, monkeypatch, tmp_path, capsys, 0.0, False, "delivered", True, False,
+        request, monkeypatch, tmp_path, capsys, 0.0, False, "delivered", True, False,
         ack_response_delay=0.65,
     )
 
@@ -1989,12 +2122,26 @@ def test_confirmed_switch_does_not_attach_old_identity_to_new_pin(
     assert time.monotonic is original_monotonic
 
 
+def _legacy_scope_clock(common, monkeypatch):
+    from itertools import count
+    import time
+    from types import SimpleNamespace
+
+    # Scope outcomes use logical hook time; the paired native case owns expiry.
+    native_monotonic = time.monotonic
+    scoped_time = SimpleNamespace(**vars(common.time))
+    scoped_time.monotonic = count(step=.001).__next__
+    monkeypatch.setattr(common, "time", scoped_time)
+    assert time.monotonic is native_monotonic
+
+
 @pytest.mark.parametrize("runtime", ["claude-code", "codex"])
 def test_legacy_pin_bootstraps_endpoint_alias_and_queued_delivery(
     client, monkeypatch, tmp_path: Path, runtime: str, *, held_writer: bool = False,
 ):
     relative = "integrations/claude-code/hooks/common.py" if runtime == "claude-code" else "integrations/codex/hooks/common.py"
     common = _load(f"legacy_{runtime}", relative)
+    _legacy_scope_clock(common, monkeypatch)
     monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / f"{runtime}-sessions")
     old = "git:legacy/old"
     new = "git:legacy/new"
@@ -2089,11 +2236,15 @@ def test_legacy_pin_identity_read_does_not_acquire_held_writer(client, monkeypat
 
 @pytest.mark.parametrize("runtime", ["claude-code", "codex"])
 @pytest.mark.parametrize("state", ["closed", "unreachable"])
-def test_legacy_pin_read_preserves_final_inactive_move_refusal(client, monkeypatch, tmp_path, runtime, state):
+def test_legacy_pin_read_preserves_final_inactive_move_refusal(
+    client, monkeypatch, tmp_path, runtime, state, *, preflight="functional",
+):
     from storage.sqlite_schema import RelaySessionRecord
 
     relative = "integrations/claude-code/hooks/common.py" if runtime == "claude-code" else "integrations/codex/hooks/common.py"
     common = _load(f"inactive_legacy_{runtime}", relative)
+    if preflight != "native-delay":
+        _legacy_scope_clock(common, monkeypatch)
     monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "inactive-sessions")
     old, new = "git:legacy/old", "git:legacy/new"
     identity = {"runtime": runtime, "session_ref": "legacy-target", "container_ref": old}
@@ -2119,22 +2270,38 @@ def test_legacy_pin_read_preserves_final_inactive_move_refusal(client, monkeypat
                 assert row["state"] == "closed"
             else:
                 assert row["destination_health"] == "unreachable"
+            if preflight != "functional":
+                import time
+                time.sleep(0.8)  # Cross the unchanged .75-second hook preflight budget.
             return response.json()
         assert response.status_code == 409, response.text
         assert response.json() == {"detail": "Relay transition source is not active"}
         return None  # Existing transport's HTTP-error result; the native CAS refused.
 
     assert common.relay_turn(runtime, "legacy-target", new, request=request) is None
-    assert calls == [("GET", "/relay/sessions", 200), ("POST", "/relay/turn", 409)]
+    expected = [("GET", "/relay/sessions", 200)]
+    if preflight != "native-delay":
+        expected.append(("POST", "/relay/turn", 409))
+    assert calls == expected
     local = json.loads(state_path.read_text(encoding="utf-8"))
     assert local["container_ref"] == old
     assert local["last_confirmed_endpoint_id"] == endpoint
+    assert local["relay_turn_intent"]["destination_container_ref"] == new
     current = client.get("/relay/sessions", params=identity)
     assert current.status_code == 200
     assert current.json()[0]["endpoint_id"] == endpoint
     assert current.json()[0]["scope_generation"] == 0
     destination = client.get("/relay/sessions", params={**identity, "container_ref": new})
     assert destination.status_code == 200 and destination.json() == []
+
+
+@pytest.mark.parametrize("preflight", ["native-delay", "semantic-delay"])
+def test_legacy_pin_delayed_preflight_keeps_native_deadline_and_scope_semantics(
+    client, monkeypatch, tmp_path, preflight,
+):
+    test_legacy_pin_read_preserves_final_inactive_move_refusal(
+        client, monkeypatch, tmp_path, "codex", "closed", preflight=preflight,
+    )
 
 
 @pytest.mark.parametrize("runtime", ["claude-code", "codex"])
@@ -2145,6 +2312,7 @@ def test_legacy_pin_read_preserves_final_inactive_move_refusal(client, monkeypat
 def test_legacy_pin_identity_read_rejects_ambiguous_or_mismatched_response(monkeypatch, tmp_path, runtime, invalid):
     relative = "integrations/claude-code/hooks/common.py" if runtime == "claude-code" else "integrations/codex/hooks/common.py"
     common = _load(f"malformed_legacy_{runtime}", relative)
+    _legacy_scope_clock(common, monkeypatch)
     monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "malformed-sessions")
     common.SESSIONS_DIR.mkdir(parents=True)
     state_path = common.SESSIONS_DIR / "legacy-target.json"
@@ -2347,6 +2515,9 @@ def test_claude_relay_uses_utf8_and_skips_memory_after_a_claim(monkeypatch):
     from io import BytesIO
 
     hook = _load("claude_utf8", "integrations/claude-code/hooks/user_prompt_submit.py")
+    session_dir = hook.relay_turn.__globals__["SESSIONS_DIR"]
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / "utf8.lock").write_bytes(b"0")
     monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": ".", "session_id": "utf8", "prompt": "a sufficiently long prompt that must not query memory"})
     monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))

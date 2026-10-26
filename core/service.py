@@ -18,7 +18,7 @@ from core.consolidation_runner import ConsolidationRunner
 from core.container_ref import canonicalize_container_ref, validate_explicit_container_ref
 from core.filters import source_item_matches_filters
 from core.contracts import IngestResult, ItemProcessingResult, MemoryRetentionPolicy, ProcessResult, QueryResult, build_source_item
-from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, LookupRequestLinkError
+from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, LookupRequestLinkError, SourceTurnSnapshotConflictError
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
 from core.processing import (
     DEFAULT_PROCESSING_LEASE_SECONDS,
@@ -33,7 +33,7 @@ from core.turn_inference import resolve_runtime_context
 from core.type_registry import TypeRegistry
 from core.vector_embed import VectorEmbedder
 from core.vector_index_holder import VectorIndexHolder
-from core.models import HISTORICAL_GUIDANCE_MEMORY_TYPES, FlagResult, HistoricalGuidanceUpdate, InjectableBlock, MemoryFlag, MemoryObject, QueryFilters, QueryRuntimeContext, Relation, SourceItem, new_id, utc_now
+from core.models import HISTORICAL_GUIDANCE_MEMORY_TYPES, FlagResult, HistoricalGuidanceUpdate, IndexEntry, InjectableBlock, MemoryFlag, MemoryObject, MemoryTargetScope, QueryFilters, QueryRuntimeContext, Relation, SourceItem, new_id, utc_now
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.visibility import is_visible
 from providers.embedding.base import EmbeddingProvider
@@ -47,7 +47,39 @@ from core.text import normalize_for_index as _normalize_for_index
 from core.work_ref import _normalize_work_ref, _normalize_work_refs
 
 _WORK_REFS_METADATA_KEY = "pallium_work_refs"
+_ROLE_HISTORY_SOURCE_TYPES = frozenset({"codex", "claude-code", "opencode", "hermes"})
 _ANY_CONTAINER = object()
+
+
+def _validate_role_source_dedupe(
+    existing: SourceItem,
+    *,
+    role_history_source: bool,
+    role: str | None,
+    container_ref: str | None,
+    thread_ref: str | None,
+    source_turn_id: str | None,
+    relay_name: str | None,
+    relay_attribution_state: str,
+) -> None:
+    """Reject source-ID retries that disagree with immutable role attribution."""
+    if not role_history_source:
+        return
+    if (
+        existing.forgotten_at is not None
+        or existing.role != role
+        or existing.container_ref != container_ref
+        or existing.thread_ref != thread_ref
+        or existing.source_turn_id != source_turn_id
+    ):
+        raise SourceTurnSnapshotConflictError("conflicting source item identity")
+    # Rows without a usable turn key retain their legacy/unknown meaning. A
+    # keyed request is never allowed to relabel one of those rows.
+    if source_turn_id is not None and (
+        existing.relay_name != relay_name
+        or existing.relay_attribution_state != relay_attribution_state
+    ):
+        raise SourceTurnSnapshotConflictError("conflicting source turn snapshot")
 
 def _sanitize_work_ref_metadata(metadata: dict | None) -> dict | None:
     """Keep safe work refs and bounded diagnostics without changing selection."""
@@ -432,15 +464,113 @@ class PalliumService:
         source_ref: str | None = None,
         artifact_kind: str | None = None,
         visibility: str | None = None,
+        source_turn_id: str | None = None,
+        relay_name: str | None = None,
+        relay_attribution_state: str = "unknown",
     ) -> IngestResult:
         container_ref = canonicalize_container_ref(container_ref)
+        # Relay attribution is accepted only on a supported host's user snapshot.
+        # Assistant submissions cannot choose or overwrite the historical name;
+        # they can only correlate to the immutable same-scope user row.
+        role_history_source = source_type in _ROLE_HISTORY_SOURCE_TYPES and role in {"user", "assistant"}
+        prior_turn_snapshot = None
+        if role_history_source:
+            requested_relay_name = relay_name
+            requested_relay_state = relay_attribution_state
+            key_is_valid = (
+                self._storage.supports_source_turn_snapshots()
+                and isinstance(source_turn_id, str)
+                and bool(source_turn_id)
+                and source_turn_id == source_turn_id.strip()
+                and len(source_turn_id) <= 512
+                and not any(ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F for char in source_turn_id)
+                and isinstance(container_ref, str) and bool(container_ref)
+                and isinstance(thread_ref, str) and bool(thread_ref.strip())
+            )
+            source_turn_id = source_turn_id if key_is_valid else None
+            relay_name = None
+            relay_attribution_state = "unavailable"
+            if role == "user" and key_is_valid:
+                relay_attribution_state_input = requested_relay_state
+                if relay_attribution_state_input == "named":
+                    try:
+                        from core.relay import validate_alias
+                        canonical_name = validate_alias(requested_relay_name)
+                    except (TypeError, ValueError):
+                        canonical_name = None
+                    if canonical_name is not None:
+                        relay_name = canonical_name
+                        relay_attribution_state = "named"
+                elif relay_attribution_state_input == "unnamed" and requested_relay_name is None:
+                    relay_attribution_state = "unnamed"
+                # Equivalent retries reuse the immutable first snapshot. A
+                # changed state/name is a source conflict and fails closed.
+                try:
+                    prior_turn_snapshot = self._storage.find_source_turn_snapshot(
+                        source_type, container_ref, thread_ref, source_turn_id
+                    )
+                except ValueError as exc:
+                    raise SourceTurnSnapshotConflictError(
+                        "conflicting source turn snapshot"
+                    ) from exc
+                if prior_turn_snapshot is not None:
+                    if prior_turn_snapshot.forgotten_at is not None:
+                        raise SourceTurnSnapshotConflictError(
+                            "source turn snapshot has been forgotten"
+                        )
+                    if (
+                        prior_turn_snapshot.relay_name != relay_name
+                        or prior_turn_snapshot.relay_attribution_state != relay_attribution_state
+                    ):
+                        raise SourceTurnSnapshotConflictError(
+                            "conflicting source turn snapshot"
+                        )
+            elif role == "assistant" and key_is_valid:
+                try:
+                    prior_turn_snapshot = self._storage.find_source_turn_snapshot(
+                        source_type, container_ref, thread_ref, source_turn_id
+                    )
+                except ValueError as exc:
+                    raise SourceTurnSnapshotConflictError(
+                        "conflicting source turn snapshot"
+                    ) from exc
+                if prior_turn_snapshot is not None:
+                    if prior_turn_snapshot.forgotten_at is not None:
+                        raise SourceTurnSnapshotConflictError(
+                            "source turn snapshot has been forgotten"
+                        )
+                    relay_name = prior_turn_snapshot.relay_name
+                    relay_attribution_state = prior_turn_snapshot.relay_attribution_state
+                else:
+                    raise SourceTurnSnapshotConflictError(
+                        "source turn snapshot is unavailable"
+                    )
+        else:
+            source_turn_id = None
+            relay_name = None
+            relay_attribution_state = "unknown"
+
         existing_source_item = self._storage.find_source_item(source_type=source_type, source_id=source_id)
         if existing_source_item is not None:
+            _validate_role_source_dedupe(
+                existing_source_item,
+                role_history_source=role_history_source,
+                role=role,
+                container_ref=container_ref,
+                thread_ref=thread_ref,
+                source_turn_id=source_turn_id,
+                relay_name=relay_name,
+                relay_attribution_state=relay_attribution_state,
+            )
             vector_entry = self._vector_embedder.build_source_item_vector_entry(existing_source_item)
             if vector_entry is not None and existing_source_item.processing_status != "pending":
                 if self._vector_embedder.embed_and_persist_vector_entry(vector_entry):
                     self._vector_embedder.save_vector_index()
             return self._build_ingest_result(existing_source_item)
+        # Equivalent start retries may use a fresh source ID, but the existing
+        # user row remains the single immutable representative of this turn.
+        if role_history_source and role == "user" and prior_turn_snapshot is not None:
+            return self._build_ingest_result(prior_turn_snapshot)
 
         requested_package = use_case or self._default_use_case
         if use_case is not None and requested_package not in self._configured_use_cases:
@@ -518,6 +648,9 @@ class PalliumService:
             source_ref=source_ref,
             artifact_kind=artifact_kind,
             visibility=visibility,
+            source_turn_id=source_turn_id,
+            relay_name=relay_name,
+            relay_attribution_state=relay_attribution_state,
             use_case=requested_package if plugin is not None else None,
             processing_status=processing_status,
             processing_completed_at=processing_completed_at,
@@ -531,10 +664,52 @@ class PalliumService:
                 active_packages,
                 skip_packages=skip_packages,
             )
-        except IntegrityError:
+        except IntegrityError as integrity_error:
             existing = self._storage.find_source_item(source_type=source_type, source_id=source_id)
             if existing is not None:
+                _validate_role_source_dedupe(
+                    existing,
+                    role_history_source=role_history_source,
+                    role=role,
+                    container_ref=container_ref,
+                    thread_ref=thread_ref,
+                    source_turn_id=source_turn_id,
+                    relay_name=relay_name,
+                    relay_attribution_state=relay_attribution_state,
+                )
                 return self._build_ingest_result(existing)
+            # Two equivalent user-start retries can pass the optimistic
+            # snapshot lookup before either insert commits. Recover only the
+            # SQLite partial-index collision; other integrity failures must
+            # remain visible to the caller.
+            snapshot_unique_error = (
+                str(getattr(integrity_error, "orig", ""))
+                == "UNIQUE constraint failed: source_items.source_type, source_items.container_ref, "
+                "source_items.thread_ref, source_items.source_turn_id"
+            )
+            if (
+                snapshot_unique_error
+                and role_history_source
+                and role == "user"
+                and source_turn_id is not None
+            ):
+                try:
+                    prior = self._storage.find_source_turn_snapshot(
+                        source_type, container_ref, thread_ref, source_turn_id
+                    )
+                except ValueError as exc:
+                    raise SourceTurnSnapshotConflictError(
+                        "conflicting source turn snapshot"
+                    ) from exc
+                if prior is not None:
+                    if prior.forgotten_at is not None or (
+                        prior.relay_name != relay_name
+                        or prior.relay_attribution_state != relay_attribution_state
+                    ):
+                        raise SourceTurnSnapshotConflictError(
+                            "conflicting source turn snapshot"
+                        ) from integrity_error
+                    return self._build_ingest_result(prior)
             raise
         self._storage.create_index_entry(
             build_index_entry(
@@ -1020,6 +1195,7 @@ class PalliumService:
         include_trace: bool = False,
         trigger_origin: str | None = None,
         source_only: bool = False,
+        relay_name: str | None = None,
         record_history_lookup: bool = True,
         defer_delivery: bool = False,
         exclude_item_id: str | None = None,
@@ -1074,7 +1250,26 @@ class PalliumService:
             trigger_origin=trigger_origin,
             source_only=source_only,
             exclude_source_identity=exclude_source_identity,
+            relay_name=relay_name,
         )
+        if source_only and container_ref is not None and relay_name is not None:
+            coverage_filters = {
+                "source_type": source_type or "codex",
+                "role": role,
+                "artifact_kind": artifact_kind,
+                "thread_ref": thread_ref,
+                "actor_ref": actor_ref,
+                "work_refs": work_refs,
+            }
+            result = dataclasses.replace(
+                result,
+                incomplete_attribution=self._storage.has_incomplete_source_attribution(
+                    container_ref=container_ref,
+                    query_visibility=visibility,
+                    query_actor_ref=actor_ref,
+                    **coverage_filters,
+                ),
+            )
         # PR 0 step 8: retrieval barrier (defense in depth).
         # Even if a secret slips past the write barrier + LLM-response
         # wrapper (e.g. was persisted before PR 0, or a redaction miss),
@@ -1621,13 +1816,27 @@ class PalliumService:
     FLAG_SUPPRESSION_THRESHOLD = 2
     FLAG_WINDOW_DAYS = 30
 
+    @staticmethod
+    def _check_target_scope(target: MemoryObject | SourceItem, target_scope: MemoryTargetScope | None) -> None:
+        if target_scope is not None and (
+            canonicalize_container_ref(target.container_ref), target.actor_ref, target.visibility
+        ) != (target_scope.container_ref, target_scope.actor_ref, target_scope.visibility):
+            raise KeyError(target.id)
+
+    def _memory_target(self, memory_object_id: str, target_scope: MemoryTargetScope | None) -> MemoryObject:
+        memory = self._storage.get_memory_object(memory_object_id)
+        self._check_target_scope(memory, target_scope)
+        return memory
+
     def flag_memory_object(
         self,
         memory_object_id: str,
         reason: str,
         source_ref: str,
         immediate: bool = False,
+        target_scope: MemoryTargetScope | None = None,
     ) -> FlagResult:
+        memory = self._memory_target(memory_object_id, target_scope)
         flag = MemoryFlag(
             memory_object_id=memory_object_id,
             reason=reason,
@@ -1635,7 +1844,6 @@ class PalliumService:
         )
         self._storage.store_memory_flag(flag)
 
-        memory = self._storage.get_memory_object(memory_object_id)
         suppressed = memory.lifecycle == "suppressed"
 
         if not suppressed and memory.lifecycle == "active":
@@ -1672,12 +1880,15 @@ class PalliumService:
         rater_ref: str | None,
         thread_ref: str | None = None,
         container_ref: str | None = None,
+        target_scope: MemoryTargetScope | None = None,
     ) -> str:
         """Record a relevance feedback judgment for an injected memory.
 
-        Returns the feedback record id. Always succeeds — 200 even for deleted memories.
+        Unscoped feedback succeeds even when the target no longer exists.
         """
         container_ref = canonicalize_container_ref(container_ref)
+        if target_scope is not None:
+            self._memory_target(memory_object_id, target_scope)
         return self._storage.record_memory_feedback(
             memory_object_id=memory_object_id,
             rating=rating,
@@ -1720,27 +1931,19 @@ class PalliumService:
             return "memory_object.investigation_context"
         return "memory_object.summary"
 
-    def _index_explicit_write(
+    def _explicit_write_index_entries(
         self,
         memory_object_id: str,
         memory_type: str,
         text: str,
-    ) -> None:
-        """Emit lexical + (best-effort) vector index entries for an
-        explicit-write memory so it is retrievable immediately.
-
-        The extraction pipeline goes through _persist_process_result which
-        writes index entries alongside the memory; explicit writes take a
-        different code path (single storage.create_memory_object call), so
-        we index here explicitly. Without this the memory exists but is
-        invisible to /query — see scenario 5 wiring.
-        """
+    ) -> list[IndexEntry]:
+        """Build lexical and available vector entries before explicit persistence."""
         # Local import — avoid circular / heavy import at module load.
         from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
         from semantic.common import normalize_for_index  # type: ignore
 
         text_view = normalize_for_index(text)
-        self._storage.create_index_entry(
+        entries = [
             build_index_entry(
                 target_kind="memory_object",
                 target_id=memory_object_id,
@@ -1748,7 +1951,7 @@ class PalliumService:
                 text_view=text_view,
                 text_view_name=self._w3_memory_text_view_name(memory_type),
             )
-        )
+        ]
         # Vector index is best-effort. If no embedding provider is
         # configured, skip silently — the memory remains retrievable via
         # lexical search which is enough for scenario 5's assertion.
@@ -1757,7 +1960,7 @@ class PalliumService:
                 VECTOR_EMBEDDING_PROVIDER_NAME,
                 VECTOR_EMBEDDING_PROVIDER_VERSION,
             )
-            self._storage.create_index_entry(
+            entries.append(
                 build_index_entry(
                     target_kind="memory_object",
                     target_id=memory_object_id,
@@ -1769,7 +1972,17 @@ class PalliumService:
                 )
             )
         except Exception:  # noqa: BLE001 -- vector index is best-effort
-            logger.debug("W3 explicit write: skipping vector index entry", exc_info=True)
+            self._logger.debug("W3 explicit write: skipping vector index entry", exc_info=True)
+        return entries
+
+    def _index_explicit_write(self, memory_object_id: str, memory_type: str, text: str) -> None:
+        for entry in self._explicit_write_index_entries(memory_object_id, memory_type, text):
+            try:
+                self._storage.create_index_entry(entry)
+            except Exception:  # noqa: BLE001 -- preserve best-effort vector persistence
+                if entry.index_type == "lexical":
+                    raise
+                self._logger.debug("W3 explicit write: skipping vector index entry", exc_info=True)
 
     def remember_memory(
         self,
@@ -1822,6 +2035,7 @@ class PalliumService:
             container_ref=container_ref,
             actor_ref=actor_ref,
             visibility=visibility,
+            origin="agent_explicit",
         )
         self._storage.create_memory_object(memory)
         self._storage.mark_memory_origin(
@@ -1842,6 +2056,7 @@ class PalliumService:
         *,
         corrected_text: str,
         reason: str,
+        target_scope: MemoryTargetScope | None = None,
     ) -> bool:
         """pallium_correct: in-place fix. Returns True on success.
 
@@ -1849,15 +2064,40 @@ class PalliumService:
         is not currently active — corrections must target the head of the
         supersession chain, not a stale entry.
         """
-        existing = self._storage.get_memory_object(memory_object_id)
+        existing = self._memory_target(memory_object_id, target_scope)
         new_payload = dict(existing.payload)
         new_payload["statement"] = corrected_text
         new_payload["source"] = "agent_explicit_correction"
+        old_vector_ids = [
+            entry.id
+            for entry in self._storage.list_index_entries_for_target("memory_object", memory_object_id)
+            if entry.index_type == "vector"
+        ]
+        index_entries = self._explicit_write_index_entries(
+            memory_object_id, existing.type, corrected_text
+        )
         self._storage.correct_memory_payload(
             memory_object_id,
             new_payload=new_payload,
             correction_reason=reason,
+            index_entries=index_entries,
         )
+        vector_index = self._vector_index
+        vector_index_changed = False
+        if vector_index is not None:
+            for entry_id in old_vector_ids:
+                try:
+                    vector_index.remove(entry_id)
+                    vector_index_changed = True
+                except KeyError:
+                    pass
+                except Exception:  # Correction is already committed.
+                    self._logger.warning("Could not remove stale vector entry %s", entry_id, exc_info=True)
+        for entry in index_entries:
+            if entry.index_type == "vector":
+                vector_index_changed |= self._vector_embedder.embed_and_persist_vector_entry(entry)
+        if vector_index_changed:
+            self._vector_embedder.save_vector_index()
         return True
 
     def supersede_memory(
@@ -1874,6 +2114,7 @@ class PalliumService:
         agent_ref: str | None = None,
         origin_session_id: str | None = None,
         origin_agent_id: str | None = None,
+        target_scope: MemoryTargetScope | None = None,
     ) -> tuple[str, str]:
         """pallium_supersede: explicit chain — new memory replaces old.
 
@@ -1882,7 +2123,7 @@ class PalliumService:
         SupersessionConflictError if the old memory is not currently
         active (surfaces as 409 to the MCP caller).
         """
-        old = self._storage.get_memory_object(supersedes_id)
+        old = self._memory_target(supersedes_id, target_scope)
         container_ref, actor_ref, thread_ref, agent_ref, visibility = (
             self._validate_explicit_provenance(
                 container_ref=container_ref,
@@ -1912,31 +2153,26 @@ class PalliumService:
             container_ref=container_ref,
             actor_ref=actor_ref,
             visibility=visibility,
-        )
-        self._storage.create_memory_object(new_memory)
-        self._storage.mark_memory_origin(
-            new_memory.id,
             origin="agent_explicit",
+        )
+        self._storage.create_explicit_supersession(
+            supersedes_id,
+            new_memory,
+            index_entries=self._explicit_write_index_entries(new_memory.id, resolved_type, new_text),
             origin_session_id=thread_ref,
             origin_agent_id=agent_ref,
-        )
-        # Same as remember_memory: index the new memory so it's
-        # retrievable immediately. The old memory's index entries remain
-        # in place; retrieval filters superseded rows out via lifecycle.
-        self._index_explicit_write(new_memory.id, resolved_type, new_text)
-        self._storage.link_supersession(
-            supersedes_id,
-            new_memory.id,
             correction_reason=reason,
         )
         return (supersedes_id, new_memory.id)
 
-    def forget_memory(self, memory_object_id: str, *, reason: str) -> bool:
+    def forget_memory(self, memory_object_id: str, *, reason: str, target_scope: MemoryTargetScope | None = None) -> bool:
         """pallium_forget: soft-delete with tombstone.
 
         Idempotent: returns True on first call, False if the memory was
         already soft-deleted.
         """
+        if target_scope is not None:
+            self._memory_target(memory_object_id, target_scope)
         return self._storage.soft_delete_memory(memory_object_id, reason=reason)
 
     def forget_source(
@@ -1947,6 +2183,7 @@ class PalliumService:
         thread_ref: str | None = None,
         reason: str,
         actor_ref: str | None = None,
+        target_scope: MemoryTargetScope | None = None,
     ) -> dict:
         """User-requested forgetting of raw source turns (soft + auditable).
 
@@ -1970,6 +2207,8 @@ class PalliumService:
             )
         container_ref = canonicalize_container_ref(container_ref)
         if source_item_id is not None:
+            if target_scope is not None:
+                self._check_target_scope(self._storage.get_source_item(source_item_id), target_scope)
             forgotten = self._storage.forget_source_item(
                 source_item_id, reason=reason, actor_ref=actor_ref,
             )
@@ -1979,11 +2218,14 @@ class PalliumService:
                 "count": 1 if forgotten else 0,
             }
         if container_ref is not None:
+            if target_scope is not None and container_ref != target_scope.container_ref:
+                raise ValueError("container_ref must match target_scope.container_ref")
             count = self._storage.forget_source_scope(
                 container_ref=container_ref,
                 thread_ref=thread_ref,
                 reason=reason,
                 actor_ref=actor_ref,
+                target_scope=target_scope,
             )
             return {
                 "container_ref": container_ref,
@@ -2006,6 +2248,7 @@ class PalliumService:
         agent_ref: str | None = None,
         origin_session_id: str | None = None,
         origin_agent_id: str | None = None,
+        target_scope: MemoryTargetScope | None = None,
     ) -> bool:
         """pallium_record_outcome: attach an outcome to an operational-fact
         procedure. Feeds W4 success/failure counters.
@@ -2030,7 +2273,7 @@ class PalliumService:
         )
         # Confirm the procedure exists so we don't accept dangling references.
         try:
-            self._storage.get_memory_object(procedure_id)
+            self._memory_target(procedure_id, target_scope)
         except KeyError as exc:
             raise KeyError(f"procedure_id {procedure_id!r} not found") from exc
 
@@ -2420,8 +2663,12 @@ class PalliumService:
 
     def get_memory_expand(
         self, memory_object_id: str, *, container_ref: str | None = None, query_actor_ref: str | None = None,
+        query_visibility: str | None = None,
     ) -> tuple[dict | None, list[SourceItem], str | None]:
         """Return structured payload, source items, and a Phase-5b match-text view.
+
+        Supplied requester actor/visibility gates the anchor and every evidence
+        item through canonical visibility; actor is not an exact metadata filter.
 
         The ``match_text`` (3rd tuple element) is the per-type text the
         usage-audit worker compares against the assistant's
@@ -2440,7 +2687,16 @@ class PalliumService:
         memory_object = self._storage.get_memory_object(memory_object_id)
         container_ref = canonicalize_container_ref(container_ref)
         effective_container = container_ref or memory_object.container_ref
-        if container_ref and memory_object.visibility != "global" and memory_object.container_ref != container_ref:
+        if query_visibility is not None and query_visibility not in ("public", "container", "private", "global"):
+            raise ValueError("invalid query_visibility")
+        requester_supplied = query_actor_ref is not None or query_visibility is not None
+        effective_actor_ref = query_actor_ref if requester_supplied else memory_object.actor_ref
+        if requester_supplied and not is_visible(
+            memory_object.visibility, memory_object.container_ref, effective_container,
+            memory_object.actor_ref, query_visibility=query_visibility, query_actor_ref=effective_actor_ref,
+        ):
+            raise KeyError(memory_object_id)
+        if not requester_supplied and container_ref and memory_object.visibility != "global" and memory_object.container_ref != container_ref:
             raise KeyError(memory_object_id)
         refs = self._storage.get_evidence_for_memory_object(memory_object_id)
         items: list[SourceItem] = []
@@ -2455,8 +2711,7 @@ class PalliumService:
             # per-item is_visible drop below).
             if item.forgotten:
                 continue
-            effective_actor_ref = query_actor_ref or memory_object.actor_ref
-            if is_visible(item.visibility, item.container_ref, effective_container, item.actor_ref, query_actor_ref=effective_actor_ref):
+            if is_visible(item.visibility, item.container_ref, effective_container, item.actor_ref, query_visibility=query_visibility, query_actor_ref=effective_actor_ref):
                 # Note artifacts bypass redaction — same carveout as
                 # the write barrier at ``ingest_item`` (a user-explicit
                 # verbatim recall surface).

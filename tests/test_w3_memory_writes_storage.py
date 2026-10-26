@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 import pytest
 
 from core.errors import SupersessionConflictError
-from core.models import MemoryObject
+from core.models import IndexEntry, MemoryObject
 from storage.sqlite import SQLiteStorageProvider
 
 
@@ -262,6 +262,95 @@ class TestCorrectMemoryPayload:
                 new_payload={"statement": "x"},
                 correction_reason="test",
             )
+
+    def test_replaces_indexes_atomically_and_skips_failed_optional_vector(self, store, monkeypatch):
+        store.create_memory_object(_make_memory("m1", {"statement": "old payload"}))
+        old_lexical = IndexEntry(
+            id="old-lexical", target_kind="memory_object", target_id="m1",
+            index_type="lexical", text_view="obsolete phrase",
+        )
+        old_vector = IndexEntry(
+            id="old-vector", target_kind="memory_object", target_id="m1",
+            index_type="vector", text_view="obsolete phrase",
+        )
+        store.create_index_entry(old_lexical)
+        store.create_index_entry(old_vector)
+        new_lexical = IndexEntry(
+            id="new-lexical", target_kind="memory_object", target_id="m1",
+            index_type="lexical", text_view="corrected phrase",
+        )
+        new_vector = IndexEntry(
+            id="new-vector", target_kind="memory_object", target_id="m1",
+            index_type="vector", text_view="corrected phrase",
+        )
+        add_entry = store._add_index_entry
+
+        def fail_optional_vector(session, entry):
+            if entry.id == new_vector.id:
+                raise RuntimeError("optional vector persistence failed")
+            add_entry(session, entry)
+
+        monkeypatch.setattr(store, "_add_index_entry", fail_optional_vector)
+        store.correct_memory_payload(
+            "m1", new_payload={"statement": "corrected phrase"},
+            correction_reason="correction", index_entries=[new_lexical, new_vector],
+        )
+
+        assert store.get_memory_object("m1").payload == {"statement": "corrected phrase"}
+        entries = store.list_index_entries_for_target("memory_object", "m1")
+        assert [(entry.id, entry.index_type) for entry in entries] == [("new-lexical", "lexical")]
+        with store._engine.connect() as conn:
+            fts = conn.exec_driver_sql(
+                "SELECT index_entry_id, text_view FROM lexical_fts"
+            ).all()
+        assert [(row.index_entry_id, row.text_view) for row in fts] == [
+            ("new-lexical", "corrected phrase")
+        ]
+
+    def test_lexical_index_failure_rolls_back_payload_and_old_indexes(self, store, monkeypatch):
+        store.create_memory_object(_make_memory("m1", {"statement": "old payload"}))
+        old = IndexEntry(
+            id="old-lexical", target_kind="memory_object", target_id="m1",
+            index_type="lexical", text_view="obsolete phrase",
+        )
+        store.create_index_entry(old)
+        add_entry = store._add_index_entry
+
+        def fail_new_lexical(session, entry):
+            if entry.id == "new-lexical":
+                raise RuntimeError("lexical persistence failed")
+            add_entry(session, entry)
+
+        monkeypatch.setattr(store, "_add_index_entry", fail_new_lexical)
+        with pytest.raises(RuntimeError, match="lexical persistence failed"):
+            store.correct_memory_payload(
+                "m1", new_payload={"statement": "new payload"},
+                correction_reason="correction", index_entries=[IndexEntry(
+                    id="new-lexical", target_kind="memory_object", target_id="m1",
+                    index_type="lexical", text_view="corrected phrase",
+                )],
+            )
+
+        assert store.get_memory_object("m1").payload == {"statement": "old payload"}
+        assert [entry.id for entry in store.list_index_entries_for_target("memory_object", "m1")] == [
+            "old-lexical"
+        ]
+
+    def test_omitted_index_entries_preserves_legacy_indexes(self, store):
+        store.create_memory_object(_make_memory("m1", {"statement": "old payload"}))
+        old = IndexEntry(
+            id="old-lexical", target_kind="memory_object", target_id="m1",
+            index_type="lexical", text_view="existing index text",
+        )
+        store.create_index_entry(old)
+        store.correct_memory_payload(
+            "m1", new_payload={"statement": "new payload"},
+            correction_reason="legacy caller",
+        )
+
+        assert [entry.id for entry in store.list_index_entries_for_target("memory_object", "m1")] == [
+            "old-lexical"
+        ]
 
 
 class TestInvariant1Compliance:

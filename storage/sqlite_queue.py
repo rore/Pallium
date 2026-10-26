@@ -107,8 +107,18 @@ class SQLiteQueueMixin:
     def _begin_relay_immediate(self):
         """Bounded write acquisition for short Relay transactions."""
         deadline = time.monotonic() + self._RELAY_IMMEDIATE_ACQUISITION_SECONDS
-        if not self._relay_writer_lock.acquire(timeout=max(0, deadline - time.monotonic())):
+        gate = self._relay_writer_lock
+        if not gate.acquire(timeout=max(0, deadline - time.monotonic())):
             raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage="local_gate")
+        owns_gate = True
+
+        def release_gate():
+            nonlocal owns_gate
+            if owns_gate:
+                # Cleanup must never release a successor's gate, even if release raises.
+                owns_gate = False
+                gate.release()
+
         try:
             # Charge local contention and native retries to the same allowance.
             with self._begin_immediate_for(
@@ -117,10 +127,11 @@ class SQLiteQueueMixin:
                 busy_timeout_ms=self._RELAY_IMMEDIATE_BUSY_TIMEOUT_MS,
                 busy_backoff_seconds=0,
                 acquisition_deadline=deadline,
+                on_settled=release_gate,
             ) as session:
                 yield session
         finally:
-            self._relay_writer_lock.release()
+            release_gate()
 
     @contextmanager
     def _begin_low_priority_relay_write(self):
@@ -158,6 +169,7 @@ class SQLiteQueueMixin:
         busy_timeout_ms: int | None = None,
         busy_backoff_seconds: float | None = None,
         acquisition_deadline: float | None = None,
+        on_settled=None,
     ):
         """Start a transaction with BEGIN IMMEDIATE for exclusive claim operations.
 
@@ -255,23 +267,31 @@ class SQLiteQueueMixin:
                         raise busy_error(first_deadline_stage or "backoff_no_fit") from exc
                     time.sleep(pause)
         assert session is not None and conn is not None
+        settled = False
         try:
             yield session
             session.flush()
             conn.execute(text("COMMIT"))
+            settled = True
         except BaseException:
             try:
                 conn.execute(text("ROLLBACK"))
             except Exception:
                 pass
+            else:
+                settled = True
             raise
         finally:
             try:
-                conn.execute(text(f"PRAGMA busy_timeout={self._DEFAULT_BUSY_TIMEOUT_MS}"))
-            except Exception:
-                pass
+                if settled and on_settled is not None:
+                    on_settled()
             finally:
-                session.close()
+                try:
+                    conn.execute(text(f"PRAGMA busy_timeout={self._DEFAULT_BUSY_TIMEOUT_MS}"))
+                except Exception:
+                    pass
+                finally:
+                    session.close()
 
     def claim_next_source_item(
         self,

@@ -127,6 +127,8 @@ def test_work_record_checker_accepts_valid_and_rejects_invalid(tmp_path: Path) -
         ([".claude/skills/example/SKILL.md"], {"red": [], "blue": [], "gray": [".claude/skills/example/SKILL.md"], "watch": [".claude/skills/example/SKILL.md"]}, [], "", 1),
         (["tests/behavior_contracts/caller.md"], {"red": ["tests/behavior_contracts/caller.md"], "blue": [], "gray": [], "watch": []}, [], "", 0),
         (["scripts/helper.py"], {"red": [], "blue": ["scripts/helper.py"], "gray": [], "watch": []}, [], "", 0),
+        (["roles/owner.md", "roles/mapping.yaml", "roles/開発者.md"], {"red": [], "blue": ["roles/owner.md", "roles/mapping.yaml", "roles/開発者.md"], "gray": [], "watch": []}, [], "", 0),
+        (["roles/nested/guide.md", "roles/other.yaml", "roles/run.py", "roles/guide.md.py"], {"red": [], "blue": [], "gray": ["roles/nested/guide.md", "roles/other.yaml", "roles/run.py", "roles/guide.md.py"], "watch": []}, [], "", 1),
         (["build/generated.py"], {"red": [], "blue": [], "gray": [], "watch": []}, [], "", 0),
         (["misc/例え.md"], {"red": [], "blue": [], "gray": ["misc/例え.md"], "watch": []}, [], "", 1),
         ([], {"red": [], "blue": [], "gray": [], "watch": []}, [], "", 0),

@@ -5,6 +5,7 @@
 
 # Parallel · Session History
 - investigate-history-navigation-and-on-demand-compression
+- add-persistent-role-history
 
 # Parallel · Runtime Expansion
 - add-hermes-agent-integration

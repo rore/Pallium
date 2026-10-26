@@ -44,6 +44,16 @@ Both search tools accept an optional `source_thread_ref` for exact historical
 thread filtering. Omit it for broad cross-session History; the active requesting
 session is tracked independently for telemetry and response grouping.
 
+To search turns recorded under an exact Relay name, first call
+`pallium_relay_address` for the current session and pass its `relay_name` to
+`pallium_search_history`. Codex records the name from the validated turn-start
+Relay response and links delayed assistant output through the native turn ID.
+Legacy, unavailable, or unsupported-host attribution is never inferred; the
+response may set `incomplete_attribution` when eligible older Codex sources lack
+name evidence. The name filter does not widen container access, and normal
+redaction and forgetting rules still apply. Claude turn correlation is not yet
+supported.
+
 Search answers “where did we discuss this?” Expansion answers “what was the
 surrounding reasoning?” The bounds keep one match from turning into an entire
 transcript replay.
@@ -118,6 +128,15 @@ The current scope model is intended for one local operator. It is not a
 cross-user sharing or authorization system.
 
 ## Available now
+
+Integration catalogs differ. The [Hermes integration](hermes-integration.md)
+always exposes the three search/expansion tools below and captures private
+hook-observed text snapshots. An explicit setup opt-in adds source forgetting
+and the optional derived-memory tool catalog; neither promises automatic memory
+injection. History diagnostics remain unavailable. Completion capture has no
+current `request_source_item_id`. Automatic standalone MCP reconnection remains
+unqualified. See its guide for
+capture limits and provenance.
 
 - broad topic search across accessible earlier sessions with `pallium_search_history`
 - exact-reference search with `pallium_search_history_by_work_ref`

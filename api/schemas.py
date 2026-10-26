@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from core.relay import RELAY_DEFAULT_EXPIRY_SECONDS, RELAY_MESSAGE_MAX_CHARS
 from core.visibility import Visibility
+from core.models import MemoryTargetScope
 
 
 ArtifactKind = Literal["message", "assistant_output", "tool_use_summary", "todo_snapshot", "notification", "note"]
@@ -47,6 +48,9 @@ class ItemCreateRequest(BaseModel):
     source_ref: str | None = None
     artifact_kind: ArtifactKind | None = None
     visibility: Visibility | VisibilityContextModel | None = None
+    source_turn_id: str | None = Field(default=None, min_length=1, max_length=512)
+    relay_name: str | None = Field(default=None, min_length=1, max_length=32)
+    relay_attribution_state: Literal["named", "unnamed", "unavailable", "unknown"] = "unknown"
 
     def visibility_kind(self) -> str | None:
         if isinstance(self.visibility, VisibilityContextModel):
@@ -119,6 +123,7 @@ class QueryRequest(BaseModel):
     request_source_item_id: str | None = None
     actor_ref: str | None = None
     work_refs: list[str] | None = None
+    relay_name: str | None = Field(default=None, min_length=1, max_length=32)
     visibility: Visibility | VisibilityContextModel | None = None
     runtime_context: RuntimeContextModel | None = None
     # Phase 4 (2026-06-27): opaque label identifying which deterministic
@@ -138,6 +143,14 @@ class QueryRequest(BaseModel):
         # references are rejected without Pydantic echoing the request body.
         if not self.text.strip() and self.trigger_origin != "agent_pull_work":
             raise ValueError("text must be non-empty")
+        if self.relay_name is not None and not self.source_only:
+            raise ValueError("relay_name is supported only for source-only History search")
+        if self.relay_name is not None:
+            from core.relay import validate_alias
+            try:
+                self.relay_name = validate_alias(self.relay_name)
+            except ValueError:
+                raise ValueError("invalid relay_name") from None
         return self
 
     def visibility_kind(self) -> str | None:
@@ -245,6 +258,8 @@ class QueryResultResponse(BaseModel):
     artifact_kind: ArtifactKind | None = None
     visibility: str = "private"
     retrieval_source: str | None = None
+    relay_name: str | None = None
+    relay_attribution_state: Literal["named", "unnamed", "unavailable", "unknown"] = "unknown"
     # Source-only search: 1-based rank within the source-only page; None otherwise.
     raw_rank: int | None = None
     work_refs: list[str] = Field(default_factory=list)
@@ -278,6 +293,7 @@ class QueryResponse(BaseModel):
     # Additive and non-breaking.
     lookup_event_id: str | None = None
     delivery_attempt_id: str | None = None
+    incomplete_attribution: bool = False
 
 
 class MemoryEvidenceItemResponse(BaseModel):
@@ -466,6 +482,9 @@ class ItemAndQueryRequest(BaseModel):
     source_ref: str | None = None
     artifact_kind: ArtifactKind | None = None
     visibility: Visibility | VisibilityContextModel | None = None
+    source_turn_id: str | None = Field(default=None, min_length=1, max_length=512)
+    relay_name: str | None = Field(default=None, min_length=1, max_length=32)
+    relay_attribution_state: Literal["named", "unnamed", "unavailable", "unknown"] = "unknown"
     query_text: str | None = None
     query_limit: int = Field(default=5, ge=1, le=50)
     query_actor_ref: str | None = None
@@ -574,6 +593,7 @@ class RetryFailedProcessingResponse(BaseModel):
 
 
 class FlagMemoryRequest(BaseModel):
+    target_scope: MemoryTargetScope | None = None
     reason: str = Field(min_length=1)
     source_ref: str = Field(min_length=1)
     immediate: bool = False
@@ -587,6 +607,7 @@ class FlagMemoryResponse(BaseModel):
 
 
 class MemoryFeedbackRequest(BaseModel):
+    target_scope: MemoryTargetScope | None = None
     rating: Literal["relevant", "not_relevant"]
     reason: str | None = None
     query_context: str | None = None
@@ -710,6 +731,7 @@ class CorrectMemoryRequest(BaseModel):
     instead — that keeps the old memory in the audit chain and creates a
     new one.
     """
+    target_scope: MemoryTargetScope | None = None
     corrected_text: str = Field(min_length=1, max_length=_MAX_MEMORY_TEXT_CHARS)
     reason: str = Field(
         min_length=1,
@@ -730,6 +752,7 @@ class SupersedeMemoryRequest(BaseModel):
     and gets a pointer to the new one via superseded_by_id. Retrieval
     hides superseded rows by default; retrospective queries opt in.
     """
+    target_scope: MemoryTargetScope | None = None
     new_text: str = Field(min_length=1, max_length=_MAX_MEMORY_TEXT_CHARS)
     supersedes_id: str = Field(min_length=1)
     reason: str | None = Field(default=None, max_length=_MAX_REASON_CHARS)
@@ -774,6 +797,7 @@ class ForgetMemoryRequest(BaseModel):
     Idempotent: forgetting an already-forgotten memory returns
     forgotten=False without modifying anything.
     """
+    target_scope: MemoryTargetScope | None = None
     reason: str = Field(min_length=1, max_length=_MAX_REASON_CHARS)
 
 
@@ -795,6 +819,7 @@ class ForgetSourceRequest(BaseModel):
     Idempotent per item: re-forgetting an already-forgotten turn does not
     modify it.
     """
+    target_scope: MemoryTargetScope | None = None
     source_item_id: str | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
@@ -817,6 +842,7 @@ class RecordOutcomeRequest(BaseModel):
     for audit; NOT used to update retrieval ranking until W4 integration
     testing verifies the contract end-to-end.
     """
+    target_scope: MemoryTargetScope | None = None
     procedure_id: str = Field(min_length=1)
     outcome: Literal["success", "failure", "inconclusive"]
     evidence: list[str] | None = Field(default=None, max_length=5)

@@ -2736,9 +2736,13 @@ def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
     assert registration.state == "idle" and registration.delivery_id is None
 
 
+@pytest.mark.parametrize("force_claim_refusals", [False, True])
+@pytest.mark.parametrize("with_prompt_id", [False, True])
 def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
-    client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys,
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys, force_claim_refusals, with_prompt_id,
 ) -> None:
+    import time
+    from core.errors import ImmediateTransactionBusyError
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -2787,8 +2791,18 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
         })
         return response.status_code == 204
 
+    phase, hook_requests, refusals, acknowledged_ids = ["initial-stop"], [], [], []
+
     def relay_request(method, path, body, *, timeout=0.75):
+        hook_requests.append((phase[0], method, path))
         response = http.request(method, path, json=body)
+        if response.status_code == 503:
+            assert path == "/relay/turn"
+            assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+            assert response.json()["detail"]["retryable"] is True
+            assert response.headers["Retry-After"] == "1"
+            refusals.append((phase[0], dict(body)))
+            return None
         assert response.status_code == 200, response.text
         return response.json() if response.content else None
 
@@ -2802,10 +2816,12 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
             })
             assert response.status_code == 200
             acknowledged.append(delivery)
+            acknowledged_ids.append(delivery["delivery_id"])
         return acknowledged
 
     stop = _load_claude_hook("stop", monkeypatch)
     monkeypatch.setattr(sys.modules[stop.relay_turn.__module__], "SESSIONS_DIR", tmp_path / "hook-sessions")
+    monkeypatch.setattr(sys.modules[stop.relay_turn.__module__], "STATE_DIR", tmp_path / "hook-state")
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
     monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(stop, "register_claude_wake", register)
@@ -2830,37 +2846,183 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
     assert transported.wait(timeout=0.5)
     assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
 
+    forced, turn = [], relay._store.relay_turn
+
+    def refuse_claim(**kwargs):
+        if (force_claim_refusals and phase[0] in {"prompt", "stop"}
+                and phase[0] not in forced and kwargs.get("max_chars", 0) > 0):
+            assert kwargs["runtime"] == "claude-code" and kwargs["session_ref"] == PAYLOAD["session_ref"]
+            forced.append(phase[0])
+            raise ImmediateTransactionBusyError("controlled lifecycle refusal", acquisition_stage="late_begin")
+        return turn(**kwargs)
+
+    monkeypatch.setattr(relay._store, "relay_turn", refuse_claim)
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
     monkeypatch.setattr(sys.modules[prompt.relay_turn.__module__], "SESSIONS_DIR", tmp_path / "hook-sessions")
+    monkeypatch.setattr(sys.modules[prompt.relay_turn.__module__], "STATE_DIR", tmp_path / "hook-state")
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
     monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(prompt, "register_claude_wake", register)
     monkeypatch.setattr(prompt, "relay_request", relay_request)
     monkeypatch.setattr(prompt, "acknowledge_relay", acknowledge)
-    monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
     monkeypatch.setattr(
         prompt,
         "pallium_request",
         lambda *_args, **_kwargs: pytest.fail("Relay recovery must not ingest synthetic memory"),
     )
+    prompt_id = "00000000-0000-4000-8000-000000000001" if with_prompt_id else None
     monkeypatch.setattr(prompt, "read_hook_input", lambda: {
         "session_id": PAYLOAD["session_ref"],
         "cwd": str(tmp_path),
-        "prompt": "Pallium Relay wake: a persisted delivery may be pending.",
+        "prompt": "Pallium Relay wake notice: new messages available.",
+        "prompt_id": prompt_id,
     })
 
-    with pytest.raises(SystemExit):
-        prompt.main()
+    common = sys.modules[prompt.relay_turn.__module__]
+    if with_prompt_id:
+        assert common.source_turn_key(prompt_id) == prompt_id
+    notice = "Pallium Relay wake notice: new messages available."
+    assert common.check_dedup(notice, PAYLOAD["session_ref"]) is False
+    assert common.check_dedup(notice, PAYLOAD["session_ref"]) is True
+    expected_fence, = registry.recovery_candidates()
+    assert expected_fence["state"] == "wake_inflight"
+    assert (expected_fence["runtime"], expected_fence["session_ref"], expected_fence["container_ref"],
+            expected_fence["delivery_id"]) == ("claude-code", PAYLOAD["session_ref"], scope["container_ref"], claimed["delivery_id"])
+    output, deadline = "", time.monotonic() + 5
 
-    assert "wake after crash ✓" in capsys.readouterr().out
+    def assert_fenced():
+        pending = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+        assert (pending["delivery_id"], pending["state"], pending["attempts"]) == (
+            claimed["delivery_id"], claimed["state"], claimed["attempts"],
+        )
+        assert relay.pending_candidate(runtime="claude-code", session_ref=PAYLOAD["session_ref"],
+                                       delivery_id=claimed["delivery_id"], **scope) == {
+            "delivery_id": claimed["delivery_id"], "recipient_endpoint_id": claimed["recipient_endpoint_id"],
+            "state": "pending",
+        }
+        assert pending["recipient_endpoint_id"] == claimed["recipient_endpoint_id"]
+        assert acknowledged_ids == [] and "wake after crash ✓" not in output
+        assert registry.recovery_candidates() == [expected_fence]
+        before_transport = tuple(transport_calls)
+        recover_expired_relay_wakes(relay, registry)
+        assert tuple(transport_calls) == before_transport
+        return pending
+
+    phase[0], before_requests, before_refusals = "prompt", len(hook_requests), len(refusals)
+    try:
+        prompt.main()
+    except SystemExit as prompted:
+        assert prompted.code == 0
+    captured = capsys.readouterr()
+    output += captured.out + captured.err
+    assert len(hook_requests) == before_requests + 1
     delivered = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+    if delivered["state"] != "delivered":
+        assert len(refusals) == before_refusals + 1
+        assert_fenced()
+        # These Stops are explicit later host events; reconciliation cannot create them.
+        for _ in range(8):
+            assert time.monotonic() < deadline, "Claude recovery exceeded wall-time bound"
+            phase[0], before_requests, before_refusals = "stop", len(hook_requests), len(refusals)
+            try:
+                stop.main()
+            except SystemExit as stopped:
+                assert stopped.code == 2
+            captured = capsys.readouterr()
+            output += captured.out + captured.err
+            assert len(hook_requests) == before_requests + 1
+            delivered = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+            if delivered["state"] == "delivered":
+                break
+            assert len(refusals) == before_refusals + 1
+            assert_fenced()
+        else:
+            pytest.fail("Claude recovery exceeded eight explicit natural Stop events")
+    assert time.monotonic() < deadline, "Claude recovery exceeded wall-time bound"
+    assert len(transport_calls) == 1  # An accepted wake remains fenced until its exact ACK.
+    assert forced == (["prompt", "stop"] if force_claim_refusals else [])
+    assert output.count("wake after crash ✓") == 1
+    assert acknowledged_ids == [claimed["delivery_id"]]
+    assert registry.recovery_candidates() == []
     assert delivered["state"] == "delivered" and delivered["attempts"] == 2
+    (tmp_path / "claude-recovery-boundary.json").write_text(json.dumps({
+        "forced": forced, "http_refusals": refusals, "hook_requests": hook_requests,
+        "native_wakes": len(transport_calls), "delivered": delivered["delivery_id"],
+    }), encoding="utf-8")
     transport_calls.clear()
     recover_expired_relay_wakes(relay, registry)
     assert transport_calls == []
     assert relay.turn(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope
     )["deliveries"] == []
+
+    # An overtaken notice is still coordination, even with no remaining delivery.
+    phase[0], before_requests = "overtaken-notice", len(hook_requests)
+    prompt.main()
+    captured = capsys.readouterr()
+    assert "wake after crash ✓" not in captured.out + captured.err
+    assert len(hook_requests) == before_requests + 1
+    assert acknowledged_ids == [claimed["delivery_id"]]
+
+
+@pytest.mark.parametrize("decoration", ["exact", "prefix", "suffix"])
+def test_claude_empty_wake_notice_and_near_match_memory_boundaries(client, monkeypatch, tmp_path, decoration):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.dependencies import build_router
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    notice = "Pallium Relay wake notice: new messages available."
+    text = {"exact": notice, "prefix": "Please explain: " + notice, "suffix": notice + " user note"}[decoration]
+    scope = {"container_ref": PAYLOAD["container_ref"]}
+    app = FastAPI()
+    app.include_router(build_router(client.app.state.pallium_service,
+                                   relay_storage=client.app.state.pallium_service._storage,
+                                   claude_wake_registry=ClaudeWakeRegistry()))
+    with TestClient(app, client=("127.0.0.1", 50000)) as http:
+        hook = _load_claude_hook("user_prompt_submit", monkeypatch)
+        common = sys.modules[hook.relay_turn.__module__]
+        monkeypatch.setattr(common, "STATE_DIR", tmp_path / "hook-state")
+        monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "hook-sessions")
+        monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: scope["container_ref"])
+        monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "local")
+        monkeypatch.setattr(hook, "read_hook_input", lambda: {
+            "session_id": PAYLOAD["session_ref"], "cwd": str(tmp_path), "prompt": text,
+        })
+        relay_calls, memory_calls = [], []
+
+        def register(session, container, **kwargs):
+            response = http.post("/internal/claude-wake/register", json={
+                **PAYLOAD, "session_ref": session, "container_ref": container, "idle": kwargs.get("idle", False),
+            })
+            assert response.status_code == 204
+            return True
+
+        def relay_request(method, path, body, **kwargs):
+            response = http.request(method, path, json=body)
+            assert response.status_code == 200, response.text
+            assert response.json()["deliveries"] == []
+            relay_calls.append((method, path))
+            return response.json()
+
+        def memory_request(method, path, body):
+            memory_calls.append((method, path, body))
+            return {"injectable_blocks": []}
+
+        monkeypatch.setattr(hook, "register_claude_wake", register)
+        monkeypatch.setattr(hook, "relay_request", relay_request)
+        monkeypatch.setattr(hook, "pallium_request", memory_request)
+        monkeypatch.setattr(hook, "acknowledge_relay", lambda *_a, **_k: pytest.fail("Empty notice must not ACK"))
+        for invocation in (1, 2):
+            try:
+                hook.main()
+            except SystemExit as exited:
+                assert exited.code == 0
+            assert len(relay_calls) == (invocation if decoration == "exact" else 1)
+            assert len(memory_calls) == (0 if decoration == "exact" else 1)
+        if decoration != "exact":
+            method, path, body = memory_calls[0]
+            assert (method, path, body["content"], body["query_text"]) == ("POST", "/item-and-query", text, text)
 
 
 def test_cross_container_duplicate_native_claude_endpoints_wake_independently(

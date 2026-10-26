@@ -43,8 +43,11 @@ function installFetch(routes) {
     const body = init && init.body ? JSON.parse(init.body) : null;
     fetchCalls.push({ url: String(url), method: init && init.method, body });
     const key = Object.keys(routes).find((k) => String(url).includes(k));
-    const payload = key ? routes[key] : {};
-    return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
+    const result = key ? (typeof routes[key] === "function" ? routes[key](body) : routes[key]) : {};
+    const resolved = result && typeof result.then === "function" ? await result : result;
+    const status = Number.isInteger(resolved?.__status) ? resolved.__status : 200;
+    const payload = Number.isInteger(resolved?.__status) ? resolved.payload : resolved;
+    return { ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(payload) };
   };
 }
 
@@ -104,6 +107,118 @@ assert.match(system[0], /\[End Pallium memory\]/);
   assert.match(system[0], /Relay association enrichment was unavailable/);
 });
 
+test("V1 role history keeps the start-name snapshot and links delayed Stop by native parentID", async () => {
+  let currentAlias = "planner";
+  const relayTurn = (body) => ({
+    session: {
+      runtime: "opencode", session_ref: "sesRoleHistory", container_ref: body.container_ref,
+      alias: currentAlias,
+    },
+    deliveries: [],
+  });
+  installFetch({
+    "/relay/turn": relayTurn,
+    "/item-and-query": oneBlock,
+    "/items": [{ source_item_id: "assistant-role-history" }],
+  });
+  const client = makeClient([{
+    info: { role: "user", id: "user-role-turn-1" },
+    parts: [{ type: "text", text: "remember this prompt for its exact turn role" }],
+  }, {
+    info: { role: "assistant", id: "assistant-role-turn-1", parentID: "user-role-turn-1" },
+    parts: [{ type: "text", text: "assistant output arrives after ownership changed" }],
+  }]);
+  const hooks = await loadPlugin({ client, directory: nonGitDir });
+  await hooks["chat.message"]({}, {
+    message: { sessionID: "sesRoleHistory", role: "user", id: "user-role-turn-1" },
+    parts: [{ type: "text", text: "remember this prompt for its exact turn role" }],
+  });
+
+  const userCapture = fetchCalls.find((call) => call.url.includes("/item-and-query"));
+  assert.equal(userCapture.body.source_turn_id, "user-role-turn-1");
+  assert.equal(userCapture.body.relay_name, "planner");
+  assert.equal(userCapture.body.relay_attribution_state, "named");
+  assert.match(userCapture.body.source_id, /^oc-user-[0-9a-f]{64}$/);
+
+  // Simulate a takeover after prompt admission. The delayed assistant capture
+  // must use the source message's parentID, not query current ownership.
+  currentAlias = "successor";
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "sesRoleHistory" } } });
+  const assistantCapture = fetchCalls.find((call) => call.url.endsWith("/items"));
+  assert.ok(assistantCapture);
+  assert.equal(assistantCapture.body[0].source_turn_id, "user-role-turn-1");
+  assert.match(assistantCapture.body[0].source_id, /^oc-assistant-[0-9a-f]{64}$/);
+  assert.equal(Object.hasOwn(assistantCapture.body[0], "relay_name"), false);
+  assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/turn")).length, 1);
+});
+
+test("V1 retries of one in-flight native message share one immutable Relay snapshot", async () => {
+  let resolveTurn;
+  installFetch({
+    "/relay/turn": (body) => new Promise((resolve) => {
+      resolveTurn = () => resolve({
+        session: {
+          runtime: "opencode", session_ref: "sesRoleRetry", container_ref: body.container_ref,
+          alias: "planner",
+        },
+        deliveries: [],
+      });
+    }),
+    "/item-and-query": oneBlock,
+  });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  const output = {
+    message: { sessionID: "sesRoleRetry", role: "user", id: "user-role-retry" },
+    parts: [{ type: "text", text: "retry the exact same native message without changing its turn snapshot" }],
+  };
+  const first = hooks["chat.message"]({}, output);
+  const second = hooks["chat.message"]({}, output);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/turn")).length, 1);
+  resolveTurn();
+  await Promise.all([first, second]);
+  const captures = fetchCalls.filter((call) => call.url.includes("/item-and-query"));
+  assert.equal(captures.length, 2);
+  assert.deepEqual(captures.map((call) => call.body.source_turn_id), ["user-role-retry", "user-role-retry"]);
+  assert.deepEqual(captures.map((call) => call.body.relay_name), ["planner", "planner"]);
+});
+
+test("V1 same-ID retry after ingestion failure reuses the captured turn snapshot", async () => {
+  let identity = "planner";
+  let ingestionAttempts = 0;
+  installFetch({
+    "/relay/turn": (body) => ({
+      session: {
+        runtime: "opencode", session_ref: "sesRoleFailureRetry", container_ref: body.container_ref,
+        alias: identity,
+      },
+      deliveries: [],
+    }),
+    "/item-and-query": () => {
+      ingestionAttempts += 1;
+      return ingestionAttempts === 1
+        ? { __status: 503, payload: { detail: "temporary failure" } }
+        : oneBlock;
+    },
+  });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  const output = {
+    message: { sessionID: "sesRoleFailureRetry", role: "user", id: "user-role-failure-retry" },
+    parts: [{ type: "text", text: "retry after a transient ingestion failure with the exact same native message" }],
+  };
+  await hooks["chat.message"]({}, output);
+  identity = "successor";
+  await hooks["chat.message"]({}, output);
+
+  const captures = fetchCalls.filter((call) => call.url.includes("/item-and-query"));
+  assert.equal(captures.length, 2);
+  assert.deepEqual(captures.map((call) => call.body.source_turn_id), [
+    "user-role-failure-retry", "user-role-failure-retry",
+  ]);
+  assert.deepEqual(captures.map((call) => call.body.relay_name), ["planner", "planner"]);
+  assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/turn")).length, 1);
+});
+
 test("chat.message treats empty response work-ref metadata as authoritative", async () => {
   installFetch({ "/item-and-query": { ...oneBlock, work_ref_metadata: {} } });
   const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
@@ -154,7 +269,7 @@ test("event session.idle reads the last assistant message and ingests it via /it
   const messages = [
     { info: { role: "user", id: "u1" }, parts: [{ type: "text", text: "do the thing" }] },
     {
-      info: { role: "assistant", id: "a1" },
+      info: { role: "assistant", id: "a1", parentID: " u1 " },
       parts: [
         { type: "text", text: "Done. I edited the file." },
         { type: "tool", tool: "read", state: { status: "completed", input: { filePath: "src/a.js" }, output: "" } },
@@ -175,6 +290,7 @@ test("event session.idle reads the last assistant message and ingests it via /it
   assert.equal(item.agent_ref, "opencode");
   assert.equal(item.thread_ref, "sesD");
   assert.equal(item.content, "Done. I edited the file.");
+  assert.equal(Object.hasOwn(item, "source_turn_id"), false, "missing native parent linkage stays uncorrelated");
   assert.ok(item.metadata && item.metadata.agent_work_trace_turn, "attaches work-trace metadata");
   assert.deepEqual(item.metadata.agent_work_trace_turn.files_read, ["src/a.js"]);
   assert.deepEqual(item.metadata.agent_work_trace_turn.files_modified, ["src/b.js"]);

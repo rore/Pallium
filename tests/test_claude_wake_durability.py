@@ -869,11 +869,24 @@ def test_reconciler_does_not_retry_uncertain_native_write(
     )
 
     observed: list[tuple[str, object, object, int]] = []
+    first_transport_finished = threading.Event()
     accepted = threading.Event()
+    workers: list[threading.Thread] = []
+    original_schedule = claude_wake.schedule_claude_relay_wake
+
+    def capture_worker(*args, **kwargs):
+        worker = original_schedule(*args, **kwargs)
+        if worker is not None:
+            workers.append(worker)
+        return worker
+
+    monkeypatch.setattr(claude_wake, "schedule_claude_relay_wake", capture_worker)
 
     def transport(_socket_path: str, _token: str) -> str:
         delivery = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
         observed.append((delivery["state"], delivery["claim_token"], delivery["receipt"], delivery["attempts"]))
+        if len(observed) == 1:
+            first_transport_finished.set()
         if len(observed) == 4:
             accepted.set()
             return "accepted"
@@ -883,14 +896,23 @@ def test_reconciler_does_not_retry_uncertain_native_write(
     reconciler = ClaudeWakeReconciler(registry, relay, interval_seconds=0.01)
     reconciler.start()
     try:
+        assert first_transport_finished.wait(timeout=5), "wake transport did not complete its status read"
         assert not accepted.wait(timeout=0.1), observed
     finally:
         reconciler.stop()
-    assert observed == [("pending", None, None, 0)]
-    assert reconciler._thread is not None and not reconciler._thread.is_alive()
+        reconciler_thread = reconciler._thread
+        if reconciler_thread is not None:
+            reconciler_thread.join(timeout=2)
+        for worker in tuple(workers):
+            worker.join(timeout=5)
+        assert reconciler_thread is not None and not reconciler_thread.is_alive()
+        assert all(not worker.is_alive() for worker in workers)
 
+    assert observed == [("pending", None, None, 0)]
+
+@pytest.mark.parametrize("transport_result", ("accepted", "retryable"))
 def test_recovery_does_not_rearm_inflight_while_native_worker_is_active(
-    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, transport_result: str,
 ) -> None:
     import threading
 
@@ -919,6 +941,9 @@ def test_recovery_does_not_rearm_inflight_while_native_worker_is_active(
     }
     started = threading.Event()
     release = threading.Event()
+    recovery_started = threading.Event()
+    recovery_finished = threading.Event()
+    transport_watchdog_failed = threading.Event()
     retried = threading.Event()
     transport_calls: list[tuple[str, str]] = []
 
@@ -926,27 +951,60 @@ def test_recovery_does_not_rearm_inflight_while_native_worker_is_active(
         transport_calls.append((socket_path, token))
         if len(transport_calls) == 1:
             started.set()
-            assert release.wait(timeout=1)
+            if not release.wait(timeout=5):
+                transport_watchdog_failed.set()
         else:
             retried.set()
-        return "accepted"
+        return transport_result
 
     monkeypatch.setattr(claude_wake, "claude_wake_transport", transport)
+    original_recover_registration_intents = claude_wake.recover_claude_registration_intents
+
+    def observe_recovery_start(registry_arg, relay_arg):
+        recovery_started.set()
+        return original_recover_registration_intents(registry_arg, relay_arg)
+
+    monkeypatch.setattr(claude_wake, "recover_claude_registration_intents", observe_recovery_start)
     worker = claude_wake.schedule_claude_relay_wake(result, scope, registry=registry)
-    assert worker is not None and started.wait(timeout=1)
-    wall[0] = 102.0
+    assert worker is not None
+    recovery_errors: list[BaseException] = []
+
+    def recover() -> None:
+        try:
+            claude_wake.recover_claude_relay_wakes(registry, relay)
+        except BaseException as exc:
+            recovery_errors.append(exc)
+        finally:
+            recovery_finished.set()
+
+    recovery_thread: threading.Thread | None = None
     try:
-        claude_wake.recover_claude_relay_wakes(registry, relay)
+        assert started.wait(timeout=1)
+        wall[0] = 102.0
+        recovery_thread = threading.Thread(target=recover, name="claude-wake-held-recovery")
+        recovery_thread.start()
+        assert recovery_started.wait(timeout=5)
+        assert not recovery_finished.wait(timeout=0.1)
         assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
-        candidate = next(iter(registry.recovery_candidates()))
-        assert candidate["state"] == "wake_inflight" and candidate["delivery_id"] == delivery["delivery_id"]
         pending = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
         assert pending["state"] == "pending"
         assert tuple(pending[key] for key in ("claim_token", "receipt", "attempts")) == (None, None, 0)
     finally:
         release.set()
-        worker.join(timeout=1)
-    assert not worker.is_alive()
+        worker.join(timeout=5)
+        if recovery_thread is not None:
+            recovery_thread.join(timeout=5)
+        assert not worker.is_alive()
+        assert recovery_thread is None or not recovery_thread.is_alive()
+
+    assert not transport_watchdog_failed.is_set(), "held native transport exceeded its bounded release wait"
+    assert recovery_finished.is_set()
+    assert not recovery_errors, recovery_errors
+    candidate = next(iter(registry.recovery_candidates()))
+    assert candidate["state"] == "wake_inflight" and candidate["delivery_id"] == delivery["delivery_id"]
+    pending = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+    assert pending["state"] == "pending"
+    assert tuple(pending[key] for key in ("claim_token", "receipt", "attempts")) == (None, None, 0)
 
     claude_wake.recover_claude_relay_wakes(registry, relay)
     assert not retried.is_set()
@@ -1977,7 +2035,7 @@ def test_corrupt_scoped_intent_cannot_suppress_valid_legacy_fence(
 
 @pytest.mark.parametrize("outcome", ("accepted", "uncertain"))
 def test_durable_attempt_fences_same_endpoint_after_scope_move(
-    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str,
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str, record_property,
 ) -> None:
     from app import claude_wake
     from core.relay import RelayService
@@ -2023,13 +2081,49 @@ def test_durable_attempt_fences_same_endpoint_after_scope_move(
         )
         return ActivationAttemptResult(outcome, "controlled", evidence)
 
+    completed = threading.Event()
+    prepared_attempts = []
+    trace_errors = []
+
+    def trace(event: dict[str, object]) -> None:
+        try:
+            assert event["delivery_id"] == delivery["delivery_id"]
+            assert event["recipient_endpoint_id"] == endpoint_id
+            if event["stage"] == "prepared":
+                assert not completed.is_set()
+                attempt_id = event["attempt_id"]
+                assert isinstance(attempt_id, str) and attempt_id
+                assert attempt_id not in prepared_attempts
+                prepared_attempts.append(attempt_id)
+            elif event["stage"] == "completed":
+                assert prepared_attempts
+                assert event["attempt_id"] == prepared_attempts[-1]
+                assert not completed.is_set()
+                completed.set()
+        except Exception as error:
+            trace_errors.append(error)
+
+    def wait_for_completion(worker: threading.Thread, phase: str, count: int) -> None:
+        observed = completed.wait(timeout=max(0.0, deadline - time.monotonic()))
+        worker.join(timeout=max(0.0, deadline - time.monotonic()))
+        finished = time.monotonic()
+        record_property(phase + "_completion_elapsed_seconds", finished - started)
+        assert not worker.is_alive()
+        assert finished <= deadline
+        assert not trace_errors, trace_errors
+        assert observed and len(prepared_attempts) == count
+
     monkeypatch.setattr(claude_wake, "claude_wake_transport", transport)
+    # Approved test watchdog; not a production completion guarantee.
+    started = time.monotonic()
+    deadline = started + 5.0
     worker = claude_wake.schedule_claude_relay_wake(
-        result, old, registry=registry, relay_service=relay,
+        result, old, registry=registry, relay_service=relay, trace_callback=trace,
     )
     assert worker is not None
-    worker.join(timeout=1)
-    assert not worker.is_alive() and len(native_writes) == 1
+    wait_for_completion(worker, "initial", 1)
+    assert len(native_writes) == 1
+    completed.clear()
     retained = registry.recovery_candidates()
     assert len(retained) == 1
     assert retained[0]["state"] == "wake_inflight"
@@ -2059,11 +2153,10 @@ def test_durable_attempt_fences_same_endpoint_after_scope_move(
         }],
     }
     retry = claude_wake.schedule_claude_relay_wake(
-        retry_result, new, registry=restarted,
+        retry_result, new, registry=restarted, trace_callback=trace,
     )
     assert retry is not None
-    retry.join(timeout=1)
-    assert not retry.is_alive()
+    wait_for_completion(retry, "retry", 2)
     assert len(native_writes) == 1
     retained = [
         item for item in restarted.recovery_candidates()

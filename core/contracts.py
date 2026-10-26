@@ -163,6 +163,7 @@ class QueryResult:
     # source_only query, attached after the reuse-event row is persisted.
     # None on the proactive/injection path. See PalliumService.query.
     lookup_event_id: str | None = None
+    incomplete_attribution: bool = False
     # Internal source-only observations; never serialized by normal query surfaces.
     _source_only_diagnostics: dict[str, int] = field(default_factory=dict)
 
@@ -190,6 +191,9 @@ def build_source_item(
     source_ref: str | None = None,
     artifact_kind: str | None = None,
     visibility: str = "private",
+    source_turn_id: str | None = None,
+    relay_name: str | None = None,
+    relay_attribution_state: str = "unknown",
     use_case: str | None = None,
     processing_status: str = "pending",
     processing_attempts: int = 0,
@@ -215,6 +219,9 @@ def build_source_item(
         source_ref=source_ref,
         artifact_kind=artifact_kind,
         visibility=visibility,
+        source_turn_id=source_turn_id,
+        relay_name=relay_name,
+        relay_attribution_state=relay_attribution_state,
         use_case=use_case,
         processing_status=processing_status,
         processing_attempts=processing_attempts,
@@ -235,6 +242,7 @@ def build_query_filters(
     thread_ref: str | None = None,
     actor_ref: str | None = None,
     work_refs: tuple[str, ...] = (),
+    relay_name: str | None = None,
 ) -> QueryFilters | None:
     filters = QueryFilters(
         source_type=source_type,
@@ -244,8 +252,9 @@ def build_query_filters(
         thread_ref=thread_ref,
         actor_ref=actor_ref,
         work_refs=work_refs,
+        relay_name=relay_name,
     )
-    if not any(value is not None for value in (filters.source_type, filters.role, filters.artifact_kind, filters.container_ref, filters.thread_ref, filters.actor_ref)) and not filters.work_refs:
+    if not any(value is not None for value in (filters.source_type, filters.role, filters.artifact_kind, filters.container_ref, filters.thread_ref, filters.actor_ref, filters.relay_name)) and not filters.work_refs:
         return None
     return filters
 
@@ -273,6 +282,7 @@ def resolve_query_filters(
     thread_ref: str | None = None,
     actor_ref: str | None = None,
     work_refs: tuple[str, ...] = (),
+    relay_name: str | None = None,
     runtime_context: QueryRuntimeContext | None = None,
 ) -> QueryFilterResolution:
     requested_filters = build_query_filters(
@@ -283,6 +293,7 @@ def resolve_query_filters(
         thread_ref=thread_ref,
         actor_ref=actor_ref,
         work_refs=work_refs,
+        relay_name=relay_name,
     )
     if requested_filters is None or runtime_context is None:
         return QueryFilterResolution(
@@ -309,6 +320,7 @@ def resolve_query_filters(
             thread_ref=effective_filters.thread_ref,
             actor_ref=effective_filters.actor_ref,
             work_refs=effective_filters.work_refs,
+            relay_name=effective_filters.relay_name,
         )
         return QueryFilterResolution(
             requested_filters=requested_filters,
@@ -336,6 +348,7 @@ def resolve_query_filters(
         thread_ref=effective_filters.thread_ref,
         actor_ref=effective_filters.actor_ref,
         work_refs=effective_filters.work_refs,
+        relay_name=effective_filters.relay_name,
     )
     return QueryFilterResolution(
         requested_filters=requested_filters,

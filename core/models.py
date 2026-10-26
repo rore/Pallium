@@ -5,11 +5,28 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
-from core.visibility import QueryVisibilityTrace
+from core.container_ref import validate_explicit_container_ref
+from core.visibility import QueryVisibilityTrace, Visibility
 
 HISTORICAL_GUIDANCE_MEMORY_TYPES = frozenset(
     {"decision", "investigation_outcome", "constraint_memory", "operational_fact", "note"}
 )
+
+
+@dataclass(frozen=True)
+class MemoryTargetScope:
+    """Optional exact target guard, separate from creation provenance."""
+
+    container_ref: str
+    actor_ref: str
+    visibility: Visibility
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "container_ref", validate_explicit_container_ref(self.container_ref))
+        if not isinstance(self.actor_ref, str) or not self.actor_ref.strip() or self.actor_ref != self.actor_ref.strip():
+            raise ValueError("actor_ref must be non-blank without surrounding whitespace")
+        if self.visibility not in ("public", "container", "private", "global"):
+            raise ValueError("invalid target visibility")
 
 
 def utc_now() -> datetime:
@@ -66,6 +83,9 @@ class SourceItem:
     forgotten_at: datetime | None = None
     forgotten_by: str | None = None
     forgotten_reason: str | None = None
+    source_turn_id: str | None = None
+    relay_name: str | None = None
+    relay_attribution_state: str = "unknown"
     id: str = field(default_factory=new_id)
     created_at: datetime = field(default_factory=utc_now)
 
@@ -138,6 +158,7 @@ class MemoryObject:
     # Callers who want to include tombstones in a query pass
     # ``include_soft_deleted=True`` to the storage list methods.
     is_soft_deleted: bool = False
+    origin: str | None = None
 
 
 @dataclass(frozen=True)
@@ -216,6 +237,7 @@ class QueryFilters:
     thread_ref: str | None = None
     actor_ref: str | None = None
     work_refs: tuple[str, ...] = ()
+    relay_name: str | None = None
 
 
 TurnKind = Literal["new_thread", "same_thread", "same_thread_continuation", "resumed_session", "new_session"]
@@ -272,6 +294,8 @@ class QueryResultItem:
     artifact_kind: str | None = None
     visibility: str = "private"
     retrieval_source: str | None = None
+    relay_name: str | None = None
+    relay_attribution_state: str = "unknown"
     source_content_fingerprint: str | None = None
     lexical_score: float | None = None
     vector_score: int | None = None

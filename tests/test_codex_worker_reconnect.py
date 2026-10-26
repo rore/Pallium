@@ -136,7 +136,7 @@ def test_client_close_identity_is_captured_before_cleanup(monkeypatch, tmp_path,
 async def test_actual_mcp_close_branch_has_durable_marker(monkeypatch, tmp_path, journey):
     monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
     if journey == "idle-transport":
-        await test_fresh_caller_after_retirement_requires_trusted_old_owner_exit(monkeypatch, "exit-later")
+        await test_admitted_idle_retirement_freshly_enrolls_three_times_without_foreground(monkeypatch, tmp_path)
         expected = "idle-ready-transport"
     elif journey == "unused-ready":
         await test_mcp_cancellation_releases_unused_channel_for_fresh_request(monkeypatch, "terminal-bootstrap")
@@ -160,6 +160,8 @@ def test_registered_idle_retirement_records_exact_ready_failure(monkeypatch, tmp
     worker._restart_allowed, worker._retained = True, True
     worker.stop_event = threading.Event()
     worker._fresh_request_retirement = None
+    acquisitions = []
+    worker._auto_reconnect = lambda *args, **kwargs: acquisitions.append(kwargs)
     proof = "a" * 64
     class Native:
         continuity, unresolved, manifest = proof, False, {"epoch": "same"}
@@ -176,12 +178,15 @@ def test_registered_idle_retirement_records_exact_ready_failure(monkeypatch, tmp
         def retire(self):
             self.source = None
             self.closed = True
+        def dispose(self):
+            self.disposed = True
     client = Native()
     assert worker._recover_if_gone(client, Native, "original-capability",
         {"thread_ref": "actual-runtime", "turn_ref": "admitted"}, proof,
         allow_ready_retirement=True) == (None, True)
     assert client.closed and worker._restart_allowed and not worker.stop_event.is_set()
-    assert worker._fresh_request_retirement == (client, {"epoch": "same"})
+    assert worker._fresh_request_retirement is None and client.disposed
+    assert acquisitions == [{"retired_context": (client, {"epoch": "same"})}]
     text = (tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log").read_text(encoding="utf-8")
     expected = "idle-ready-deadline" if category == "deadline" else "idle-ready-transport"
     assert f"reason={expected} " in text
@@ -275,6 +280,85 @@ def _protocol_server(monkeypatch, native, operations=None):
 async def _actual_status(session, turn):
     return await session.call_tool("pallium_relay_status", {"message_id": "message"},
         meta={"threadId": "actual-runtime", "turnId": turn})
+
+
+@pytest.mark.asyncio
+async def test_admitted_idle_retirement_freshly_enrolls_three_times_without_foreground(monkeypatch, tmp_path):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    clients, workers, registrations, operations = [], [], [], []
+    fail_ready = [threading.Event() for _ in range(3)]
+    enrolled = [threading.Event() for _ in range(4)]
+    proof = "a" * 64
+
+    class Native:
+        def __init__(self, _path, stop, *, retained, previous_manifest=None):
+            assert retained and previous_manifest is None
+            self.index = len(clients)
+            self.manifest = {"epoch": "same"}
+            self.continuity, self.unresolved = None, False
+            self.io = SimpleNamespace(unresolved=False)
+            self.retirements = self.disposals = 0
+            clients.append(self)
+
+        def service_current(self):
+            return True
+
+        def bootstrap_unchanged(self):
+            return True
+
+        def retired_service_exited(self):
+            return False
+
+        def ready(self):
+            if (self.continuity and self.index < 3
+                    and fail_ready[self.index].is_set()):
+                raise bridge.ShadowUnavailable("deadline" if self.index % 2 == 0 else "transport-failed")
+            return {"status": "ready", "connected": self.continuity is not None,
+                    "source_exited": False}
+
+        def register(self, metadata):
+            assert self.continuity == (None if self.index == 0 else proof)
+            registrations.append((self.index, dict(metadata)))
+            self.continuity = proof
+            enrolled[self.index].set()
+            return {"status": "registered", "reason": "ok"}
+
+        def retire(self):
+            self.retirements += 1
+            self.io = None
+
+        def dispose(self):
+            self.disposals += 1
+            self.io = None
+
+    class Worker(lifecycle.InventoryWorker):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            workers.append(self)
+
+    monkeypatch.setattr(lifecycle, "InventoryWorker", Worker)
+    server = _protocol_server(monkeypatch, Native, operations)
+
+    async def exercise(session):
+        assert not (await _actual_status(session, "admitted")).isError
+        for cycle in range(3):
+            fail_ready[cycle].set()
+            assert await asyncio.to_thread(enrolled[cycle + 1].wait, 5), (
+                f"idle retirement {cycle + 1} required another foreground caller")
+        assert len(operations) == 1
+        assert registrations == [(index, {"thread_ref": "actual-runtime", "turn_ref": "admitted"})
+                                 for index in range(4)]
+
+    try:
+        await _serve_protocol(server, exercise)
+    finally:
+        for worker in workers:
+            await worker.stop()
+            await asyncio.to_thread(worker._thread.join, 5)
+            assert not worker._thread.is_alive()
+    assert len(clients) == 4
+    assert [client.retirements for client in clients] == [1, 1, 1, 0]
+    assert all(client.disposals == 1 and client.io is None for client in clients)
 
 
 @pytest.mark.parametrize("fault", ["clean", "wait-failed", "unresolved", "raises", "returns-unresolved", "incomplete"])
@@ -384,7 +468,7 @@ async def test_fresh_caller_after_retirement_requires_trusted_old_owner_exit(mon
             self.peer, self.source = Peer(), Peer()
             self.owner = self.peer
             self.io = SimpleNamespace(unresolved=False, close=lambda: None)
-            self.unresolved, self.continuity = False, None
+            self.unresolved, self.continuity, self.failed = False, None, False
             clients.append(self)
         def bootstrap_unchanged(self):
             return self.manifest == manifest[0]
@@ -395,7 +479,7 @@ async def test_fresh_caller_after_retirement_requires_trusted_old_owner_exit(mon
                 raise bridge.ShadowUnavailable("peer-mismatch")
             return True
         def ready(self):
-            if self.index == 0 and self.continuity:
+            if self.index == 0 and self.failed:
                 raise bridge.ShadowUnavailable("transport-failed")
             if self.index and case == "ready-failure":
                 raise bridge.ShadowUnavailable("deadline")
@@ -405,6 +489,9 @@ async def test_fresh_caller_after_retirement_requires_trusted_old_owner_exit(mon
             return {"status": "ready", "connected": self.continuity is not None, "source_exited": False}
         def register(self, metadata):
             registrations.append((self.index, dict(metadata), self.continuity))
+            if self.index == 0 and self.continuity:
+                self.failed = True
+                raise bridge.ShadowUnavailable("transport-failed")
             self.continuity = proof
             return {"status": "registered", "reason": "ok"}
         def dispose(self):
@@ -428,9 +515,11 @@ async def test_fresh_caller_after_retirement_requires_trusted_old_owner_exit(mon
     monkeypatch.setattr(lifecycle, "InventoryWorker", Worker)
     monkeypatch.setattr(bridge, "native_available", lambda: True)
     server = _protocol_server(monkeypatch, Native, operations)
+    monkeypatch.setattr(lifecycle, "RECONNECT_IDLE_POLL_SECONDS", 5)
 
     async def exercise(session):
         assert not (await _actual_status(session, "admitted")).isError
+        assert not (await _actual_status(session, "failed-foreground")).isError
         assert await asyncio.to_thread(retired.wait, 1)
         old = clients[0]
         if case == "shutdown":
@@ -466,10 +555,11 @@ async def test_fresh_caller_after_retirement_requires_trusted_old_owner_exit(mon
         assert not result.isError
         if case in {"exit-later", "exit-during-retire"}:
             assert registrations == [(0, {"thread_ref": "actual-runtime", "turn_ref": "admitted"}, None),
+                                     (0, {"thread_ref": "actual-runtime", "turn_ref": "failed-foreground"}, proof),
                                      (1, {"thread_ref": "actual-runtime", "turn_ref": "fresh"}, proof)]
             assert workers[0]._restart_allowed and workers[0]._thread.is_alive()
         else:
-            assert len(registrations) == 1
+            assert len(registrations) == 2
 
     try:
         await _serve_protocol(server, exercise)
@@ -481,7 +571,7 @@ async def test_fresh_caller_after_retirement_requires_trusted_old_owner_exit(mon
     assert registrations[0][1]["turn_ref"] == "admitted"
     assert all(client.owner.closed == 1 for client in clients)
     assert all(client.io is None and client.source is None for client in clients)
-    assert len(operations) == (1 if case in {"cancel", "shutdown"} else 2)
+    assert len(operations) == (2 if case in {"cancel", "shutdown"} else 3)
 
 
 @pytest.mark.parametrize("case", ["healthy", "ready-busy", "register-busy", "unresolved",
@@ -563,7 +653,10 @@ def test_same_epoch_recovery_preserves_admission_and_identity_fences(monkeypatch
 @pytest.mark.parametrize("case", ["transport-failed", "deadline", "primary-peer-mismatch",
     "primary-invalid-response", "primary-generic", "primary-refusal", "unresolved-io",
     "retire-unresolved", "changed-bootstrap", "changed-continuity", "changed-capability",
-    "other-caller", "cancel-fresh", "shutdown"])
+    "other-caller", "cancel-fresh", "shutdown", "transport-failed-healthy", "deadline-healthy",
+    "primary-peer-mismatch-healthy", "primary-invalid-response-healthy", "primary-generic-healthy",
+    "primary-refusal-healthy", "unresolved-io-healthy", "changed-continuity-healthy",
+    "changed-capability-healthy"])
 async def test_fresh_caller_recovers_resolved_foreground_channel_failure(monkeypatch, tmp_path, case):
     from mcp.shared.exceptions import McpError
     from mcp.types import CancelledNotification, CancelledNotificationParams, ClientNotification
@@ -571,6 +664,8 @@ async def test_fresh_caller_recovers_resolved_foreground_channel_failure(monkeyp
     clients, workers, registrations, outcomes, operations = [], [], [], [], []
     observed, candidate_ready, release_ready = threading.Event(), threading.Event(), threading.Event()
     proof = "a" * 64
+    failure_case = case.removesuffix("-healthy")
+    healthy_followup = case.endswith("-healthy")
     retained = []
     monkeypatch.setattr(bridge, "_retained", retained)
     monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
@@ -611,8 +706,10 @@ async def test_fresh_caller_recovers_resolved_foreground_channel_failure(monkeyp
             return True
         def ready(self):
             if self.index == 0 and self.failed:
-                if case == "changed-capability":
+                if failure_case == "changed-capability":
                     monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
+                if healthy_followup:
+                    return {"status": "ready", "connected": True, "source_exited": False}
                 raise bridge.ShadowUnavailable("deadline" if case == "deadline" else "transport-failed")
             if self.index and case == "cancel-fresh":
                 candidate_ready.set()
@@ -620,21 +717,21 @@ async def test_fresh_caller_recovers_resolved_foreground_channel_failure(monkeyp
             return {"status": "ready", "connected": self.continuity is not None, "source_exited": False}
         def register(self, metadata):
             registrations.append((self.index, dict(metadata), self.continuity))
-            if self.index == 0 and self.continuity:
+            if self.index == 0 and self.continuity and (not healthy_followup or len(registrations) == 2):
                 self.failed = True
-                if case == "unresolved-io":
+                if failure_case == "unresolved-io":
                     self.io.unresolved = True
-                if case == "changed-continuity":
+                if failure_case == "changed-continuity":
                     self.continuity = "b" * 64
-                if case == "primary-refusal":
+                if failure_case == "primary-refusal":
                     return {"status": "unavailable", "reason": "peer-mismatch"}
-                if case == "primary-generic":
+                if failure_case == "primary-generic":
                     raise RuntimeError("controlled foreground failure")
-                category = (case.removeprefix("primary-") if case.startswith("primary-")
-                            else "deadline" if case == "deadline" else "transport-failed")
+                category = (failure_case.removeprefix("primary-") if failure_case.startswith("primary-")
+                            else "deadline" if failure_case == "deadline" else "transport-failed")
                 raise bridge.ShadowUnavailable(category)
             assert metadata["thread_ref"] == "actual-runtime"
-            assert self.continuity == (None if self.index == 0 else proof)
+            assert self.continuity == (None if self.index == 0 and len(registrations) == 1 else proof)
             self.continuity = proof
             return {"status": "registered", "reason": "ok"}
         def dispose(self):
@@ -668,9 +765,17 @@ async def test_fresh_caller_recovers_resolved_foreground_channel_failure(monkeyp
         assert not (await _actual_status(session, "failed-foreground")).isError
         assert await asyncio.to_thread(observed.wait, 2)
         assert outcomes[1][1]["status"] == "unavailable"
-        assert outcomes[1][1]["reason"] == ("peer-mismatch" if case == "primary-refusal" else "native-failed")
+        assert outcomes[1][1]["reason"] == ("peer-mismatch" if failure_case == "primary-refusal" else "native-failed")
         assert len(clients) == 1 and len(registrations) == 2
         assert len(operations) == 2  # Unavailable enrollment does not replay or suppress Relay.
+        if healthy_followup:
+            safe = failure_case in {"transport-failed", "deadline"}
+            if not safe:
+                await asyncio.to_thread(workers[0]._thread.join, 1)
+            assert workers[0]._thread.is_alive() == safe
+            if not safe:
+                assert len(clients) == 1 and len(registrations) == 2
+                return
         if case == "shutdown":
             await workers[0].stop()
             return
@@ -692,7 +797,15 @@ async def test_fresh_caller_recovers_resolved_foreground_channel_failure(monkeyp
         else:
             result = await _actual_status(session, "fresh")
         assert not result.isError
-        if case in {"transport-failed", "deadline"}:
+        if healthy_followup and failure_case in {"transport-failed", "deadline"}:
+            assert registrations == [
+                (0, {"thread_ref": "actual-runtime", "turn_ref": "admitted"}, None),
+                (0, {"thread_ref": "actual-runtime", "turn_ref": "failed-foreground"}, proof),
+                (0, {"thread_ref": "actual-runtime", "turn_ref": "fresh"}, proof),
+            ]
+            assert len(clients) == 1 and outcomes[-1][1]["status"] == "registered"
+            assert workers[0]._restart_allowed and workers[0]._thread.is_alive()
+        elif case in {"transport-failed", "deadline"}:
             assert registrations == [
                 (0, {"thread_ref": "actual-runtime", "turn_ref": "admitted"}, None),
                 (0, {"thread_ref": "actual-runtime", "turn_ref": "failed-foreground"}, proof),
@@ -1273,6 +1386,164 @@ def _automatic_recovery_worker(monkeypatch):
     monkeypatch.setattr(lifecycle, "RECONNECT_INITIAL_BACKOFF_SECONDS", .001)
     monkeypatch.setattr(lifecycle, "RECONNECT_MAX_BACKOFF_SECONDS", .001)
     return worker
+
+
+@pytest.mark.parametrize("case", [
+    "live-owner", "exited-owner", "unproved-epoch", "same-epoch-after-exit",
+    "old-witness-error", "old-bootstrap-after", "new-bootstrap", "capability-after",
+    "retire-unresolved", "old-cleanup-error", "old-cleanup-unresolved", "old-cleanup-capability",
+    "ready-proof", "ready-unresolved", "ready-stop", "ready-refused", "ready-exception",
+    "register-proof", "register-unresolved", "register-exception",
+])
+def test_idle_retired_episode_fences_identity_and_cleanup(monkeypatch, tmp_path, case):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    worker = _automatic_recovery_worker(monkeypatch)
+    worker._fresh_request_retirement = None
+    clients, registrations = [], []
+    proof = "a" * 64
+
+    class Old:
+        manifest = {"epoch": "old"}
+        continuity, unresolved, retired, changed, disposals = proof, False, False, False, 0
+        io = SimpleNamespace(unresolved=False)
+        def service_current(self):
+            return True
+        def ready(self):
+            raise bridge.ShadowUnavailable("transport-failed")
+        def bootstrap_unchanged(self):
+            return not self.changed
+        def retired_service_exited(self):
+            if case == "old-witness-error":
+                raise bridge.ShadowUnavailable("peer-unavailable")
+            return case in {"exited-owner", "same-epoch-after-exit"}
+        def retire(self):
+            self.retired = True
+            self.io = None
+            self.unresolved = case == "retire-unresolved"
+        def dispose(self):
+            self.disposals += 1
+            if case == "old-cleanup-error":
+                raise OSError("unsettled old owner")
+            if case == "old-cleanup-unresolved":
+                self.unresolved = True
+            if case == "old-cleanup-capability":
+                monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
+
+    old = Old()
+
+    class Native:
+        def __init__(self, _path, stop, *, retained, previous_manifest=None):
+            assert retained
+            assert (previous_manifest == old.manifest) == (case in {"exited-owner", "same-epoch-after-exit"})
+            self.manifest = {"epoch": "new" if case in {"exited-owner", "unproved-epoch"} else "old"}
+            self.continuity, self.unresolved, self.disposals = None, False, 0
+            self.io = SimpleNamespace(unresolved=False)
+            clients.append(self)
+            if case == "old-bootstrap-after":
+                old.changed = True
+            if case == "capability-after":
+                monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
+        def bootstrap_unchanged(self):
+            return case != "new-bootstrap"
+        def ready(self):
+            if case == "ready-proof":
+                self.continuity = "b" * 64
+            if case == "ready-unresolved":
+                self.io.unresolved = True
+            if case == "ready-stop":
+                worker.stop_event.set()
+            if case == "ready-exception":
+                raise bridge.ShadowUnavailable("deadline")
+            return {"status": "unavailable", "reason": "peer-mismatch"} if case == "ready-refused" else {"status": "ready"}
+        def register(self, metadata):
+            registrations.append(dict(metadata))
+            if case == "register-proof":
+                self.continuity = "b" * 64
+            if case == "register-unresolved":
+                self.unresolved = True
+            if case == "register-exception":
+                raise bridge.ShadowUnavailable("transport-failed")
+            return {"status": "registered", "reason": "ok"}
+        def dispose(self):
+            self.disposals += 1
+            self.io = None
+
+    metadata = {"thread_ref": "actual-runtime", "turn_ref": "admitted"}
+    replacement, disposed = worker._recover_if_gone(
+        old, Native, "original-capability", metadata, proof, allow_ready_retirement=True)
+    if not disposed:
+        worker._finish(old)
+    accepted = case in {"live-owner", "exited-owner"}
+    assert (replacement is not None) == accepted
+    assert old.retired and old.disposals == 1 and worker._fresh_request_retirement is None
+    assert len(clients) == (0 if case in {"old-witness-error", "retire-unresolved"} else 1)
+    assert all(entry == metadata for entry in registrations)
+    if replacement is not None:
+        worker._finish(replacement)
+    assert all(client.disposals == 1 and client.io is None for client in clients)
+
+
+@pytest.mark.parametrize("bound", ["attempts", "window", "shutdown"])
+def test_idle_retired_episode_shares_one_budget_across_acquisition_and_busy(monkeypatch, tmp_path, bound):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    worker = _automatic_recovery_worker(monkeypatch)
+    worker._fresh_request_retirement = None
+    monkeypatch.setattr(lifecycle, "RECONNECT_MAX_ATTEMPTS", 3)
+    clock, attempts, clients, registrations = [0.0], [], [], []
+    monkeypatch.setattr(lifecycle, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(lifecycle, "RECONNECT_WINDOW_SECONDS", .02)
+    def backoff(timeout):
+        if bound == "window":
+            clock[0] = .02
+        if bound == "shutdown":
+            worker.stop_event.set()
+        return worker.stop_event.is_set()
+    worker.stop_event.wait = backoff
+
+    class Old:
+        manifest, continuity, unresolved = {"epoch": "same"}, "a" * 64, False
+        io = SimpleNamespace(unresolved=False)
+        disposals = 0
+        def service_current(self):
+            return True
+        def bootstrap_unchanged(self):
+            return True
+        def retired_service_exited(self):
+            return False
+        def ready(self):
+            raise bridge.ShadowUnavailable("deadline")
+        def retire(self):
+            self.io = None
+        def dispose(self):
+            self.disposals += 1
+
+    class Native:
+        def __init__(self, *args, **kwargs):
+            attempts.append(kwargs)
+            if len(attempts) == 1:
+                raise bridge.ShadowUnavailable("startup-unavailable")
+            self.manifest, self.continuity, self.unresolved = {"epoch": "same"}, None, False
+            self.disposals = 0
+            clients.append(self)
+        def bootstrap_unchanged(self):
+            return True
+        def ready(self):
+            return {"status": "unavailable", "reason": "busy"} if len(attempts) == 2 else {"status": "ready"}
+        def register(self, metadata):
+            registrations.append(metadata)
+            return {"status": "unavailable", "reason": "busy"}
+        def dispose(self):
+            self.disposals += 1
+
+    old = Old()
+    assert worker._recover_if_gone(old, Native, "original-capability",
+        {"thread_ref": "actual-runtime", "turn_ref": "admitted"}, old.continuity,
+        allow_ready_retirement=True) == (None, True)
+    assert len(attempts) == (3 if bound == "attempts" else 1)
+    assert len(registrations) == (1 if bound == "attempts" else 0)
+    assert old.disposals == 1 and worker._fresh_request_retirement is None
+    assert all(client.disposals == 1 for client in clients)
+    assert worker._restart_allowed
 
 
 @pytest.mark.parametrize("stage", ["ready", "register"])

@@ -19,8 +19,13 @@ def _wake(client, base, operation, **extra):
     return client.post("/relay/opencode/wake", json=body)
 
 
-def _setup(client, session="native", location="C:/work/session.json"):
-    turn = _turn(client, session)
+def _setup(client, session="native", location="C:/work/session.json", relay_admission_clock=None):
+    if relay_admission_clock is None:
+        turn = _turn(client, session)
+    else:
+        store = client.app.state.pallium_service._storage
+        with relay_admission_clock(store, expected_admissions=1):
+            turn = _turn(client, session)
     base = {
         **SCOPE,
         "session_ref": session,
@@ -34,8 +39,13 @@ def _setup(client, session="native", location="C:/work/session.json"):
     return base
 
 
-def _send(client, base, payload="hello", expires_in_seconds=86400):
-    _turn(client, "sender", "codex")
+def _send(client, base, payload="hello", expires_in_seconds=86400, relay_admission_clock=None):
+    if relay_admission_clock is None:
+        _turn(client, "sender", "codex")
+    else:
+        store = client.app.state.pallium_service._storage
+        with relay_admission_clock(store, expected_admissions=1):
+            _turn(client, "sender", "codex")
     return client.post("/relay/messages", json={
         "sender_runtime": "codex", "sender_session_ref": "sender",
         "recipient": "opencode:" + base["session_ref"], "payload": payload, "expires_in_seconds": expires_in_seconds, **SCOPE,
@@ -52,12 +62,13 @@ def _activation(client, base):
     return next(row["activation"] for row in rows if row["endpoint_id"] == base["endpoint_id"])
 
 
-def test_idle_then_pending_backlog_is_drained_one_at_a_time(client):
-    base = _setup(client)
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_idle_then_pending_backlog_is_drained_one_at_a_time(client, relay_admission_clock):
+    base = _setup(client, relay_admission_clock=relay_admission_clock)
     assert _activation(client, base)["behavior"] == "busy_queue"
     idle = _wake(client, base, "poll").json()
     assert idle["wake"] is None
-    sent = [_send(client, base, str(i)).json() for i in range(4)]
+    sent = [_send(client, base, str(i), relay_admission_clock=relay_admission_clock).json() for i in range(4)]
     for index, message in enumerate(sent):
         wake = _wake(client, base, "poll").json()["wake"]
         assert wake["delivery_id"] == message["deliveries"][0]["delivery_id"]
@@ -76,11 +87,12 @@ def test_idle_then_pending_backlog_is_drained_one_at_a_time(client):
     assert _wake(client, base, "poll").json()["wake"] is None
 
 
-def test_admit_terminal_retains_anchor_until_poll_then_retries(client, monkeypatch):
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_admit_terminal_retains_anchor_until_poll_then_retries(client, monkeypatch, relay_admission_clock):
     import storage.sqlite_relay as sqlite_relay
 
-    base = _setup(client)
-    _send(client, base)
+    base = _setup(client, relay_admission_clock=relay_admission_clock)
+    _send(client, base, relay_admission_clock=relay_admission_clock)
     wake = _wake(client, base, "poll").json()["wake"]
     snap = _snapshot(base, wake)
     assert _wake(client, base, "admitted", **snap).status_code == 200
@@ -94,11 +106,12 @@ def test_admit_terminal_retains_anchor_until_poll_then_retries(client, monkeypat
     assert _wake(client, base, "poll").json()["wake"]["generation"] == wake["generation"] + 1
 
 
-def test_terminal_before_claim_suppresses_context_until_poll_rotates(client, monkeypatch):
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_terminal_before_claim_suppresses_context_until_poll_rotates(client, monkeypatch, relay_admission_clock):
     import storage.sqlite_relay as sqlite_relay
 
-    base = _setup(client)
-    sent = _send(client, base).json()
+    base = _setup(client, relay_admission_clock=relay_admission_clock)
+    sent = _send(client, base, relay_admission_clock=relay_admission_clock).json()
     wake = _wake(client, base, "poll").json()["wake"]
     snap = _snapshot(base, wake)
     terminal = _wake(client, base, "terminal", **snap, terminal_message_id="msg_terminal_unclaimed")
@@ -116,9 +129,10 @@ def test_terminal_before_claim_suppresses_context_until_poll_rotates(client, mon
     assert rotated["delivery_id"] == wake["delivery_id"]
 
 
-def test_context_exact_claim_ack_and_response_loss_are_idempotent(client):
-    base = _setup(client)
-    sent = _send(client, base).json()
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_context_exact_claim_ack_and_response_loss_are_idempotent(client, relay_admission_clock):
+    base = _setup(client, relay_admission_clock=relay_admission_clock)
+    sent = _send(client, base, relay_admission_clock=relay_admission_clock).json()
     wake = _wake(client, base, "poll").json()["wake"]
     snap = _snapshot(base, wake)
     claimed = _wake(client, base, "context", **snap)
@@ -134,20 +148,22 @@ def test_context_exact_claim_ack_and_response_loss_are_idempotent(client):
     assert client.get("/relay/messages/" + sent["message_id"], params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
 
 
-def test_expired_claim_lease_can_be_recovered_through_context(client, monkeypatch):
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_expired_claim_lease_can_be_recovered_through_context(client, monkeypatch, relay_admission_clock):
     import storage.sqlite_relay as sqlite_relay
 
-    base = _setup(client)
-    _send(client, base)
-    wake = _wake(client, base, "poll").json()["wake"]
-    snap = _snapshot(base, wake)
-    first = _wake(client, base, "context", **snap).json()["deliveries"][0]
     real_now = sqlite_relay._now
     clock = [datetime.now(timezone.utc)]
     monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: real_now(value) if value is not None else clock[0])
+    base = _setup(client, relay_admission_clock=relay_admission_clock)
+    _send(client, base, relay_admission_clock=relay_admission_clock)
+    wake = _wake(client, base, "poll").json()["wake"]
+    snap = _snapshot(base, wake)
+    first = _wake(client, base, "context", **snap).json()["deliveries"][0]
     for _ in range(4):
         clock[0] += timedelta(seconds=14)
-        assert _wake(client, base, "poll").status_code == 200
+        polled = _wake(client, base, "poll")
+        assert polled.status_code == 200, polled.text
     clock[0] += timedelta(seconds=5)
     assert _wake(client, base, "poll").status_code == 200
     stale = _wake(client, base, "context", **snap)
@@ -164,11 +180,47 @@ def test_expired_claim_lease_can_be_recovered_through_context(client, monkeypatc
     assert recovered.json()["deliveries"][0]["attempts"] == first["attempts"] + 1
 
 
-def test_owner_lease_expiry_allows_rebind_without_losing_anchor(client, monkeypatch):
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_expired_claim_lease_recovery_survives_delayed_context_response(client, monkeypatch, tmp_path, relay_admission_clock):
+    import json
+    import sys
+    import time
+
+    original_wake = _wake
+    delays, polls = [], []
+
+    def delayed_wake(client, base, operation, **extra):
+        response = original_wake(client, base, operation, **extra)
+        if operation == "context" and not delays:
+            assert response.status_code == 200, response.text
+            started = time.monotonic()
+            time.sleep(1.2)
+            delays.append(time.monotonic() - started)
+            assert delays[0] >= 1.1
+        elif operation == "poll" and delays:
+            detail = response.json().get("detail")
+            polls.append({"status": response.status_code, "detail": detail})
+            if response.status_code == 409:
+                assert detail == "OpenCode registration is missing or stale"
+        return response
+
+    monkeypatch.setattr(sys.modules[__name__], "_wake", delayed_wake)
+    try:
+        test_expired_claim_lease_can_be_recovered_through_context(client, monkeypatch, relay_admission_clock)
+        assert len(delays) == 1 and len(polls) == 6
+        assert all(poll["status"] == 200 for poll in polls)
+    finally:
+        (tmp_path / "lease-clock-control.json").write_text(
+            json.dumps({"delay_seconds": delays, "post_context_polls": polls}), encoding="utf-8",
+        )
+
+
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_owner_lease_expiry_allows_rebind_without_losing_anchor(client, monkeypatch, relay_admission_clock):
     import storage.sqlite_relay as sqlite_relay
 
-    base = _setup(client)
-    _send(client, base)
+    base = _setup(client, relay_admission_clock=relay_admission_clock)
+    _send(client, base, relay_admission_clock=relay_admission_clock)
     wake = _wake(client, base, "poll").json()["wake"]
     real_now = sqlite_relay._now
     clock = [datetime.now(timezone.utc)]
@@ -188,8 +240,9 @@ def test_owner_lease_expiry_allows_rebind_without_losing_anchor(client, monkeypa
     ("scope_generation", 99), ("native_location", "C:/other/session.json"),
     ("owner_id", "opencode-owner-ffffffffffffffffffffffffffffffff"),
 ])
-def test_stale_or_wrong_binding_is_rejected(client, field, value):
-    base = _setup(client)
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_stale_or_wrong_binding_is_rejected(client, field, value, relay_admission_clock):
+    base = _setup(client, relay_admission_clock=relay_admission_clock)
     invalid = {**base, field: value}
     assert _wake(client, invalid, "poll").status_code in (404, 409)
 
@@ -214,17 +267,19 @@ def test_invalid_or_incomplete_requests_are_rejected(client, body):
     assert client.post("/relay/opencode/wake", json={**base, **body}).status_code == 422
 
 
-def test_max_chars_boundary_and_unicode_payload(client):
-    base = _setup(client)
-    _send(client, base, "界" * 2400)
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_max_chars_boundary_and_unicode_payload(client, relay_admission_clock):
+    base = _setup(client, relay_admission_clock=relay_admission_clock)
+    _send(client, base, "界" * 2400, relay_admission_clock=relay_admission_clock)
     wake = _wake(client, base, "poll").json()["wake"]
     assert _wake(client, base, "context", **_snapshot(base, wake), max_chars=2400).status_code == 200
     assert _wake(client, base, "context", **_snapshot(base, wake), max_chars=2401).status_code == 422
 
 
-def test_detach_blocks_old_owner_and_reenroll_allows_same_anchor(client):
-    base = _setup(client)
-    _send(client, base)
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_detach_blocks_old_owner_and_reenroll_allows_same_anchor(client, relay_admission_clock):
+    base = _setup(client, relay_admission_clock=relay_admission_clock)
+    _send(client, base, relay_admission_clock=relay_admission_clock)
     wake = _wake(client, base, "poll").json()["wake"]
     assert _wake(client, base, "detach").status_code == 200
     assert _activation(client, base)["behavior"] == "passive"
@@ -235,9 +290,10 @@ def test_detach_blocks_old_owner_and_reenroll_allows_same_anchor(client):
     assert rebound["delivery_id"] == wake["delivery_id"]
 
 
-def test_scope_move_invalidates_old_context(client):
-    base = _setup(client)
-    _send(client, base)
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_scope_move_invalidates_old_context(client, relay_admission_clock):
+    base = _setup(client, relay_admission_clock=relay_admission_clock)
+    _send(client, base, relay_admission_clock=relay_admission_clock)
     wake = _wake(client, base, "poll").json()["wake"]
     moved = client.post("/relay/turn", json={"runtime": "opencode", "session_ref": base["session_ref"],
         "container_ref": "git:example.test/team/moved", "previous_container_ref": SCOPE["container_ref"],
@@ -246,9 +302,10 @@ def test_scope_move_invalidates_old_context(client):
     assert _wake(client, base, "context", **_snapshot(base, wake)).status_code in (404, 409, 422)
 
 
-def test_closed_reopened_session_cannot_restore_old_wake(client):
-    base = _setup(client)
-    _send(client, base)
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_closed_reopened_session_cannot_restore_old_wake(client, relay_admission_clock):
+    base = _setup(client, relay_admission_clock=relay_admission_clock)
+    _send(client, base, relay_admission_clock=relay_admission_clock)
     wake = _wake(client, base, "poll").json()["wake"]
     snap = _snapshot(base, wake)
     delivery = _wake(client, base, "context", **snap).json()["deliveries"][0]
@@ -263,11 +320,12 @@ def test_closed_reopened_session_cannot_restore_old_wake(client):
     assert _wake(client, base, "poll").json()["wake"] is None
 
 
-def test_claim_response_loss_reuses_token_but_not_after_expiry(client, monkeypatch):
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_claim_response_loss_reuses_token_but_not_after_expiry(client, monkeypatch, relay_admission_clock):
     import storage.sqlite_relay as sqlite_relay
 
-    base = _setup(client)
-    sent = _send(client, base, expires_in_seconds=60).json()
+    base = _setup(client, relay_admission_clock=relay_admission_clock)
+    sent = _send(client, base, expires_in_seconds=60, relay_admission_clock=relay_admission_clock).json()
     real_now = sqlite_relay._now
     clock = [real_now(datetime.fromisoformat(sent["expires_at"])) - timedelta(seconds=10)]
     monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: real_now(value) if value is not None else clock[0])

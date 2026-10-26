@@ -1383,8 +1383,58 @@ def _seed_cached_actor(hook, monkeypatch: pytest.MonkeyPatch, cwd: Path, session
     monkeypatch.setattr(common, "_HOOK_DEADLINE", None)
     context = common._identity_context(str(cwd))
     assert context is not None
-    assert common._cache_identity_context(session_id, context, actor_ref="old-pinned-actor")
+    from itertools import count
+    import time
+
+    native_time, native_monotonic = common.time, time.monotonic
+    # Seed this identity contract without charging host scheduling to the lock budget.
+    with monkeypatch.context() as setup:
+        setup_time = SimpleNamespace(**vars(native_time))
+        setup_time.monotonic = count(step=.001).__next__
+        setup.setattr(common, "time", setup_time)
+        assert common._cache_identity_context(session_id, context, actor_ref="old-pinned-actor")
+    assert common.time is native_time
+    assert time.monotonic is native_monotonic
+    state = common._read_session_state(session_id)
+    assert state is not None and state["actor_ref"] == "old-pinned-actor"
+    assert all(state[key] == value for key, value in context.items())
     return common
+
+
+def test_cached_actor_seed_restores_clock_after_lock_setup_delay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    import builtins
+    import time
+
+    hook = _load_claude_hook("pre_compact", monkeypatch)
+    common = sys.modules["common"]
+    native_monotonic = time.monotonic
+    now, acquired = [0.0], []
+    setup_clock = SimpleNamespace(**vars(time))
+    setup_clock.monotonic = lambda: now[0]
+    monkeypatch.setattr(common, "time", setup_clock)
+    acquire = common._acquire_file_lock
+
+    def observe_acquire(path, budget):
+        result = acquire(path, budget)
+        acquired.append(result is not None)
+        return result
+
+    def open_after_delay(path, *args, **kwargs):
+        result = builtins.open(path, *args, **kwargs)
+        if Path(path) == tmp_path / "hook-state" / "sessions" / "seed-clock.lock":
+            now[0] += .101
+        return result
+
+    monkeypatch.setattr(common, "_acquire_file_lock", observe_acquire)
+    monkeypatch.setattr(common, "open", open_after_delay, raising=False)
+    assert _seed_cached_actor(hook, monkeypatch, tmp_path, "seed-clock") is common
+    assert now[0] == pytest.approx(.101)
+    assert acquired == [True]
+    assert common.time is setup_clock
+    assert time.monotonic is native_monotonic
+    assert "session_state_write_failed" not in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

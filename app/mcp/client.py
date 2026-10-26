@@ -16,7 +16,7 @@ from urllib.parse import quote
 
 import httpx
 
-from app.mcp.context import PalliumContext
+from app.mcp.context import PalliumContext, current_hermes_request
 from core.relay import _RELAY_EXPIRY_OMITTED
 from redaction import redact_sensitive
 
@@ -59,6 +59,17 @@ class PalliumMcpClient:
                 params[key] = value
         return params
 
+    def _hermes_target_scope(self) -> dict[str, str] | None:
+        request = current_hermes_request()
+        if request is None:
+            return None
+        context = request.context
+        return {
+            "container_ref": context.container_ref,
+            "actor_ref": context.actor_ref,
+            "visibility": context.visibility,
+        }
+
     def _history_scope_params(self, source_thread_ref: str | None) -> dict[str, str]:
         """Build History scope with requester attribution separate from filtering."""
         params = self._scope_params()
@@ -95,6 +106,7 @@ class PalliumMcpClient:
         work_refs: list[str] | None = None,
         source_thread_ref: str | None = None,
         request_source_item_id: str | None = None,
+        relay_name: str | None = None,
         defer_delivery: bool = False,
     ) -> dict[str, Any]:
         """Source-only history search: raw prior turns ranked on their own.
@@ -124,6 +136,8 @@ class PalliumMcpClient:
             payload["work_refs"] = work_refs
         if request_source_item_id is not None:
             payload["request_source_item_id"] = request_source_item_id
+        if relay_name is not None:
+            payload["relay_name"] = relay_name
         return await self._post("/query", payload)
 
     async def search_history_by_work_ref(
@@ -280,6 +294,11 @@ class PalliumMcpClient:
         params: dict[str, str] = {}
         if self._ctx.container_ref:
             params["container_ref"] = self._ctx.container_ref
+        if current_hermes_request() is not None:
+            if self._ctx.visibility is not None:
+                params["query_visibility"] = self._ctx.visibility
+            if self._ctx.actor_ref is not None:
+                params["query_actor_ref"] = self._ctx.actor_ref
         try:
             async with httpx.AsyncClient(base_url=self._base_url, timeout=30.0) as http:
                 response = await http.get(f"/memory/{memory_object_id}/expand", params=params)
@@ -655,6 +674,8 @@ class PalliumMcpClient:
             "source_ref": source_ref,
             "immediate": immediate,
         }
+        if target_scope := self._hermes_target_scope():
+            payload["target_scope"] = target_scope
         return await self._post(f"/memory/{memory_object_id}/flag", payload)
 
     async def rate_memory(
@@ -681,6 +702,8 @@ class PalliumMcpClient:
             payload["thread_ref"] = thread_ref
         if container_ref is not None:
             payload["container_ref"] = container_ref
+        if target_scope := self._hermes_target_scope():
+            payload["target_scope"] = target_scope
         try:
             async with httpx.AsyncClient(base_url=self._base_url, timeout=30.0) as http:
                 response = await http.post(
@@ -840,10 +863,10 @@ class PalliumMcpClient:
         corrected_text: str,
         reason: str,
     ) -> dict[str, Any]:
-        return await self._post_or_error(
-            f"/memory/{memory_object_id}/correct",
-            {"corrected_text": corrected_text, "reason": reason},
-        )
+        payload = {"corrected_text": corrected_text, "reason": reason}
+        if target_scope := self._hermes_target_scope():
+            payload["target_scope"] = target_scope
+        return await self._post_or_error(f"/memory/{memory_object_id}/correct", payload)
 
     async def supersede_memory(
         self,
@@ -875,6 +898,8 @@ class PalliumMcpClient:
             value = getattr(self._ctx, key, None)
             if value is not None:
                 payload[key] = value
+        if target_scope := self._hermes_target_scope():
+            payload["target_scope"] = target_scope
         return await self._post_or_error("/memory/supersede", payload)
 
     async def forget_memory(
@@ -883,10 +908,10 @@ class PalliumMcpClient:
         *,
         reason: str,
     ) -> dict[str, Any]:
-        return await self._post_or_error(
-            f"/memory/{memory_object_id}/forget",
-            {"reason": reason},
-        )
+        payload = {"reason": reason}
+        if target_scope := self._hermes_target_scope():
+            payload["target_scope"] = target_scope
+        return await self._post_or_error(f"/memory/{memory_object_id}/forget", payload)
 
     async def forget_source(
         self,
@@ -911,6 +936,8 @@ class PalliumMcpClient:
         # Record the "who" for audit when the context knows the actor.
         if getattr(self._ctx, "actor_ref", None):
             payload["actor_ref"] = self._ctx.actor_ref
+        if target_scope := self._hermes_target_scope():
+            payload["target_scope"] = target_scope
         return await self._post_or_error("/source/forget", payload)
 
     async def record_outcome(
@@ -930,4 +957,6 @@ class PalliumMcpClient:
             value = getattr(self._ctx, key, None)
             if value is not None:
                 payload[key] = value
+        if target_scope := self._hermes_target_scope():
+            payload["target_scope"] = target_scope
         return await self._post_or_error("/memory/record-outcome", payload)

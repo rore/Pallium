@@ -4,7 +4,7 @@
 
 Pallium is a local service that lets agent sessions across coding tools send
 messages to each other and search earlier session history. It currently supports
-Claude Code, Codex, and OpenCode.
+Claude Code, Codex, OpenCode, and Hermes Desktop/TUI.
 
 It connects sessions you already run; it does not create or manage them.
 
@@ -16,12 +16,12 @@ It connects sessions you already run; it does not create or manage them.
 
 Relay sends a plain-text message to another existing agent session. Pallium
 stores each message before attempting delivery. Where the integration supports
-it, Relay can start a recipient turn immediately; otherwise, the message remains
-pending for the recipient's next turn. You can send to a specific session or a
+it, Relay can start a recipient turn immediately. Delivery and recovery depend
+on the integration. You can send to a specific session or a
 named session.
 
-> Use Pallium Relay to send Codex: "The legacy endpoint is still used by mobile.
-> Do not remove it."
+> List Pallium Relay recipients, verify `@review`, then send it: "The legacy
+> endpoint is still used by mobile. Do not remove it."
 
 [Read the Relay guide](docs/agent-relay.md).
 
@@ -56,9 +56,9 @@ in its current form, but setup and behavior still have rough edges.
 
 ## Current status
 
-Relay works across the current integrations. Every supported path has durable
-next-turn delivery; some qualified paths can also start a new turn. See the
-[Relay support details](docs/agent-relay.md#delivery-and-wake-behavior).
+Relay works across the current integrations. Wake, next-turn delivery and recovery
+depend on the receiving host. Compare all four in the
+[Relay delivery table](docs/agent-relay.md#delivery-and-wake-behavior).
 
 Session History supports broad topic search, exact work-reference search, and
 nearby-message lookup. It does not require an LLM provider, and optional derived
@@ -78,8 +78,12 @@ pallium service install
 pallium setup claude-code       # or: pallium setup codex
 ```
 
-The OpenCode integration currently uses a local plugin. See its
-[setup guide](integrations/opencode/README.md).
+| Integration | Setup guide |
+|---|---|
+| Claude Code | [Hooks, skill and MCP setup](docs/claude-code-integration.md#setup) |
+| Codex | [Hooks, skill and MCP setup](docs/codex-integration.md#setup) |
+| OpenCode | [Local plugin, MCP and guidance setup](integrations/opencode/README.md#setup) |
+| Hermes Desktop/TUI | [Native plugin, skill and profile-scoped MCP setup](docs/hermes-integration.md#setup) |
 
 Relay and Session History do not require an LLM provider. Derived memory is
 optional, disabled by default, and requires provider and model configuration
@@ -133,6 +137,7 @@ cross-user authorization model.
 - [Claude Code integration](docs/claude-code-integration.md)
 - [Codex integration](docs/codex-integration.md)
 - [OpenCode integration](integrations/opencode/README.md)
+- [Hermes integration](docs/hermes-integration.md)
 - [HTTP API](docs/http-api.md)
 - [Privacy and visibility](docs/privacy-and-visibility.md)
 - [Dashboard](docs/dashboard.md)

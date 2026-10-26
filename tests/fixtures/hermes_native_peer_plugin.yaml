@@ -1,0 +1,9 @@
+name: native-peer-audit
+version: 0.1.0
+description: Isolated test peer that records only public host turn identifiers.
+author: Pallium tests
+kind: standalone
+platforms:
+  - windows
+provides_hooks:
+  - post_llm_call

@@ -1,6 +1,6 @@
 name: pallium-hermes-relay
 version: 0.1.0
-description: Experimental Pallium Relay and Session History for a single Hermes TUI/gateway profile.
+description: Experimental Pallium Relay, Session History and opt-in memory through public Hermes plugin APIs.
 author: Pallium
 kind: standalone
 platforms:
@@ -21,6 +21,17 @@ provides_tools:
   - pallium_search_history
   - pallium_search_history_by_work_ref
   - pallium_expand_source
+  - pallium_query
+  - pallium_expand
+  - pallium_ingest
+  - pallium_remember
+  - pallium_correct
+  - pallium_supersede
+  - pallium_forget
+  - pallium_forget_source
+  - pallium_record_outcome
+  - pallium_flag_memory
+  - pallium_rate_memory
 provides_hooks:
   - pre_llm_call
   - post_llm_call

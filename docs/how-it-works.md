@@ -18,9 +18,8 @@ independently.
 ## Relay
 
 Relay routes an explicitly addressed message to another existing session.
-Pallium stores the message before attempting delivery. If a safe wake path is
-not available, the message remains pending for the recipient's next normal
-turn.
+Pallium stores the message before attempting delivery. Wake and next-turn
+delivery behavior depend on the recipient integration.
 
 Relay does not use history search, embeddings, ranking, or an LLM. See
 [Relay](agent-relay.md).
@@ -38,15 +37,27 @@ session content is historical evidence, not proof of current live state. See
 ## Shared foundation
 
 The current integrations register each agent session with the local service.
-Pallium uses the session and repository identity to:
+Pallium uses trusted session and scope identity to:
 
 - address Relay messages;
-- keep unrelated repositories separate;
+- scope history and memory to the configured container and visibility;
 - record where historical messages came from;
 - apply visibility rules before search or expansion.
 
-Claude Code, Codex, and OpenCode are the current integrations. They remain
-independent tools and own their execution, user interaction, and workflow.
+Claude Code, Codex, OpenCode, and Hermes Desktop/TUI are the current integrations.
+They remain independent tools and own their execution, user interaction, and
+workflow.
+
+| Integration | Host connection |
+|---|---|
+| [Claude Code](claude-code-integration.md) | Automatic hooks, bundled skill and session-bound stdio MCP |
+| [Codex](codex-integration.md) | Automatic hooks, bundled skill and session-bound stdio MCP |
+| [OpenCode](../integrations/opencode/README.md) | V1 plugin or opt-in V2 adapter, bundled guidance/skill and remote MCP |
+| [Hermes Desktop/TUI](hermes-integration.md) | Native plugin, bundled skill and profile-scoped MCP bridge |
+
+These adapters share the service APIs. Host identity, capture, wake and recovery
+remain integration-specific; compare the [Relay delivery table](agent-relay.md#delivery-and-wake-behavior)
+and use the matching guide for setup.
 
 ## Current default
 

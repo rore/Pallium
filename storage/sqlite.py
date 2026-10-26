@@ -11,14 +11,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
-from sqlalchemy import and_, create_engine, event, func, or_, select, text
+from sqlalchemy import and_, create_engine, event, func, or_, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, aliased, sessionmaker
 from sqlalchemy.exc import IntegrityError
 
 from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, SupersessionConflictError, is_transient_error
 from core.contracts import ProcessResult
-from core.models import EvidenceReference, IndexEntry, MemoryFeedback, MemoryFlag, MemoryObject, Relation, SourceItem, utc_now
+from core.models import EvidenceReference, IndexEntry, MemoryFeedback, MemoryFlag, MemoryObject, MemoryTargetScope, Relation, SourceItem, utc_now
 from core.turn_inference import ThreadStats
 from core.work_ref import _normalize_work_ref
 from storage.base import SourceItemVectorProjection, StorageProvider
@@ -48,6 +48,7 @@ from storage.sqlite_schema import (
     RelationRecord,
     SQLiteSchemaMixin,
     SourceItemRecord,
+    SourceItemWorkRefRecord,
     SubtaskSelectorShadowRecord,
     ThreadProcessingLeaseRecord,
     insert_lexical_fts_row,
@@ -388,6 +389,86 @@ class SQLiteStorageProvider(
                 return None
             return self._to_source_item(record)
 
+    def supports_source_turn_snapshots(self) -> bool:
+        return True
+
+    def find_source_turn_snapshot(
+        self, source_type: str, container_ref: str, thread_ref: str, source_turn_id: str
+    ) -> SourceItem | None:
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(SourceItemRecord).where(
+                    SourceItemRecord.source_type == source_type,
+                    SourceItemRecord.container_ref == container_ref,
+                    SourceItemRecord.thread_ref == thread_ref,
+                    SourceItemRecord.source_turn_id == source_turn_id,
+                    SourceItemRecord.role == "user",
+                ).limit(2)
+            ).all()
+            if len(records) > 1:
+                raise ValueError("conflicting source turn snapshots")
+            return self._to_source_item(records[0]) if records else None
+
+    def has_incomplete_source_attribution(
+        self, *, container_ref: str, query_visibility: str | None, query_actor_ref: str | None,
+        source_type: str | None = None, role: str | None = None,
+        artifact_kind: str | None = None, thread_ref: str | None = None,
+        actor_ref: str | None = None, work_refs: tuple[str, ...] = (),
+    ) -> bool:
+        statement = select(SourceItemRecord.id).where(
+            SourceItemRecord.relay_attribution_state.in_(("unknown", "unavailable")),
+            SourceItemRecord.forgotten_at.is_(None),
+        )
+        if source_type is not None:
+            statement = statement.where(SourceItemRecord.source_type == source_type)
+        if role is not None:
+            statement = statement.where(SourceItemRecord.role == role)
+        if artifact_kind is not None:
+            statement = statement.where(SourceItemRecord.artifact_kind == artifact_kind)
+        if thread_ref is not None:
+            statement = statement.where(SourceItemRecord.thread_ref == thread_ref)
+        if actor_ref is not None:
+            statement = statement.where(SourceItemRecord.actor_ref == actor_ref)
+        if work_refs:
+            statement = statement.where(
+                select(SourceItemWorkRefRecord.source_item_id).where(
+                    SourceItemWorkRefRecord.source_item_id == SourceItemRecord.id,
+                    SourceItemWorkRefRecord.work_ref.in_(work_refs),
+                ).exists()
+            )
+        # Mirror is_visible() exactly so coverage cannot reveal inaccessible rows.
+        public_clause = and_(
+            SourceItemRecord.visibility == "public",
+            SourceItemRecord.actor_ref.is_(None),
+        )
+        visible_clauses = []
+        if query_actor_ref is not None:
+            visible_clauses.append(and_(
+                SourceItemRecord.visibility == "global",
+                SourceItemRecord.actor_ref == query_actor_ref,
+            ))
+        if query_visibility == "public":
+            visible_clauses.append(public_clause)
+        elif query_visibility == "container":
+            visible_clauses.extend((
+                public_clause,
+                and_(
+                    SourceItemRecord.container_ref == container_ref,
+                    SourceItemRecord.visibility.not_in(("private", "global")),
+                ),
+            ))
+        else:
+            visible_clauses.extend((
+                public_clause,
+                and_(
+                    SourceItemRecord.container_ref == container_ref,
+                    SourceItemRecord.visibility != "global",
+                ),
+            ))
+        statement = statement.where(or_(*visible_clauses))
+        with self._session_factory() as session:
+            return session.scalar(statement.limit(1)) is not None
+
     def create_source_item(self, source_item: SourceItem) -> None:
         record = SourceItemRecord(
             id=source_item.id,
@@ -414,6 +495,9 @@ class SQLiteStorageProvider(
             processing_completed_at=source_item.processing_completed_at,
             processing_error=source_item.processing_error,
             processing_next_attempt_at=source_item.processing_next_attempt_at,
+            source_turn_id=source_item.source_turn_id,
+            relay_name=source_item.relay_name,
+            relay_attribution_state=source_item.relay_attribution_state,
             created_at=source_item.created_at,
         )
         with self._begin_immediate() as session:
@@ -466,6 +550,9 @@ class SQLiteStorageProvider(
             processing_completed_at=source_item.processing_completed_at,
             processing_error=source_item.processing_error,
             processing_next_attempt_at=source_item.processing_next_attempt_at,
+            source_turn_id=source_item.source_turn_id,
+            relay_name=source_item.relay_name,
+            relay_attribution_state=source_item.relay_attribution_state,
             created_at=source_item.created_at,
         )
         with self._begin_immediate() as session:
@@ -639,7 +726,11 @@ class SQLiteStorageProvider(
             return ThreadStats(item_count=row[0], latest_created_at=row[1])
 
     def create_memory_object(self, memory_object: MemoryObject) -> None:
-        record = MemoryObjectRecord(
+        record = self._memory_object_record(memory_object)
+        self._with_retry(lambda session: session.add(record))
+
+    def _memory_object_record(self, memory_object: MemoryObject) -> MemoryObjectRecord:
+        return MemoryObjectRecord(
             id=memory_object.id,
             type=memory_object.type,
             schema_id=memory_object.schema_id,
@@ -650,11 +741,48 @@ class SQLiteStorageProvider(
             visibility=memory_object.visibility,
             container_ref=memory_object.container_ref,
             actor_ref=memory_object.actor_ref,
+            origin=memory_object.origin,
             freshness_at=self._normalize_datetime(memory_object.freshness_at) or memory_object.created_at,
             subject=extract_memory_subject(memory_object),
             created_at=memory_object.created_at,
         )
-        self._with_retry(lambda session: session.add(record))
+
+    def create_explicit_supersession(
+        self, old_memory_object_id: str, replacement: MemoryObject, *,
+        index_entries: list[IndexEntry], origin_session_id: str,
+        origin_agent_id: str, correction_reason: str | None = None,
+    ) -> None:
+        def _do(session):
+            values = {"lifecycle": "superseded", "superseded_by_id": replacement.id}
+            if correction_reason is not None:
+                values["correction_reason"] = correction_reason
+            # Acquire the writer before reading: concurrent/stale losers insert nothing.
+            changed = session.execute(update(MemoryObjectRecord).where(
+                MemoryObjectRecord.id == old_memory_object_id,
+                MemoryObjectRecord.lifecycle == "active",
+                MemoryObjectRecord.superseded_by_id.is_(None),
+            ).values(**values)).rowcount
+            if not changed:
+                if session.get(MemoryObjectRecord, old_memory_object_id) is None:
+                    raise KeyError(old_memory_object_id)
+                raise SupersessionConflictError(f"memory {old_memory_object_id!r} is not active")
+            record = self._memory_object_record(replacement)
+            record.origin = "agent_explicit"
+            record.origin_session_id = origin_session_id
+            record.origin_agent_id = origin_agent_id
+            session.add(record)
+            for entry in index_entries:
+                if entry.index_type == "lexical":
+                    self._add_index_entry(session, entry)
+                else:
+                    session.flush()
+                    try:
+                        # Preserve optional vector indexing without abandoning the atomic write.
+                        with session.begin_nested():
+                            self._add_index_entry(session, entry)
+                    except Exception:  # noqa: BLE001 -- vector index remains best-effort
+                        logger.debug("Explicit supersession: skipping vector index entry", exc_info=True)
+        self._with_retry(_do)
 
     def insert_shadow_extraction(
         self,
@@ -885,6 +1013,7 @@ class SQLiteStorageProvider(
         reason: str,
         actor_ref: str | None = None,
         forgotten_at: datetime | None = None,
+        target_scope: MemoryTargetScope | None = None,
     ) -> int:
         """Point-in-time bulk forget of raw turns within a bounded scope.
 
@@ -901,6 +1030,12 @@ class SQLiteStorageProvider(
             )
             if thread_ref is not None:
                 stmt = stmt.where(SourceItemRecord.thread_ref == thread_ref)
+            if target_scope is not None:
+                stmt = stmt.where(
+                    SourceItemRecord.container_ref == target_scope.container_ref,
+                    SourceItemRecord.actor_ref == target_scope.actor_ref,
+                    SourceItemRecord.visibility == target_scope.visibility,
+                )
             records = session.scalars(stmt).all()
             ts = forgotten_at or utc_now()
             for record in records:
@@ -916,6 +1051,7 @@ class SQLiteStorageProvider(
         *,
         new_payload: dict,
         correction_reason: str,
+        index_entries: list[IndexEntry] | None = None,
     ) -> None:
         """In-place correction of a memory (pallium_correct).
 
@@ -932,17 +1068,38 @@ class SQLiteStorageProvider(
         Raises KeyError if the memory_object does not exist.
         """
         def _do(session):
-            record = session.get(MemoryObjectRecord, memory_object_id)
-            if record is None:
-                raise KeyError(memory_object_id)
-            if record.lifecycle != "active" or record.superseded_by_id is not None:
+            # Acquire the SQLite writer before checking the active-head
+            # predicate. A service-level read may have raced with a
+            # supersession, so guard the mutation in SQL as well.
+            changed = session.execute(update(MemoryObjectRecord).where(
+                MemoryObjectRecord.id == memory_object_id,
+                MemoryObjectRecord.lifecycle == "active",
+                MemoryObjectRecord.superseded_by_id.is_(None),
+            ).values(
+                payload_json=self._dumps(new_payload) or "{}",
+                correction_reason=correction_reason,
+            )).rowcount
+            if not changed:
+                record = session.get(MemoryObjectRecord, memory_object_id)
+                if record is None:
+                    raise KeyError(memory_object_id)
                 raise SupersessionConflictError(
                     f"cannot correct non-active memory {memory_object_id!r} "
                     f"(lifecycle={record.lifecycle!r}, "
                     f"superseded_by_id={record.superseded_by_id!r})"
                 )
-            record.payload_json = self._dumps(new_payload) or "{}"
-            record.correction_reason = correction_reason
+            if index_entries is not None:
+                self._delete_index_entries_for_target_in_session(session, "memory_object", memory_object_id)
+                for entry in index_entries:
+                    if entry.index_type == "lexical":
+                        self._add_index_entry(session, entry)
+                    else:
+                        session.flush()
+                        try:
+                            with session.begin_nested():
+                                self._add_index_entry(session, entry)
+                        except Exception:  # Vector index remains best-effort.
+                            logger.debug("Memory correction: skipping vector index entry", exc_info=True)
         self._with_retry(_do)
 
     # ── /W3 explicit memory-write methods ────────────────────────────
@@ -1271,6 +1428,9 @@ class SQLiteStorageProvider(
         return None
 
     def create_index_entry(self, index_entry: IndexEntry) -> None:
+        self._with_retry(lambda session: self._add_index_entry(session, index_entry))
+
+    def _add_index_entry(self, session: Session, index_entry: IndexEntry) -> None:
         record = IndexEntryRecord(
             id=index_entry.id,
             target_kind=index_entry.target_kind,
@@ -1281,22 +1441,20 @@ class SQLiteStorageProvider(
             provider_name=index_entry.provider_name,
             provider_version=index_entry.provider_version,
         )
-        def _do(session):
-            session.add(record)
-            if index_entry.index_type == "lexical":
-                container_ref = self._resolve_container_ref_in_session(
-                    session, index_entry.target_kind, index_entry.target_id,
-                )
-                insert_lexical_fts_row(
-                    session,
-                    index_entry_id=index_entry.id,
-                    target_kind=index_entry.target_kind,
-                    target_id=index_entry.target_id,
-                    text_view=index_entry.text_view,
-                    text_view_name=index_entry.text_view_name,
-                    container_ref=container_ref,
-                )
-        self._with_retry(_do)
+        session.add(record)
+        if index_entry.index_type == "lexical":
+            container_ref = self._resolve_container_ref_in_session(
+                session, index_entry.target_kind, index_entry.target_id,
+            )
+            insert_lexical_fts_row(
+                session,
+                index_entry_id=index_entry.id,
+                target_kind=index_entry.target_kind,
+                target_id=index_entry.target_id,
+                text_view=index_entry.text_view,
+                text_view_name=index_entry.text_view_name,
+                container_ref=container_ref,
+            )
 
     def list_index_entries_for_target(self, target_kind: str, target_id: str) -> list[IndexEntry]:
         with self._session_factory() as session:
@@ -1339,6 +1497,8 @@ class SQLiteStorageProvider(
                         SourceItemRecord.artifact_kind,
                         SourceItemRecord.visibility,
                         SourceItemRecord.forgotten_at,
+                        SourceItemRecord.relay_name,
+                        SourceItemRecord.relay_attribution_state,
                     ).outerjoin(
                         SourceItemRecord,
                         and_(
@@ -1379,6 +1539,8 @@ class SQLiteStorageProvider(
                         artifact_kind=mapping["artifact_kind"],
                         visibility=mapping["visibility"] or "private",
                         forgotten_at=self._normalize_datetime(mapping["forgotten_at"]),
+                        relay_name=mapping["relay_name"],
+                        relay_attribution_state=mapping["relay_attribution_state"] or "unknown",
                     ),
                 )
         return result
@@ -1403,7 +1565,8 @@ class SQLiteStorageProvider(
                     "ie.index_type, ie.text_view_name, ie.provider_name, ie.provider_version, "
                     "si.id AS source_item_id, si.source_type, si.source_id AS source_external_id, "
                     "si.metadata_json, si.occurred_at, si.actor_ref, si.role, si.container_ref, "
-                    "si.thread_ref, si.source_ref, si.artifact_kind, si.visibility, si.forgotten_at "
+                    "si.thread_ref, si.source_ref, si.artifact_kind, si.visibility, si.forgotten_at, "
+                    "si.relay_name, si.relay_attribution_state "
                     "FROM matching_source_ids swr "
                     "JOIN source_items si ON si.id = swr.source_item_id "
                     "CROSS JOIN index_entries AS ie INDEXED BY idx_index_entries_target_lookup "
@@ -1441,6 +1604,8 @@ class SQLiteStorageProvider(
                     artifact_kind=mapping["artifact_kind"],
                     visibility=mapping["visibility"] or "private",
                     forgotten_at=self._normalize_datetime(mapping["forgotten_at"]),
+                    relay_name=mapping["relay_name"],
+                    relay_attribution_state=mapping["relay_attribution_state"] or "unknown",
                 ),
             ))
         return candidates

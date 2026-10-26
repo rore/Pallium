@@ -364,8 +364,33 @@ class InventoryWorker:
                             or getattr(client, "continuity", None) != continuity
                             or (not owner_exited and client.bootstrap_unchanged() is not True)
                             or client.manifest != previous_manifest):
-                        raise
-                    # Resolved observation failure permits only a new real caller.
+                        self._restart_allowed = False
+                        if ready_retirement_context != "idle":
+                            raise
+                    if ready_retirement_context == "idle":
+                        replacement = None
+                        try:
+                            if self._restart_allowed:
+                                replacement = self._auto_reconnect(
+                                    native_type, original_pipe, metadata, continuity,
+                                    retired_context=(client, previous_manifest))
+                        except Exception:
+                            self._restart_allowed = False
+                        finally:
+                            # The episode borrows the old authenticated exit witness.
+                            if callable(getattr(client, "retire", None)):
+                                self._finish(client)
+                        if (not self._restart_allowed or self.stop_event.is_set()
+                                or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
+                                or replacement is not None and (
+                                    replacement.continuity != continuity
+                                    or getattr(replacement, "unresolved", False)
+                                    or getattr(getattr(replacement, "io", None), "unresolved", False))):
+                            if replacement is not None:
+                                self._finish(replacement)
+                            return None, True
+                        return replacement, True
+                    # Foreground failure still requires a new real caller.
                     self._fresh_request_retirement = (client, previous_manifest)
                     return None, True
                 busy = ready.get("status") == "unavailable" and ready.get("reason") == "busy"
@@ -404,7 +429,42 @@ class InventoryWorker:
         return (self._auto_reconnect(
             native_type, original_pipe, metadata, continuity, previous_manifest), True)
 
-    def _auto_reconnect(self, native_type, original_pipe, metadata, continuity, previous_manifest=None):
+    def _retired_candidate(self, native_type, original_pipe, retired_client, retired_manifest):
+        from app.codex_bridge_pipe import ShadowUnavailable
+        candidate = None
+        try:
+            if os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe:
+                raise RuntimeError("retired capability changed")
+            exit_witness = getattr(retired_client, "retired_service_exited", None)
+            owner_exited = callable(exit_witness) and exit_witness() is True
+            if not owner_exited and retired_client.bootstrap_unchanged() is not True:
+                raise RuntimeError("retired bootstrap changed")
+            if owner_exited:
+                candidate = native_type(self._path, self.stop_event, retained=True,
+                                        previous_manifest=retired_manifest)
+            else:
+                candidate = native_type(self._path, self.stop_event, retained=True)
+            replacement_manifest = candidate.manifest
+            replacement_unchanged = candidate.bootstrap_unchanged()
+            retired_unchanged = (exit_witness() is True if owner_exited
+                                 else retired_client.bootstrap_unchanged())
+            if (os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
+                    or type(replacement_manifest) is not dict
+                    or (replacement_manifest == retired_manifest if owner_exited
+                        else replacement_manifest != retired_manifest)
+                    or replacement_unchanged is not True or retired_unchanged is not True):
+                raise RuntimeError("retired acquisition identity changed")
+            return candidate
+        except Exception as exc:
+            if candidate is not None:
+                self._finish(candidate)
+            if not (candidate is None and isinstance(exc, ShadowUnavailable)
+                    and exc.category == "startup-unavailable"):
+                self._restart_allowed = False
+            raise
+
+    def _auto_reconnect(self, native_type, original_pipe, metadata, continuity, previous_manifest=None,
+                        *, retired_context=None):
         started, delay = time.monotonic(), RECONNECT_INITIAL_BACKOFF_SECONDS
         from app.codex_bridge_pipe import ShadowUnavailable
         for attempt in range(RECONNECT_MAX_ATTEMPTS):
@@ -414,7 +474,9 @@ class InventoryWorker:
                     or not self._valid_continuity(continuity)):
                 return None
             try:
-                if previous_manifest is None:
+                if retired_context is not None:
+                    client = self._retired_candidate(native_type, original_pipe, *retired_context)
+                elif previous_manifest is None:
                     client = native_type(self._path, self.stop_event, retained=True)
                 else:
                     client = native_type(self._path, self.stop_event, retained=True,
@@ -434,14 +496,19 @@ class InventoryWorker:
                     if result["status"] == "ready":
                         if (self.stop_event.is_set()
                                 or time.monotonic() - started >= RECONNECT_WINDOW_SECONDS
-                                or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe):
+                                or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
+                                or client.continuity != continuity
+                                or getattr(client, "unresolved", False)
+                                or getattr(getattr(client, "io", None), "unresolved", False)):
                             self._finish(client)
                             return None
                         result = inventory_status(client.register(metadata))
                         if (result["status"] == "registered" and client.continuity == continuity
                                 and not self.stop_event.is_set()
                                 and time.monotonic() - started < RECONNECT_WINDOW_SECONDS
-                                and os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") == original_pipe):
+                                and os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") == original_pipe
+                                and not getattr(client, "unresolved", False)
+                                and not getattr(getattr(client, "io", None), "unresolved", False)):
                             return client
                     self._finish(client)
                     # Explicit busy rejects admission before mutation; uncertain replies never retry.
@@ -569,26 +636,12 @@ class InventoryWorker:
                                 self._restart_allowed = False
                                 self.stop_event.set()
                                 break
-                            try:
-                                exit_witness = getattr(retired_client, "retired_service_exited", None)
-                                owner_exited = callable(exit_witness) and exit_witness() is True
-                                bootstrap_unchanged = owner_exited or retired_client.bootstrap_unchanged()
-                            except Exception:
-                                self._restart_allowed = False
-                                raise
-                            if not bootstrap_unchanged:
-                                self._restart_allowed = False
-                                self.stop_event.set()
-                                break
                             remaining = acquire_deadline - time.monotonic()
                             if remaining <= 0:
                                 break
                             try:
-                                if owner_exited:
-                                    client = NativeInventoryClient(self._path, self.stop_event, retained=True,
-                                        previous_manifest=retired_manifest)
-                                else:
-                                    client = NativeInventoryClient(self._path, self.stop_event, retained=True)
+                                client = self._retired_candidate(
+                                    NativeInventoryClient, retired_pipe, retired_client, retired_manifest)
                             except ShadowUnavailable as exc:
                                 if exc.category != "startup-unavailable":
                                     self._restart_allowed = False
@@ -600,24 +653,7 @@ class InventoryWorker:
                             except Exception:
                                 self._restart_allowed = False
                                 raise
-                            try:
-                                replacement_manifest = client.manifest
-                                replacement_unchanged = client.bootstrap_unchanged()
-                                retired_unchanged = (exit_witness() is True if owner_exited
-                                                     else retired_client.bootstrap_unchanged())
-                            except Exception:
-                                self._restart_allowed = False
-                                raise
                             if self.stop_event.is_set():
-                                break
-                            if (os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != retired_pipe
-                                    or type(replacement_manifest) is not dict
-                                    or (replacement_manifest == retired_manifest if owner_exited
-                                        else replacement_manifest != retired_manifest)
-                                    or replacement_unchanged is not True
-                                    or retired_unchanged is not True):
-                                self._restart_allowed = False
-                                self.stop_event.set()
                                 break
                             if future.cancelled():
                                 unused = client
@@ -747,9 +783,10 @@ class InventoryWorker:
                         continue
                     if disposed and replacement is not None:
                         continue
-                    # Busy admits nothing: keep only the checked live channel and old caller.
+                    # Keep checked prior custody without replaying a failed caller.
                     if (not disposed and replacement is client
-                            and result["status"] == "unavailable" and result.get("reason") == "busy"
+                            and (foreground_transport_failure
+                                 or result["status"] == "unavailable" and result.get("reason") == "busy")
                             and not self.stop_event.is_set() and not getattr(client, "unresolved", False)
                             and getattr(client, "continuity", None) == continuity):
                         continue

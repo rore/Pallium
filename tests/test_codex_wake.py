@@ -2621,9 +2621,11 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
     assert delivered["state"] == "delivered"
     assert delivered["destination_health"] == "active"
     assert delivered["attempts"] == 1
-    assert route.post("/relay/turn", json={
+    final_turn = route.post("/relay/turn", json={
         "runtime": "codex", "session_ref": "target", **scope,
-    }).json()["deliveries"] == []
+    })
+    assert final_turn.status_code == 200, final_turn.text
+    assert final_turn.json()["deliveries"] == []
 
     # The authoritative ACK performed by the hook releases the exact reservation.
     assert not codex_wake._scheduled_session_generations
@@ -3289,7 +3291,11 @@ def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
         f"/relay/messages/{later['message_id']}", params=scope,
     ).json()["deliveries"][0]["state"] == "pending"
 
-def test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract(client) -> None:
+def test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract(client, monkeypatch) -> None:
+    from itertools import count
+    from types import SimpleNamespace
+    from storage import sqlite_queue
+
     app = FastAPI()
     app.include_router(build_router(
         client.app.state.pallium_service,
@@ -3297,10 +3303,17 @@ def test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract(client) 
     ))
     route = TestClient(app)
     with patch("app.dependencies.schedule_codex_relay_wake") as schedule:
-        for runtime, session in (("claude-code", "sender"), ("codex", "target")):
-            assert route.post("/relay/turn", json={
-                "runtime": runtime, "session_ref": session, **SCOPE,
-            }).status_code == 200
+        # Registration prepares this ACK journey; restore native time before the contract checks.
+        native_queue_time = sqlite_queue.time
+        with monkeypatch.context() as setup_patch:
+            setup_time = SimpleNamespace(**vars(native_queue_time))
+            setup_time.monotonic = count(step=0.001).__next__
+            setup_patch.setattr(sqlite_queue, "time", setup_time)
+            for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+                assert route.post("/relay/turn", json={
+                    "runtime": runtime, "session_ref": session, **SCOPE,
+                }).status_code == 200
+        assert sqlite_queue.time is native_queue_time
         sent = []
         for message_id in ("batch-1", "batch-2"):
             response = route.post("/relay/messages", json={
@@ -4968,12 +4981,16 @@ def test_restart_trace_association_accepts_same_attempt_trailing_fact() -> None:
     ) == attempt_id
 
 
-@pytest.mark.parametrize("round_trip_scope", (False, True))
+@pytest.mark.parametrize("round_trip_scope,relay_admission_clock", [
+    pytest.param(False, "semantic", id="False"),
+    pytest.param(True, "semantic", id="True"),
+], indirect=["relay_admission_clock"])
 def test_restart_trace_association_is_http_visible_without_second_native_submission(
     client,
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
     round_trip_scope: bool,
+    relay_admission_clock,
 ) -> None:
     service = client.app.state.pallium_service
     storage = service._storage
@@ -5013,11 +5030,12 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
     ))
     route_a = TestClient(app_a)
     scope = {"container_ref": "git:example.test/restart-link"}
-    for runtime, session in (("claude-code", "sender"), ("codex", "target")):
-        assert route_a.post(
-            "/relay/turn",
-            json={"runtime": runtime, "session_ref": session, **scope},
-        ).status_code == 200
+    with relay_admission_clock(storage, expected_admissions=2):
+        for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+            assert route_a.post(
+                "/relay/turn",
+                json={"runtime": runtime, "session_ref": session, **scope},
+            ).status_code == 200
 
     first = route_a.post("/relay/messages", json={
         "sender_runtime": "claude-code",

@@ -254,6 +254,149 @@ class TestImmediateTransactionRetry:
         assert bodies == (["fresh"] if refused else ["first", "fresh"])
         assert time.monotonic is native_monotonic and sqlite_queue.time.sleep is time.sleep
 
+    @pytest.mark.parametrize("failure", [None, "body", "flush", "flush_interrupt", "commit", "commit_interrupt", "rollback", "rollback_interrupt", "close_interrupt"])
+    def test_terminal_settlement_releases_before_cleanup_only_when_confirmed(self, storage, failure):
+        session, connection = MagicMock(), MagicMock()
+        session.connection.return_value = connection
+        storage._relay_session_factory = lambda: session
+        phases = []
+
+        def execute(statement):
+            statement = str(statement)
+            if statement == "COMMIT" and failure in {"commit", "commit_interrupt"}:
+                raise KeyboardInterrupt("commit interrupted") if failure == "commit_interrupt" else RuntimeError("commit result unavailable")
+            if statement == "ROLLBACK":
+                if failure == "rollback":
+                    raise RuntimeError("rollback result unavailable")
+                if failure == "rollback_interrupt":
+                    raise KeyboardInterrupt("rollback interrupted")
+            if statement == "PRAGMA busy_timeout=15000":
+                phases.append(("reset", storage._relay_writer_lock.locked()))
+
+        connection.execute.side_effect = execute
+        if failure in {"flush", "flush_interrupt"}:
+            session.flush.side_effect = KeyboardInterrupt("flush interrupted") if failure == "flush_interrupt" else ValueError("flush failed")
+
+        def close():
+            phases.append(("close", storage._relay_writer_lock.locked()))
+            if failure == "close_interrupt":
+                raise KeyboardInterrupt("close interrupted")
+
+        session.close.side_effect = close
+
+        def transaction():
+            with storage._begin_relay_immediate():
+                assert storage._relay_writer_lock.locked()
+                if failure in {"body", "rollback", "rollback_interrupt"}:
+                    raise ValueError("body failed")
+
+        if failure is None:
+            transaction()
+        else:
+            error = KeyboardInterrupt if failure.endswith("_interrupt") else RuntimeError if failure == "commit" else ValueError
+            with pytest.raises(error):
+                transaction()
+        uncertain = failure in {"rollback", "rollback_interrupt"}
+        assert phases == [("reset", uncertain), ("close", uncertain)]
+        assert not storage._relay_writer_lock.locked()
+        statements = [str(call.args[0]) for call in connection.execute.call_args_list]
+        assert statements.count("BEGIN IMMEDIATE") == 1
+        assert statements.count("COMMIT") == (0 if failure in {"body", "flush", "flush_interrupt", "rollback", "rollback_interrupt"} else 1)
+        assert statements.count("ROLLBACK") == (failure not in {None, "close_interrupt"})
+
+    @pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
+    @pytest.mark.parametrize("unlock_first", [False, True])
+    def test_release_failure_cannot_skip_cleanup_or_unlock_a_successor(self, storage, failure, unlock_first):
+        session, connection = MagicMock(), MagicMock()
+        session.connection.return_value = connection
+        storage._relay_session_factory = lambda: session
+        actual = threading.Lock()
+        releases = []
+
+        def release():
+            releases.append(1)
+            if unlock_first:
+                actual.release()
+                assert actual.acquire(blocking=False)  # A successor owns it before the error returns.
+            raise failure("release result unavailable")
+
+        storage._relay_writer_lock = SimpleNamespace(
+            acquire=actual.acquire, release=release, locked=actual.locked,
+        )
+        try:
+            with pytest.raises(failure, match="release result unavailable"):
+                with storage._begin_relay_immediate():
+                    pass
+            assert releases == [1] and actual.locked()
+            session.close.assert_called_once()
+            statements = [str(call.args[0]) for call in connection.execute.call_args_list]
+            assert statements[-2:] == ["COMMIT", "PRAGMA busy_timeout=15000"]
+            assert "ROLLBACK" not in statements
+        finally:
+            if actual.locked():
+                actual.release()
+
+    def test_cleanup_cannot_release_a_replaced_provider_gate(self, storage):
+        original, replacement = storage._relay_writer_lock, threading.Lock()
+        replacement.acquire()
+        session, connection = MagicMock(), MagicMock()
+        session.connection.return_value = connection
+        storage._relay_session_factory = lambda: session
+
+        def close():
+            assert not original.locked()
+            storage._relay_writer_lock = replacement
+
+        session.close.side_effect = close
+        try:
+            with storage._begin_relay_immediate():
+                pass
+            assert not original.locked() and replacement.locked()
+        finally:
+            replacement.release()
+
+    @pytest.mark.parametrize("late_begin", [False, True])
+    def test_acquisition_cleanup_keeps_the_gate_until_admission_or_final_exit(self, storage, monkeypatch, late_begin):
+        import sqlite3
+        from storage import sqlite_queue
+
+        clock, sessions, cleanup_gate_states = [0.0], [], []
+        monkeypatch.setattr(sqlite_queue, "time", SimpleNamespace(
+            **{**vars(time), "monotonic": lambda: clock[0]},
+        ))
+
+        def factory():
+            session, connection = MagicMock(), MagicMock()
+            session.connection.return_value = connection
+            sessions.append(session)
+            attempt = len(sessions)
+
+            def execute(statement):
+                if str(statement) == "BEGIN IMMEDIATE" and attempt == 1:
+                    if late_begin:
+                        clock[0] = .45
+                    else:
+                        error = _make_sa_operational_error("database is locked")
+                        error.orig.sqlite_errorcode = sqlite3.SQLITE_BUSY
+                        raise error
+
+            connection.execute.side_effect = execute
+            session.close.side_effect = lambda: cleanup_gate_states.append(storage._relay_writer_lock.locked())
+            return session
+
+        storage._relay_session_factory = factory
+        if late_begin:
+            with pytest.raises(ImmediateTransactionBusyError) as refusal:
+                with storage._begin_relay_immediate():
+                    pytest.fail("late admission must not run the body")
+            assert refusal.value.acquisition_stage == "late_begin"
+            assert cleanup_gate_states == [True]
+        else:
+            with storage._begin_relay_immediate():
+                assert storage._relay_writer_lock.locked()
+            assert len(sessions) == 2 and cleanup_gate_states == [True, False]
+        assert not storage._relay_writer_lock.locked()
+
     @pytest.mark.parametrize("elapsed", [.44, .45, .46], ids=["before", "exact", "over"])
     def test_relay_setup_pragma_deadline_http_refusal_and_fresh_registration(
         self, client, monkeypatch, elapsed,
@@ -312,6 +455,28 @@ class TestImmediateTransactionRetry:
         finally:
             event.remove(engine, "before_cursor_execute", observe)
             event.remove(engine, "checkin", checkin)
+
+    @pytest.mark.parametrize("interrupt", [False, True])
+    def test_reset_failure_still_closes_after_confirmed_release(self, storage, interrupt):
+        session, connection = MagicMock(), MagicMock()
+        session.connection.return_value = connection
+        storage._relay_session_factory = lambda: session
+
+        def execute(statement):
+            if str(statement) == "PRAGMA busy_timeout=15000":
+                assert not storage._relay_writer_lock.locked()
+                raise KeyboardInterrupt("reset interrupted") if interrupt else RuntimeError("reset failed")
+
+        connection.execute.side_effect = execute
+        if interrupt:
+            with pytest.raises(KeyboardInterrupt, match="reset interrupted"):
+                with storage._begin_relay_immediate():
+                    pass
+        else:
+            with storage._begin_relay_immediate():
+                pass
+        session.close.assert_called_once()
+        assert not storage._relay_writer_lock.locked()
 
     def test_relay_native_wait_uses_remaining_local_acquisition_budget(self, storage, monkeypatch):
         from storage import sqlite_queue

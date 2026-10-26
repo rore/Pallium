@@ -24,6 +24,7 @@ from common import (
     read_hook_input,
     read_turn,
     register_claude_wake,
+    source_turn_key,
     relay_request,
     relay_turn,
 
@@ -75,15 +76,26 @@ def main() -> None:
             except Exception:
                 pass
             register_claude_wake(session_id, container_ref, idle=True)
-        if not transcript_path:
-            return
-
-        turn_data = read_turn(transcript_path)
-        if not turn_data:
-            return
-        if not turn_data.assistant_text and not turn_data.tool_calls:
-            return
-        content = turn_data.assistant_text
+        requested_source_turn_id = source_turn_key(payload.get("prompt_id"))
+        current_message = payload.get("last_assistant_message")
+        source_turn_id = None
+        turn_data = None
+        if requested_source_turn_id is not None and isinstance(current_message, str) and current_message.strip():
+            # Claude documents that transcript_path may lag at Stop. Only the
+            # current Stop payload can safely supply text for this prompt key.
+            source_turn_id = requested_source_turn_id
+            content = current_message
+        else:
+            # Preserve legacy transcript capture, but never associate it with a
+            # prompt key when current-output evidence is unavailable.
+            if not transcript_path:
+                return
+            turn_data = read_turn(transcript_path)
+            if not turn_data:
+                return
+            if not turn_data.assistant_text and not turn_data.tool_calls:
+                return
+            content = turn_data.assistant_text
         if len(content) > CONTENT_LENGTH_GATE:
             return
 
@@ -99,7 +111,7 @@ def main() -> None:
         warning = work_ref_warning(metadata)
         if warning:
             print(warning, file=sys.stderr)
-        work_trace_meta = build_work_trace_metadata(turn_data)
+        work_trace_meta = build_work_trace_metadata(turn_data) if turn_data is not None else None
         if work_trace_meta:
             metadata["agent_work_trace_turn"] = work_trace_meta
             metadata["cwd"] = cwd
@@ -117,6 +129,8 @@ def main() -> None:
             "visibility": "private",
             "artifact_kind": "message",
         }
+        if source_turn_id is not None:
+            item_payload["source_turn_id"] = source_turn_id
         if metadata:
             item_payload["metadata"] = metadata
 

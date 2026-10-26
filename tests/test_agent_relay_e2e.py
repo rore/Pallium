@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
+from pathlib import Path
+import socket
+import subprocess
+import sys
+import tempfile
+import time
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -245,6 +253,113 @@ def test_reply_payload_boundaries_and_long_preview(client):
     assert 0 < preview["next_offset"] < 16000
 
 
+def _reply_redaction_lifecycle(client, delivery_id, payload, receipt=None):
+    # This lifecycle checks redaction, not first-attempt admission under load (RF-007).
+    deadline = time.monotonic() + 5
+    response = _reply(client, delivery_id, payload, receipt=receipt)
+    if response.status_code == 503:
+        body = response.json()
+        assert body == {"detail": {"code": "relay_busy", "retryable": True}}
+        assert body["detail"]["retryable"] is True
+        delay = response.headers.get("Retry-After", "")
+        assert delay.isascii() and delay.isdecimal()
+        assert 0 < int(delay) < deadline - time.monotonic()
+        time.sleep(int(delay))
+        assert time.monotonic() < deadline
+        response = _reply(client, delivery_id, payload, receipt=receipt)
+    assert response.status_code == 200, response.text
+    return response
+
+
+@pytest.mark.parametrize("refusals", [1, 2])
+def test_redaction_reply_admission_retry_is_bounded(client, relay_storage, monkeypatch, refusals):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    parent = _send(client, "claude-code", "sender", "codex:target").json()
+    delivery = _turn(client, "codex", "target")["deliveries"][0]
+    original = relay_storage.relay_reply_atomic
+    calls = []
+
+    def reply(**kwargs):
+        calls.append(dict(kwargs))
+        if len(calls) <= refusals:
+            raise ImmediateTransactionBusyError("controlled admission refusal")
+        return original(**kwargs)
+
+    monkeypatch.setattr(relay_storage, "relay_reply_atomic", reply)
+    payload = "run checks from C:/sample/worktree 完成 → שלום"
+    if refusals == 2:
+        with pytest.raises(AssertionError, match="relay_busy"):
+            _reply_redaction_lifecycle(client, delivery["delivery_id"], payload, delivery["receipt"])
+        assert _status(client, parent["message_id"]).json()["deliveries"][0]["state"] == "claimed"
+        assert _turn(client, "claude-code", "sender")["deliveries"] == []
+    else:
+        accepted = _reply_redaction_lifecycle(
+            client, delivery["delivery_id"], payload, delivery["receipt"],
+        ).json()
+        assert accepted["payload"] == payload
+        duplicate = _reply(client, delivery["delivery_id"], payload, delivery["receipt"])
+        assert duplicate.status_code == 200, duplicate.text
+        assert duplicate.json()["message_id"] == accepted["message_id"]
+        assert _reply_deliveries(duplicate.json()) == _reply_deliveries(accepted)
+        replies = _turn(client, "claude-code", "sender")["deliveries"]
+        assert len(replies) == 1 and replies[0]["message_id"] == accepted["message_id"]
+        assert _status(client, parent["message_id"]).json()["deliveries"][0]["state"] == "delivered"
+    assert len(calls) == (2 if refusals == 2 else 3)
+    assert calls[0] == calls[1]
+    assert calls[0]["delivery_id"] == delivery["delivery_id"]
+    assert calls[0]["receipt"] == delivery["receipt"]
+    assert calls[0]["payload"] == payload
+
+
+@pytest.mark.parametrize("status, code, retryable, delay", [
+    (500, "relay_busy", True, "1"),
+    (409, "relay_busy", True, "1"),
+    (503, "different_error", True, "1"),
+    (503, "relay_busy", False, "1"),
+    (503, "relay_busy", 1, "1"),
+    (503, "relay_busy", True, ""),
+    (503, "relay_busy", True, "0"),
+    (503, "relay_busy", True, "-1"),
+    (503, "relay_busy", True, "1.5"),
+    (503, "relay_busy", True, "5"),
+])
+def test_redaction_reply_rejects_other_errors_without_retry(status, code, retryable, delay):
+    from httpx import Response
+    from types import SimpleNamespace
+
+    calls = []
+
+    def post(*args, **kwargs):
+        calls.append((args, kwargs))
+        return Response(status, json={"detail": {"code": code, "retryable": retryable}},
+                        headers={"Retry-After": delay})
+
+    with pytest.raises(AssertionError):
+        _reply_redaction_lifecycle(SimpleNamespace(post=post), "delivery", "payload", "receipt")
+    assert len(calls) == 1
+
+
+def test_redaction_reply_rechecks_budget_after_wait(monkeypatch):
+    from httpx import Response
+    from types import SimpleNamespace
+
+    calls, waits = [], []
+
+    def post(*args, **kwargs):
+        calls.append((args, kwargs))
+        return Response(503, json={"detail": {"code": "relay_busy", "retryable": True}},
+                        headers={"Retry-After": "1"})
+
+    clock = iter([0.0, 0.0, 5.0])
+    monkeypatch.setattr(sys.modules[__name__], "time", SimpleNamespace(
+        monotonic=lambda: next(clock), sleep=waits.append,
+    ))
+    with pytest.raises(AssertionError):
+        _reply_redaction_lifecycle(SimpleNamespace(post=post), "delivery", "payload", "receipt")
+    assert len(calls) == 1 and waits == [1]
+
+
 @pytest.mark.parametrize("case, suffix, secret", [
     ("harmless", "", None),
     ("mixed", " rotate this aB3dE4fG5hI6jK7lM8nO9 now", "aB3dE4fG5hI6jK7lM8nO9"),
@@ -290,12 +405,12 @@ def test_drive_directory_prose_redaction_send_reply_lifecycle(client, monkeypatc
     claimed = None
     for runtime, session in [("codex", "target"), ("claude-code", "sender")]:
         if claimed is not None:
-            replied = _reply(client, claimed["delivery_id"], raw)
+            replied = _reply_redaction_lifecycle(client, claimed["delivery_id"], raw)
             assert replied.status_code == 200, replied.text
             message = replied.json()
             # Separate identity qualification from the real diagnostic writers.
             settle_reply_writers()
-            duplicate_reply = _reply(client, claimed["delivery_id"], raw)
+            duplicate_reply = _reply_redaction_lifecycle(client, claimed["delivery_id"], raw)
             assert duplicate_reply.status_code == 200, duplicate_reply.text
             assert duplicate_reply.json()["message_id"] == message["message_id"]
             assert _reply_deliveries(duplicate_reply.json()) == _reply_deliveries(message)
@@ -842,6 +957,235 @@ def test_explicit_durable_survives_file_restart_dormancy_and_backlog(client, tes
         assert reply_delivery["expires_at"] is None
         assert _ack(restarted, reply_delivery).status_code == 200
         assert _status(restarted, "durable-0").json()["deliveries"][0]["state"] == "delivered"
+
+
+def _hosted_relay_process_e2e_enabled() -> bool:
+    runner_temp = os.environ.get("RUNNER_TEMP")
+    return (os.environ.get("GITHUB_ACTIONS") == "true"
+            and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted"
+            and bool(runner_temp) and Path(runner_temp).is_dir())
+
+
+@pytest.mark.skipif(not _hosted_relay_process_e2e_enabled(),
+                    reason="process-boundary Relay E2E requires disposable GitHub-hosted RUNNER_TEMP")
+def test_durable_hermes_queue_survives_owned_service_process_restart():
+    if not _hosted_relay_process_e2e_enabled():
+        pytest.skip("process-boundary Relay E2E requires disposable GitHub-hosted RUNNER_TEMP")
+
+    import httpx
+
+    runner_temp = Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
+    scratch = Path(tempfile.mkdtemp(prefix="pallium-relay-process-", dir=runner_temp)).resolve(strict=True)
+    assert scratch != runner_temp and scratch.is_relative_to(runner_temp), (scratch, runner_temp)
+    repo = Path(__file__).resolve().parents[1]
+    home = scratch / "home"
+    profile_dirs = {
+        "HOME": home,
+        "USERPROFILE": scratch / "user-profile",
+        "APPDATA": scratch / "appdata",
+        "LOCALAPPDATA": scratch / "localappdata",
+        "XDG_CONFIG_HOME": scratch / "xdg-config",
+        "XDG_CACHE_HOME": scratch / "xdg-cache",
+        "XDG_DATA_HOME": scratch / "xdg-data",
+        "TMP": scratch / "tmp",
+        "TEMP": scratch / "temp",
+        "TMPDIR": scratch / "tmpdir",
+        "PALLIUM_HOME": home / ".pallium",
+        "PALLIUM_CODEX_WAKE_DIR": scratch / "codex-wake",
+        "PALLIUM_CLAUDE_WAKE_DIR": scratch / "claude-wake",
+    }
+    for path in profile_dirs.values():
+        path.mkdir(parents=True, exist_ok=True)
+
+    env = {
+        key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR") if os.environ.get(key)
+    }
+    env.update({key: str(path) for key, path in profile_dirs.items()})
+    env.update({
+        "PATH": os.pathsep.join(filter(None, (str(Path(sys.executable).parent),
+                                               str(Path(env["SYSTEMROOT"]) / "System32")
+                                               if env.get("SYSTEMROOT") else ""))),
+        "PYTHONPATH": str(repo),
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    })
+
+    database = scratch / "pallium.db"
+    relay_database = scratch / "pallium-relay.db"
+    index = scratch / "vector-index"
+    sqlite_url = f"sqlite:///{database}"
+    relay_sqlite_url = f"sqlite:///{relay_database}"
+    server_code = r'''import sys
+sys.path.insert(0, sys.argv[1])
+from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
+from app.main import create_app
+from storage.vector_index import VectorIndexConfig
+import uvicorn
+
+config = AppConfig(
+    storage_backend="sqlite",
+    sqlite_url=sys.argv[2],
+    relay_sqlite_url=sys.argv[3],
+    default_use_case="demo_agent_memory",
+    llm_providers={},
+    embedding_providers={"disabled": EmbeddingProviderConfig(name="disabled", kind="onnx")},
+    semantic_packages={"demo_agent_memory": SemanticPackageConfig(
+        name="demo_agent_memory", implementation="demo_agent_memory", enabled=True,
+    )},
+    vector_index=VectorIndexConfig(enabled=False, index_path=sys.argv[4], embedding_provider="disabled"),
+)
+uvicorn.run(create_app(config), host="127.0.0.1", port=int(sys.argv[5]), log_level="info")
+'''
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+
+    identity = {
+        "scratch": str(scratch), "runner_temp": str(runner_temp),
+        "sqlite_url": sqlite_url, "relay_sqlite_url": relay_sqlite_url,
+        "port": port, "container_ref": SCOPE["container_ref"], "generations": [],
+    }
+    processes = []
+    log_handles = []
+
+    def start_generation(number: int):
+        stdout_path, stderr_path = scratch / f"server-{number}.stdout.log", scratch / f"server-{number}.stderr.log"
+        stdout, stderr = stdout_path.open("wb"), stderr_path.open("wb")
+        log_handles.extend((stdout, stderr))
+        process = subprocess.Popen(
+            [sys.executable, "-c", server_code, str(repo), sqlite_url, relay_sqlite_url, str(index), str(port)],
+            cwd=scratch, env=env, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+        )
+        processes.append(process)
+        identity["generations"].append({"number": number, "pid": process.pid,
+                                        "stdout": str(stdout_path), "stderr": str(stderr_path)})
+        return process
+
+    def stop_owned(process):
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
+        return process.poll() is not None
+
+    def ready(process):
+        deadline = time.monotonic() + 45
+        with httpx.Client(trust_env=False, timeout=2) as probe:
+            while time.monotonic() < deadline:
+                if process.poll() is not None:
+                    break
+                try:
+                    response = probe.get(f"http://127.0.0.1:{port}/health")
+                    body = response.json()
+                    if (response.status_code == 200 and body.get("status") == "ok"
+                            and body.get("vector_index_ready") is True
+                            and body.get("embedding_provider_ok") is True):
+                        return
+                except (httpx.HTTPError, ValueError):
+                    pass
+                time.sleep(.2)
+        stderr_path = Path(identity["generations"][-1]["stderr"])
+        stdout_path = Path(identity["generations"][-1]["stdout"])
+        raise AssertionError(f"server did not become ready; stdout={stdout_path.read_text(encoding='utf-8', errors='replace')} "
+                             f"stderr={stderr_path.read_text(encoding='utf-8', errors='replace')}")
+
+    def api(client, method, path, *, json_body=None, params=None):
+        response = client.request(method, f"http://127.0.0.1:{port}{path}",
+                                  json=json_body, params=params)
+        assert response.status_code == 200, f"{method} {path}: {response.status_code} {response.text}"
+        return response.json()
+
+    try:
+        first = start_generation(1)
+        ready(first)
+        with httpx.Client(base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=5) as client:
+            sender_endpoint = _turn(client, "codex", "sender")["session"]["endpoint_id"]
+            recipient_endpoint = _turn(client, "hermes", "recipient")["session"]["endpoint_id"]
+            identity["endpoints"] = {"sender": sender_endpoint, "recipient": recipient_endpoint}
+            queued = {}
+            for message_id, payload in (
+                ("process-restart-ack", "Synthetic durable ACK after process restart ✓"),
+                ("process-restart-reply", "Synthetic durable reply after process restart ✓"),
+            ):
+                sent = _send(client, "codex", "sender", "hermes:recipient", payload,
+                             message_id=message_id, expires_in_seconds=None)
+                assert sent.status_code == 200, sent.text
+                original = sent.json()
+                assert original["message_id"] == message_id and original["expires_at"] is None
+                assert len(original["deliveries"]) == 1 and original["deliveries"][0]["expires_at"] is None
+                assert original["deliveries"][0]["recipient_endpoint_id"] == recipient_endpoint
+                retry = _send(client, "codex", "sender", "hermes:recipient", payload,
+                              message_id=message_id, expires_in_seconds=None)
+                assert retry.status_code == 200, retry.text
+                assert retry.json()["message_id"] == message_id
+                assert retry.json()["deliveries"][0]["delivery_id"] == original["deliveries"][0]["delivery_id"]
+                queued[message_id] = original["deliveries"][0]["delivery_id"]
+            identity["queued"] = queued
+
+        assert stop_owned(first), "first owned server process did not exit"
+        identity["first_process_exit"] = first.returncode
+        identity["database_hashes_before_restart"] = {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in (database, relay_database)}
+        second = start_generation(2)
+        assert second.pid != first.pid, identity["generations"]
+        ready(second)
+        with httpx.Client(base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=5) as client:
+            for message_id, delivery_id in queued.items():
+                status = api(client, "GET", f"/relay/messages/{message_id}",
+                             params={**SCOPE})
+                assert status["message_id"] == message_id
+                assert len(status["deliveries"]) == 1
+                assert status["deliveries"][0]["delivery_id"] == delivery_id
+                assert status["deliveries"][0]["recipient_endpoint_id"] == recipient_endpoint
+                assert status["deliveries"][0]["state"] == "pending"
+
+            turn = _turn(client, "hermes", "recipient", max_messages=2)
+            assert turn["session"]["endpoint_id"] == recipient_endpoint
+            claimed = {row["message_id"]: row for row in turn["deliveries"]}
+            assert set(claimed) == set(queued), turn
+            assert {key: row["delivery_id"] for key, row in claimed.items()} == queued
+            ack_message = claimed["process-restart-ack"]
+            ack = _ack(client, ack_message)
+            assert ack.status_code == 200 and ack.json()["state"] == "delivered"
+
+            reply_message = claimed["process-restart-reply"]
+            reply_response = _reply(client, reply_message["delivery_id"],
+                                    "Hermes reply survived process boundary ✓",
+                                    receipt=reply_message["receipt"], expires_in_seconds=None)
+            assert reply_response.status_code == 200, reply_response.text
+            reply = reply_response.json()
+            retry_reply = _reply(client, reply_message["delivery_id"],
+                                 "Hermes reply survived process boundary ✓",
+                                 receipt=reply_message["receipt"], expires_in_seconds=None)
+            assert retry_reply.status_code == 200 and retry_reply.json()["message_id"] == reply["message_id"]
+            identity["reply_message_id"] = reply["message_id"]
+
+            returned = _turn(client, "codex", "sender")
+            assert returned["session"]["endpoint_id"] == sender_endpoint
+            reply_delivery = next(row for row in returned["deliveries"]
+                                 if row["message_id"] == reply["message_id"])
+            assert _ack(client, reply_delivery).status_code == 200
+            for message_id in queued:
+                final = api(client, "GET", f"/relay/messages/{message_id}", params={**SCOPE})
+                assert final["deliveries"][0]["state"] == "delivered"
+            final_reply = api(client, "GET", f"/relay/messages/{reply['message_id']}",
+                              params={**SCOPE})
+            assert final_reply["deliveries"][0]["state"] == "delivered"
+            identity["final_states"] = {**{key: "delivered" for key in queued},
+                                         reply["message_id"]: final_reply["deliveries"][0]["state"]}
+    finally:
+        for process in reversed(processes):
+            stop_owned(process)
+        for handle in log_handles:
+            handle.close()
+        identity["final_database_hashes"] = {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in (database, relay_database) if path.exists()}
+        (scratch / "identity.json").write_text(json.dumps(identity, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def test_delivery_derived_reply_is_attributed_scoped_and_idempotent(client):

@@ -10,34 +10,98 @@ lane: integration
 
 ## Summary
 
-Active draft PR #324 extends the experimental Desktop/TUI integration toward
+PR #324 delivered the reviewed Desktop/TUI integration toward
 production readiness, including scoped opt-in memory and normal-profile lifecycle
 qualification. Current owner Work Record: `.agent-workflow/tasks/hermes-production-slice4.md`.
-It remains active, draft and experimental. Fresh clean-context review at `353e8f83`
-withdrew the earlier combined technical GO after confirming two P1 blockers below.
-Human result approval is withdrawn; work is with the owner, not waiting on the
-user. The pinned short-journey matrix at `b3601c79` remains evidence, not a broad
-readiness claim. Owner guide changes remain separate from this roadmap update.
+The feature remains active for the unfinished platform, installation and recovery
+scope below. The two P1 blockers identified at
+`353e8f83` are resolved in runtime `b96a05e1`; clean independent result review
+accepted the fixes and corrected qualification below. Clean technical review of
+the owner's final five prose paths is complete: audit of 11 docs, 93 links and
+three commands passed, with zero blocking workflow findings and two advisories.
+The user approved corrected result/release head
+`eec908914020edbcad6d1234351eaea97f468637`, then normally merged as
+`0e78151824bdb4297d802a5e4023de8672ed8f2d` on 2026-10-21 at 20:28:02 UTC.
+The [public result receipt](https://github.com/rore/Pallium/pull/324#issuecomment-6325817266)
+records the exact approval and retained risks. The integration,
+both P1 corrections and logger fixes are delivered; no installed rollout is approved.
+Earlier withdrawn approvals and failed evidence remain historical.
+[PR #343](https://github.com/rore/Pallium/pull/343) tracks the owner's public-
+documentation cleanup, including removal of the stale experimental label.
+That wording correction does not broaden the qualified platform/provider matrix
+or authorize installed rollout.
+Historical reviewed prose head `5f21bfcb46e3800927d16544d423b78f182b967f` changed only
+five prose paths from qualified `d5896a24ec3b72c1f23f5323e43ab8d2a06e60ca`;
+application, tests, dependencies and workflows were identical at that checkpoint.
 
-### Confirmed readiness blockers and owner continuation (2026-10-21)
+### Corrected service fault paths (2026-10-21)
 
-- [ ] **Ordinary-turn liveness:** cached `register_session` does not refresh trusted
-  ordinary-turn `last_seen`; after 24 hours the dormant session rejects MCP/wake.
-  The owner is planning the plugin-only correction using exact endpoint/generation
-  authority and missing caller-surface E2E coverage.
-- [ ] **Inbound payload and persistent fencing:** valid 1,601–16,000-character
-  service payloads can be claimed, then rejected by the 1,600-character renderer,
-  leaving persistent `claim_attempted` fencing across later delivery, reload and
-  expiry. The owner is planning full service-bound transport and lifecycle E2E,
-  preserving ambiguous-attempt and duplicate-activation fences.
+Corrected source `a48b0fef48d91868ffefd903742ef025e66ceeed` repairs exactly two
+existing `self._logger` bindings that caused pre-merge `NameError` after persistence.
+Public HTTP fault E2E showed seven failures plus one passing lexical control before
+the fix and eight passes after; four affected memory files passed 178 cases.
+Clean independent review accepted this correction and the final prose successor
+`eec908914020edbcad6d1234351eaea97f468637`. Native 15 at `d589` and Linux host proof
+at `b96` remain reusable for unchanged host behavior, not proof of injected service
+exceptions; the separate HTTP fault regressions provide that evidence.
+
+Earlier CI [39667217842](https://github.com/rore/Pallium/actions/runs/39667217842) remains
+**failed** on two distinct Codex cases: Linux 3.13's second send returned 503
+(`late_begin` 1,600 ms/setup 1,599 ms) before wake-fence oracles; Linux 3.12's fake
+one-second register-entry signal was not observed and no cancellation was sent,
+so no cancellation/identity outcome was proved. Windows smoke
+passed 626 cases with seven skips; governance
+[39667217848](https://github.com/rore/Pallium/actions/runs/39667217848) passed.
+Causes and possible shared availability impact remain unknown; no full-suite pass,
+causal independence or shared-availability repair is inferred from the focused fault proof.
+
+Approved-head CI [39668992574](https://github.com/rore/Pallium/actions/runs/39668992574)
+also remains **failed**: Linux 3.12's cross-container Codex target turn returned
+503/`setup_deadline` at 1,766 ms (`session_factory` 1,763 ms), before claim/ACK
+and later actor/lifecycle assertions, after 3,705 passes/22 skips/one xfail.
+Linux 3.13 passed 7,929 cases/93 skips/two xfails; Windows smoke passed 626/seven
+skips and governance [39668992584](https://github.com/rore/Pallium/actions/runs/39668992584)
+passed. This distinct failure, its cause and possible availability impact remain
+unresolved; merge does not turn either failed Linux result into a pass.
+
+### Resolved blockers and corrected qualification (2026-10-21)
+
+- [x] **Ordinary-turn liveness:** the stale trusted ordinary-turn `last_seen`
+  defect is corrected using exact endpoint/generation authority and independently
+  accepted caller-surface regressions, including the 24-hour boundary.
+- [x] **Inbound payload and persistent fencing:** full service-bound transport
+  replaces the 1,600-character rendering rejection for valid 1,601–16,000-character
+  input. Accepted lifecycle coverage preserves ambiguous-attempt and duplicate-
+  activation fences while allowing later deliveries, reload and expiry handling.
+
+Clean reviewer `hermes_blockers_clean_result` accepted 197 caller cases and two
+continuation cases on runtime `b96a05e1`. Four actual Linux TUI journeys on both
+pins passed in 115.475/112.384 seconds. Test-only Windows transport successor
+`d5896a24ec3b72c1f23f5323e43ab8d2a06e60ca` passed native
+[39650756737](https://github.com/rore/Pallium/actions/runs/39650756737), attempt 1:
+both jobs succeeded, each with 83 passes and zero failures, errors or skips in
+420.693/394.092 seconds. All eight Desktop/TUI × memory-off/on cells passed full
+16,000-character Unicode payload/default 10,000-character spill, one-claim/ACK,
+later wakes and post-reply context, lifecycle/privacy checks and all 16 cleanup
+receipts. No further execution is needed to establish these accepted results.
+
+Shared Linux 3.13 CI [39650707590](https://github.com/rore/Pallium/actions/runs/39650707590)
+remains **failed** at registration 503/`setup_deadline` (1,949 ms;
+`session_factory` 1,947 ms); the physical cause remains unknown and possible
+availability impact is not excluded.
+Linux 3.12 passed 7,921 cases with 93 skips and two expected failures; Windows
+and governance passed. Native run 14 remains failed, but its Windows stdin Unicode
+pipe cause was diagnosed and corrected with test-only ASCII JSON transport and a
+red/green regression. Older reset failures remain unexplained and uncured by the
+later success; do not conflate those causes.
 
 The user explicitly authorized fixing both blockers, adding missing E2E
 regressions, fresh independent review and isolated execution before pushing the
 fixes. The existing High-risk `.agent-workflow/tasks/hermes-production-slice4.md`
-and PR #324 retain ownership. Next gate: reviewed fixes, both observable regressions,
-clean reviewer and exact-candidate requalification before renewed combined
-technical acceptance and separate human result/release review. No merge or live
-rollout is approved by the retained short-journey evidence.
+and PR #324 retain the implementation and evidence history. Technical and exact
+corrected-result human review are complete and the approved contribution is merged.
+Remaining platform/provider qualification and any everyday rollout stay separate;
+the broader active feature limitations and failed evidence remain explicit.
 
 ### Retained Windows short-journey matrix (2026-10-21)
 
@@ -55,12 +119,13 @@ Candidate CI [39626448225](https://github.com/rore/Pallium/actions/runs/39626448
 and governance [39626448147](https://github.com/rore/Pallium/actions/runs/39626448147)
 passed. Each Linux Python lane passed 7,793 tests with 93 skips and two expected
 failures, in 373.26 and 499.06 seconds. Reuse the previously accepted four Linux
-TUI cells, Gateway and SDK2 evidence as baselines; they do not cover the two new
-blocker boundaries or qualify their future corrections. Native runs 11/12 remain failed and their original
+TUI cells, Gateway and SDK2 evidence as historical baselines, kept distinct from
+the corrected candidate above. Native runs 11/12 remain failed and their original
 causes unexplained; later passing evidence does not prove those failures cured.
 
-Next: follow the owner fix/E2E/review/requalification gate above, then finish guide
-alignment and renewed technical/human result review before merge. Evidence is Windows Server 2025
+The approved integration contribution is merged; retain the separate rollout and
+broader qualification boundaries above.
+Evidence is Windows Server 2025
 with an unpacked app and synthetic provider; it does not establish Windows 11,
 MSIX/updater behavior, graceful native Quit, automatic standalone MCP reconnect
 or ordinary-provider/model quality. No installed rollout or generic Relay
@@ -285,7 +350,7 @@ At that checkpoint complete TUI, opt-in memory and both-release qualification
 remained open; the accepted matrix above supersedes that pending state.
 Ordinary-provider and broader coexistence/recovery limits remain. Controlled owned-tree relaunch
 does not establish graceful native Quit, standalone automatic MCP reconnect or a
-full service-process restart. Keep the feature active and experimental; preserve
+full service-process restart. Keep the feature active for this unfinished scope; preserve
 the current candidate and failed-run evidence under the slice-4 owner's Work Record.
 
 ### Complete integration scope
@@ -453,7 +518,7 @@ test/qualification claims are not inherited without inspecting their evidence.
 ## Done When
 
 - [ ] Public setup, usage, support and limitation documentation matches the
-  accepted implementation, including experimental status and the qualified
+  accepted implementation, including actual support limits and the qualified
   host/provider matrix; independent acceptance review verifies this alignment.
 - [ ] A supported installable Hermes package includes the Pallium skill and
   references, runtime guidance, MCP connection and trusted identity plumbing,

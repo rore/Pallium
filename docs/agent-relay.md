@@ -4,7 +4,11 @@ Relay sends a bounded plain-text message from one existing agent session to
 another. Pallium stores the message before attempting delivery, so a busy or
 unavailable recipient can receive it later.
 
-Pallium currently ships Relay integrations for Claude Code, Codex, and OpenCode.
+Pallium ships Relay integrations for Claude Code, Codex, OpenCode, and Hermes
+Desktop/TUI. Compare their [delivery and recovery support](#delivery-and-wake-behavior)
+below. Acknowledgement records receipt in host context, not provider completion
+or agent action.
+
 Sessions must connect to the same local Pallium service. Cross-container routing is service-global; Session History and derived-memory scoping are unchanged. Routing uses explicit session identity; it does not use search,
 embeddings, ranking, or an LLM.
 
@@ -16,8 +20,8 @@ PALLIUM_HOOK_ACTOR_REF remains attribution metadata for hook-provided memory and
 
 Tell an agent what to send and which session should receive it:
 
-> Use Pallium Relay to send Codex: "The legacy endpoint is still used by mobile.
-> Do not remove it."
+> List Pallium Relay recipients, verify `@review`, then send it: "The legacy
+> endpoint is still used by mobile. Do not remove it."
 
 If the target is ambiguous, ask the agent to list Relay recipients first.
 
@@ -94,9 +98,10 @@ have a shorter preview with the same continuation mechanism.
 
 Call `pallium_relay_address` when a user asks for the current agent's Relay
 address. It resolves the integration-provided session identity itself and returns
-the canonical `exact_selector` plus `alias_selector` when the session has a
-name. The caller does not supply or guess a runtime or session ID. Missing,
-ambiguous, or malformed identity fails closed.
+the canonical `exact_selector`, `relay_name_state` (`named` or `unnamed`), and
+optional `relay_name` / `alias_selector` when the session has a name. The caller
+does not supply or guess a runtime or session ID. Missing, ambiguous, or malformed
+identity fails closed.
 
 ## Select a recipient
 
@@ -206,6 +211,14 @@ forget is a separate explicitly authorized, soft and auditable retrieval
 suppression, not hard deletion or automatic inactivity cleanup. Its scoped form
 affects existing turns, not future ingests; hard deletion follows retention policy.
 
+For retry safety, supply a unique `message_id` (1–128 characters) to
+`pallium_relay_send` before the first call. If its response is lost, reuse that
+same ID and identical arguments; Pallium returns the existing message instead
+of creating another. A different sender, payload, recipient or explicitly
+different expiry conflicts. Omitting `message_id` or passing null generates a
+new identity on each call, so it cannot deduplicate separate tool calls. A
+pending delivery alone is not a reason to send again.
+
 ## Replies
 
 A received message includes a `delivery_id`. `pallium_relay_reply` uses that ID
@@ -231,20 +244,19 @@ does not prove that the model acted on it.
 
 ## Delivery and wake behavior
 
-Pallium persists first, then attempts the safest delivery supported by the
-recipient runtime. If wake is unsupported, disabled, unsafe, or unavailable,
-the same message remains pending for the recipient's next natural turn.
+Pallium persists first. The recipient integration determines how a stored
+delivery enters context and which recovery paths are supported.
 
-| Runtime | Current behavior |
-|---|---|
-| Claude Code on Windows and Linux | Exact-session wake is qualified. Linux qualification used the installed UDS path on Ubuntu 24.04. |
-| Codex on Windows and Linux | Exact-session wake is qualified for tasks loaded by their Codex runtime. If a task is unloaded, the Pallium delivery stays pending for its next supported hook turn; native unloaded-queue persistence is not claimed. Windows also proves overtaken-wake suppression, and Linux requires the installed hook to be trusted. |
-| OpenCode | Durable next-turn delivery; active wake is deferred. |
-| Claude Code and Codex on macOS | Durable next-turn delivery; active wake is not yet qualified. |
+| Integration | Active delivery | Fallback and limits |
+|---|---|---|
+| [Claude Code](claude-code-integration.md#delivery-and-recovery) | Exact-session wake on qualified Windows and installed Linux UDS paths; Linux coverage used Ubuntu 24.04. | Pending messages can arrive on the next normal turn when wake is unavailable. macOS active wake is not qualified. |
+| [Codex](codex-integration.md#delivery-and-recovery) | Exact-session wake for loaded Windows/Linux tasks. Supported Windows Desktop also uses authenticated retained MCP for unloaded tasks. | Working, unknown or disconnected tasks stay pending; normal hook turns provide fallback. Linux requires trusted hooks; macOS active wake is not qualified. No alternate native submission follows an attempted or uncertain wake. |
+| [OpenCode](../integrations/opencode/README.md#delivery-and-recovery) | V1 is passive. Opt-in V2 adds native queued wake; combined coverage is isolated Windows OpenCode 2.0.24. | V1 delivers on normal turns. V2 claim-lease recovery can leave work for a later normal turn; unverified admission is not silently resubmitted. Other V2 releases/platforms and global installation are unqualified. |
+| [Hermes Desktop/TUI](hermes-integration.md#delivery-and-recovery) | Native plugin wake with complete-context admission. Coverage includes Linux TUI and Windows Desktop/TUI on v0.22.0/v0.22.2. | Busy turns, outages and controlled relaunch are covered. Automatic standalone MCP reconnection, ordinary-turn fallback and uncertain claim/ACK recovery are not guaranteed; uncertain state stays fenced. Windows coverage is Server 2025/unpacked, not Windows 11/MSIX/updater/native Quit. |
 
-This table follows the current
-[wake roadmap](../roadmap/features/add-wake-first-relay-delivery.md). Recheck it
-before making release claims.
+Use each guide for setup, trust requirements and recovery instructions. Current
+planning remains in the [wake roadmap](../roadmap/features/add-wake-first-relay-delivery.md);
+a table entry does not extend one host's guarantees to another.
 
 Relay session and delivery reads include an optional `activation` object. Its
 `behavior`, `qualification`, current `availability`, and `fallback` distinguish
