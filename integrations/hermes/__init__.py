@@ -474,7 +474,8 @@ def register(ctx):
         nonlocal poller
         with lock:
             if poller is None or not poller.is_alive():
-                poller = threading.Thread(target=poll, name="pallium-hermes-relay", daemon=True)
+                poller = threading.Thread(target=contextvars.copy_context().run, args=(poll,),
+                                          name="pallium-hermes-relay", daemon=True)
                 poller.start()
 
     def pre_llm_call(session_id="", turn_id="", user_message="", **_context):
