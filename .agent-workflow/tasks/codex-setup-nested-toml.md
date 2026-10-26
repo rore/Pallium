@@ -38,7 +38,7 @@
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -65,3 +65,16 @@
 Agent technical review: /root/role_history_developer/codex_config_plan_review; GO on the implementation and corrected test fixture.
 Reviewed revision: `16440107` plus the implementation diff in this isolated worktree.
 Verification adequacy: focused regressions, affected-file tests, and the selector-required full test lane all passed.
+
+
+## PR359 retained continuation
+
+Manager accepted source ownership transfer to @pal-dev1 after native child became inactive. Verified retained checkout clean at212430728de3a40b34d1a8eb7bbe2a81065fd13c, branch fix/codex-setup-nested-toml; published draftPR359 still e457b76cc0c725fcd5076c85f0265d4f915db421. The only unpublished change is the two-line historical CI diagnosis in this Work Record. Three intended changed paths remain; no reimplementation. Fresh origin/main4b9a54e9a023caa1679400368cf3d4bdcbab80d9 includes merged PR364. Reconcile it minimally after recording this continuation, preserving child commits and ignored evidence.
+
+Role @pal-dev1 freshly confirmed by exact-self lookup. This older checkout has no roles mapping, ordinary opt-out; reread current mapping after main reconciliation. No AGENTS.local.md exists. Broad History lookup failed delivery_finalization_timeout with retryable=false; no retry or guessed history/identity is used. Existing record plus live Git/PR/check state establish continuity. The setup scope has no separately supplied canonical roadmap identity; manager retains owner-managed roadmap alignment. Earlier wake/OpenCode explicit associations are preserved for their broader ongoing assignments.
+
+New in-scope source finding before edits: a pure in-memory fixture places [features] and hooks=false inside an unrelated TOML multiline notes value. Actual _ensure_feature_flag changes that unrelated text to hooks=true, creates no actual root features table, and _ensure_mcp_server still returns parse-valid TOML. Pre-write parse alone cannot detect this damage. This is an existing feature-selector interaction in the same setup install/uninstall path, not evidence that the original MCP subtree implementation must be rewritten. No live configuration was accessed.
+
+Small continuation plan: reuse the already-added multiline-string tracker when finding the actual features table; return builtin slice bounds and adapt its only two private production callers, preserving actual header text/comments and current hook-flag policy. Extend the existing isolated nested migration lifecycle test with fake features/header/legacy-flag content in a sibling multiline string, compare the complete parsed sibling note through install/reinstall/uninstall and assert actual features.hooks is enabled. Retain invalid/unsupported-candidate no-write assertions. Existing reviewer receives this bounded edge plan before code. Gray app path/BLUEtests preserve Elevated/Moderate risk; no API/schema/dependency/protected/config/installed changes.
+
+Qualification will use an existing READ-ONLY supported interpreter with current-cwd/dependency preflight. Historical4/85/8137 and three serial failure-node results remain tied to their old source/runtime, never current CI or proof of physical cause. Run focused lifecycle/affected CLI tests, fresh selector/boundary/workflow and current-head hosted qualification after review. Do not alter unrelated acquisition deadlines, CI worker policy or user's everyday installation. No extra human approval loop for authorized isolated correction/publication/merge. Retain this child worktree and old build evidence until completion/custody allows cleanup.
