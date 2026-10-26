@@ -58,7 +58,7 @@ Continuing isolated emergency bugfix/PR/green merge authorized. The direct human
 —
 
 **State:**
-Ready for review
+Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -160,4 +160,6 @@ Implemented a test-private one-retry helper only for both reply calls in the exa
 Affected Relay HTTP file plus unchanged SQLite write-retry/deadline file:158passed/1existing hosted-process-only local skip in62.54s (build/redaction-retry-subsystem.log), using the verified supported isolated interpreter and private worktree test data. No new skip or assertion relaxation. Independent actual-diff result review and fresh whole-change governance/current-head hosted fullCI remain gates. This fixes a first-attempt-only qualification assumption, not the unexplained1113ms physical acquisition delay or overall recovery reliability.
 
 Agent technical result review: Astra turn01a179be-eaaa-7041-ac4a-8ea4c06444d8 RESULT GO at89af0b4ac1fd243c526cd96d8cc2dec7db44e5af. Reviewer inspected the actual test delta and retained22/158 results, supported-runtime manifest and unchanged production/protected tests, without rerunning. Reviewed revision:89af0b4ac1fd243c526cd96d8cc2dec7db44e5af. Verification adequacy: exact retryable admission response only, identical bounded request retry, post-wait budget guard, eventual200 and original redaction/state/idempotency assertions retained. Proceed normal required fullCI; no connection-delay cure or broader recovery qualification claimed. This following record-only commit leaves reviewed test/source bytes unchanged.
+
+Published reviewed candidate0fb06a33f5830ca3445421207b8e8db38e7e9ced; ordinary run40389843335 finished FAILED. FullLinux3.12, Windows smoke and governance passed. Linux3.13 job121807732798 failed unchanged tests/test_agent_relay_hooks.py::test_legacy_pin_read_preserves_final_inactive_move_refusal[closed-codex] at2261 after3299passes/22skips/1xfail: common.relay_turn returnedNone, but observed onlyGET/relay/sessions200 and did not reach requiredPOST/relay/turn409. No measured inner phase or physical cause is established. Retained build/pr364-reviewed-retry-linux313-failed.log and terminal receipt; this is distinct from the redaction admission retry qualification, which is not expanded into native hook controls. Manager routed the exact control-flow failure to existingpal-dev1 for bounded source/contract assessment. No blind retry, extra fixture clock, product patch, merge or live action. Hold this record-only recovery update locally for the next justified publication. Root retains the clean source continuation/evidence worktree because release, owner-managed canonical reconciliation and dirty-checkout fullsync remain open; installed Hermes witness stands separately.
 
