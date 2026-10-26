@@ -58,7 +58,7 @@ Continuing isolated emergency bugfix/PR/green merge authorized. The direct human
 —
 
 **State:**
-Ready to implement
+Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -154,4 +154,8 @@ Bounded plan: a test-file-private helper used only by the exact redaction lifecy
 Validation uses an already-existing isolated qualification interpreter only after dependency-bound and actual-source checks; do not install or modify its packages or run its older workload. The everyday installed interpreter has supportedAnyIO but no pytest, while shared developmentAnyIO4.12.1 remains unsupported; neither environment is changed. Focused controls/lifecycle, affected Relay E2E file and relevant native admission tests precede one normal hosted full lane on reviewed candidate. Full old nonreproduction/failed receipts remain retained, not relabeled as a product reliability repair. Source-only continuation preserves installed acceptance and dirty checkout boundaries.
 
 Independent bounded plan GO: Astra turn01a179b7-70a0-7c22-bde2-635748213095 accepts one retry maximum for exact retryable busy response, identical request and preserved correctness oracles, requiring a budget recheck after waiting. Existing isolated interpreter C:/Dev/rore/Pallium/build/pr340-qualification-runtime-20261022/venv/Scripts/python.exe passes all current declared application dependency bounds (AnyIO4.14.2); api/routes.py, storage/sqlite_relay.py and core/relay.py import from this exact worktree. Manifest build/redaction-retry-runtime-manifest.json; no environment/package change or older workload execution.
+
+Implemented a test-private one-retry helper only for both reply calls in the exact redaction lifecycle. It validates exact busy JSON and strict booleantrue, validates and honors Retry-After within the five-second allowance, checks the allowance again after waiting, and requires final200. The global_reply helper and production/native deadline code are unchanged. Three deterministic controls failed the prior one-shot behavior (build/redaction-retry-before.log,3failed2.48s), then22focused controls/lifecycle cases passed10.40s (redaction-retry-focused.log). Real HTTP controls force the existing sanitized busy path before reply storage; one refusal then success preserves identical delivery/receipt/payload and one reply, while two refusals leave source claimed and no recipient reply. Wrong status/code/boolean/header controls cannot retry; a helper-only local clock object exercises post-wait exhaustion without changing stdlib/native clocks. Original redaction/readback/paging/Unicode/idempotency oracles remain.
+
+Affected Relay HTTP file plus unchanged SQLite write-retry/deadline file:158passed/1existing platform skip in62.54s (build/redaction-retry-subsystem.log), using the verified supported isolated interpreter and private worktree test data. No new skip or assertion relaxation. Independent actual-diff result review and fresh whole-change governance/current-head hosted fullCI remain gates. This fixes a first-attempt-only qualification assumption, not the unexplained1113ms physical acquisition delay or overall recovery reliability.
 
