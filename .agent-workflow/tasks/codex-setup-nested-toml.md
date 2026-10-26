@@ -38,7 +38,7 @@
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -131,3 +131,6 @@ Verification: run entire changed cross-container module and existing tests/test_
 Bot review now identifies actual source issues before publication: valid nested-array element ["x"] is independently parseable as a table header. Pure in-memory current helpers reproduce duplicate hooks in features and a retained closing array bracket from Pallium subtree removal. _remove_feature_flag also raises for unsupported legacy value but uninstall does not catch it. Four bot threads include these three functional findings plus neutralizing the public record's machine-local path. No user data was accessed or written.
 
 Consolidated bounded source plan for existing reviewer: at each of the two candidate-header sites, use stdlib tomllib to validate the original prefix before treating the line as a header; an unfinished array prefix fails parsing, so nested elements remain values. Keep existing multiline handling and original-content offset in removal; no new general parser or array-depth state machine. For uninstall, parse input and final candidate and catch ValueError before _write_toml or any cleanup. Extend existing isolated lifecycle cases with nested arrays, bracket characters in quotes/comments, multiline string close plus array-bracket suffix, fake headers before/within features and Pallium; include uninstall on such a hand-edited server. Add focused isolated uninstall failure/no-write/no-cleanup regression. Preserve all current baseline assertions. Run controlled RED then affected setup+cross-container module+existing fixture audit; reuse original88 result only for unchanged tests until new affected run. Existing reviewer to approve this uncovered source plan together with registration-only preparation before any implementation edit.
+
+
+Consolidated PLAN GO: @astra-reviewer turn01a17a91-53cf-7f63-a5bd-a914fd9a42d3 (astra-pr359-arrays-registration-plan-go-20261027) inspected actual scanners/uninstall, all six cross-container callers and audited fixture. Conditions: original-prefix AND candidate-header validation before changing state; empty/invalid candidate must not reset Pallium subtree state; original offset advances every line including removed/continued lines. Validate full original config before edits, and uninstall candidate before write or cleanup; fail closed for malformed original, unsupported value and injected malformed candidate. Keep exact registration audit counts and subjects outside scopes; never extend scopes/counts merely to pass failures. Standard-library prefix parsing approved over array parser. Controlled RED, affected modules/audit, fresh governance/selector/hostedCI and actual result review remain required; previous physical delay remains unexplained. Public local path neutralized. No product admission/environment change.
