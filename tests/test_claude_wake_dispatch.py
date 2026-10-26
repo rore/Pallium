@@ -2870,14 +2870,17 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
         "pallium_request",
         lambda *_args, **_kwargs: pytest.fail("Relay recovery must not ingest synthetic memory"),
     )
+    prompt_id = "00000000-0000-4000-8000-000000000001" if with_prompt_id else None
     monkeypatch.setattr(prompt, "read_hook_input", lambda: {
         "session_id": PAYLOAD["session_ref"],
         "cwd": str(tmp_path),
         "prompt": "Pallium Relay wake notice: new messages available.",
-        "prompt_id": f"native-wake-{len(transport_calls)}" if with_prompt_id else None,
+        "prompt_id": prompt_id,
     })
 
     common = sys.modules[prompt.relay_turn.__module__]
+    if with_prompt_id:
+        assert common.source_turn_key(prompt_id) == prompt_id
     notice = "Pallium Relay wake notice: new messages available."
     assert common.check_dedup(notice, PAYLOAD["session_ref"]) is False
     assert common.check_dedup(notice, PAYLOAD["session_ref"]) is True
