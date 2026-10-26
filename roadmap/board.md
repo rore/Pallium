@@ -5,6 +5,7 @@
 
 # Parallel · Session History
 - investigate-history-navigation-and-on-demand-compression
+- add-persistent-role-history
 
 # Parallel · Runtime Expansion
 - add-hermes-agent-integration
@@ -21,7 +22,6 @@
 - fix-roadmap-and-evidence-status-drift
 
 # P2 · Work Continuity
-- add-persistent-role-history
 - idea-cross-context-work-continuity
 
 # P3 · Shared Knowledge

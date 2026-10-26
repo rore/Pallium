@@ -20,7 +20,7 @@ Pallium's [privacy and visibility rules](privacy-and-visibility.md).
 ## Prerequisites
 
 `pallium setup hermes` requires an **existing explicit Hermes profile**, its Python
-interpreter and public session-cwd and session-surface APIs. Hermes uses MCP SDK2; the separate
+interpreter and public session-cwd, session-surface and bound-route APIs. Hermes uses MCP SDK2; the separate
 Pallium bridge interpreter uses MCP SDK1. Setup checks both environments and
 preserves the profile's provider, toolsets, Tool Search and other plugins. It does
 not add a global `mcp_servers` connection.
@@ -140,11 +140,15 @@ they do not authorize overwriting an unowned file.
 - Older hosts without these APIs can use intentional fixed-scope compatibility
   setup; fixed scope does not establish automatic-mode project isolation or
   lifecycle behavior.
-- Fixed-context wake routing on the newer shared Gateway remains unqualified and
-  unresolved.
+- Fixed-context wake routing captures each conversation's public native route;
+  legacy hosts without that accessor retain their callback-ID compatibility path.
 - Windows checks used Windows Server 2025 and an unpacked app. They do not cover
   Windows 11, MSIX installation, the native updater or native app Quit. Keep
   Hermes installation and updates on its supported upstream path.
+- Automatic mode retains completed-turn metadata to reject stale callbacks after
+  reload. Very long-lived profiles can reach Hermes's 10 MiB plugin-state quota;
+  further state writes then fail closed. Safe bounded retirement is not implemented.
+  Do not prune these fences while an old session can still resume.
 - Provider configuration is preserved. Synthetic-provider checks establish
   integration behavior, not model quality or every provider/memory combination.
 - Relay can report retryable busy errors. Shared service availability remains a

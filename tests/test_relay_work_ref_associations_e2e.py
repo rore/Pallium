@@ -487,13 +487,18 @@ def test_unsettled_relay_write_keeps_gate_until_observed_terminal_return(
     assert _association_pairs(client) == expected | {(scope, "item:B", "explicit")}
 
 
-def test_alias_transfer_does_not_transfer_associations_and_reopen_retains_them(client, drain_queue):
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_alias_transfer_does_not_transfer_associations_and_reopen_retains_them(
+    client, drain_queue, relay_admission_clock,
+):
     ticket = {
         "scope_ref": "tracker:v1:example.test#relay",
         "local_ref": "ticket:owner",
     }
-    first = _turn(client, session="first")
-    second = _turn(client, session="second")
+    store = client.app.state.pallium_service._storage
+    with relay_admission_clock(store, expected_admissions=2):
+        first = _turn(client, session="first")
+        second = _turn(client, session="second")
     assert _attach(client, ticket, session="first").status_code == 200
     key = readable_work_ref(**ticket).key
     captured = client.post("/items", json=[{
@@ -856,11 +861,15 @@ def test_batch_detail_share_inclusive_clock_and_age_without_writes(client, monke
     assert datetime.fromisoformat(empty["as_of"]) == current and empty["recent_seconds"] == 86400
 
 
-@pytest.mark.parametrize("size", [1, 200])
-def test_batch_counts_use_one_indexed_filtered_aggregate(client, size):
-    _turn(client, structural_work_refs=[FEATURE])
-    assert _attach(client, FEATURE).status_code == 200
+@pytest.mark.parametrize("size,relay_admission_clock", [
+    pytest.param(1, "semantic", id="1"),
+    pytest.param(200, "semantic", id="200"),
+], indirect=["relay_admission_clock"])
+def test_batch_counts_use_one_indexed_filtered_aggregate(client, size, relay_admission_clock):
     store = client.app.state.pallium_service._storage
+    with relay_admission_clock(store, expected_admissions=3):
+        _turn(client, structural_work_refs=[FEATURE])
+        assert _attach(client, FEATURE).status_code == 200
     table = RelaySessionWorkRefRecord.__table__
     with store._relay_engine.begin() as db:
         template = dict(db.execute(select(table).where(table.c.origin == "structural")).mappings().one())

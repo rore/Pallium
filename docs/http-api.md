@@ -8,7 +8,10 @@ MCP tools and installed integrations instead of calling these routes directly.
 ### Session History
 
 - `POST /items` records governed turns and other source evidence.
-- `POST /query` with `source_only: true` searches raw historical sources.
+- `POST /query` with `source_only: true` searches raw historical sources. An
+  optional exact `relay_name` filter matches only sources captured under that
+  name; its incomplete coverage flag reports eligible unknown/unavailable Codex
+  sources and does not widen visibility.
 - Source-only queries work without an active semantic package. A normal derived
   query without an active default package returns `decision_reason:
   "semantic_package_unavailable"` and no results.

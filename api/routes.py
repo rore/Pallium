@@ -86,7 +86,7 @@ from core.claude_wake import ClaudeWakeRegistry
 from core.codex_wake import CodexWakeReservation
 from core.container_ref import canonicalize_container_ref, validate_explicit_container_ref
 from core.history_presentation import compact_history
-from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, ImmediateTransactionBusyError, LookupRequestLinkError, SupersessionConflictError
+from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, ImmediateTransactionBusyError, LookupRequestLinkError, SourceTurnSnapshotConflictError, SupersessionConflictError
 from core.relay import RELAY_MESSAGE_MAX_CHARS, RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError
 from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit, new_id, utc_now
 from core.service import PalliumService, _sanitize_work_ref_metadata
@@ -189,6 +189,8 @@ def _serialize_result(item: QueryResultItem) -> dict[str, object]:
         "retrieval_source": item.retrieval_source,
         "raw_rank": item.raw_rank,
         "work_refs": list(item.work_refs),
+        "relay_name": item.relay_name,
+        "relay_attribution_state": item.relay_attribution_state,
     }
 
 
@@ -1226,24 +1228,33 @@ def create_router(
         except (TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
             raise HTTPException(status_code=400, detail="invalid registration")
         return Response(status_code=204)
+    def _ingest_source(request: ItemCreateRequest | ItemAndQueryRequest):
+        try:
+            return service.ingest_item(
+                source_type=request.source_type,
+                source_id=request.source_id,
+                content_type=request.content_type,
+                content=request.content,
+                metadata=request.metadata,
+                use_case=request.use_case,
+                occurred_at=request.occurred_at,
+                actor_ref=request.actor_ref,
+                agent_ref=request.agent_ref,
+                role=request.role,
+                container_ref=request.container_ref,
+                thread_ref=request.thread_ref,
+                source_ref=request.source_ref,
+                artifact_kind=request.artifact_kind,
+                visibility=request.visibility_kind(),
+                source_turn_id=request.source_turn_id,
+                relay_name=request.relay_name,
+                relay_attribution_state=request.relay_attribution_state,
+            )
+        except SourceTurnSnapshotConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+
     def _ingest_one(request: ItemCreateRequest) -> ItemCreateResponse:
-        result = service.ingest_item(
-            source_type=request.source_type,
-            source_id=request.source_id,
-            content_type=request.content_type,
-            content=request.content,
-            metadata=request.metadata,
-            use_case=request.use_case,
-            occurred_at=request.occurred_at,
-            actor_ref=request.actor_ref,
-            agent_ref=request.agent_ref,
-            role=request.role,
-            container_ref=request.container_ref,
-            thread_ref=request.thread_ref,
-            source_ref=request.source_ref,
-            artifact_kind=request.artifact_kind,
-            visibility=request.visibility_kind(),
-        )
+        result = _ingest_source(request)
         _enqueue_assistant_usage_audit(service, request.role, result.source_item_id)
 
         return ItemCreateResponse(**result.as_dict(), work_ref_metadata=_work_ref_response_metadata(request.metadata))
@@ -1368,6 +1379,7 @@ def create_router(
                 runtime_context=_deserialize_runtime_context(request.runtime_context),
                 trigger_origin=_trigger_origin,
                 source_only=request.source_only,
+                relay_name=request.relay_name,
                 defer_delivery=request.defer_delivery,
             )
         except LookupRequestLinkError as exc:
@@ -1416,6 +1428,7 @@ def create_router(
             ],
             lookup_event_id=lookup_event_id,
             delivery_attempt_id=delivery_attempt_id,
+            incomplete_attribution=result.incomplete_attribution,
         )
 
     @router.post(
@@ -1668,6 +1681,7 @@ def create_router(
                 include_trace=True,
                 trigger_origin=_validate_trigger_origin(request.trigger_origin),
                 source_only=request.source_only,
+                relay_name=request.relay_name,
             )
         except LookupRequestLinkError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
@@ -1708,27 +1722,12 @@ def create_router(
             trace=_serialize_trace(result.trace),
             query_workstream_id=query_workstream_id,
             candidate_workstream_ids=candidate_workstream_ids,
+            incomplete_attribution=result.incomplete_attribution,
         )
 
     @router.post("/item-and-query", response_model=ItemAndQueryResponse)
     def item_and_query(request: ItemAndQueryRequest) -> ItemAndQueryResponse:
-        ingest_result = service.ingest_item(
-            source_type=request.source_type,
-            source_id=request.source_id,
-            content_type=request.content_type,
-            content=request.content,
-            metadata=request.metadata,
-            use_case=request.use_case,
-            occurred_at=request.occurred_at,
-            actor_ref=request.actor_ref,
-            agent_ref=request.agent_ref,
-            role=request.role,
-            container_ref=request.container_ref,
-            thread_ref=request.thread_ref,
-            source_ref=request.source_ref,
-            artifact_kind=request.artifact_kind,
-            visibility=request.visibility_kind(),
-        )
+        ingest_result = _ingest_source(request)
         query_text = request.query_text or request.content
         _trigger_origin = _validate_trigger_origin(
             getattr(request, "query_trigger_origin", None)
@@ -1763,23 +1762,7 @@ def create_router(
 
     @router.post("/item-and-query/debug", response_model=ItemAndQueryDebugResponse)
     def item_and_query_debug(request: ItemAndQueryRequest) -> ItemAndQueryDebugResponse:
-        ingest_result = service.ingest_item(
-            source_type=request.source_type,
-            source_id=request.source_id,
-            content_type=request.content_type,
-            content=request.content,
-            metadata=request.metadata,
-            use_case=request.use_case,
-            occurred_at=request.occurred_at,
-            actor_ref=request.actor_ref,
-            agent_ref=request.agent_ref,
-            role=request.role,
-            container_ref=request.container_ref,
-            thread_ref=request.thread_ref,
-            source_ref=request.source_ref,
-            artifact_kind=request.artifact_kind,
-            visibility=request.visibility_kind(),
-        )
+        ingest_result = _ingest_source(request)
         query_text = request.query_text or request.content
         _trigger_origin = _validate_trigger_origin(
             getattr(request, "query_trigger_origin", None)

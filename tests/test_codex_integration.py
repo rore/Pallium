@@ -360,9 +360,15 @@ def test_codex_agents_block_is_replaced_when_setup_runs_again() -> None:
     assert "new thin-client instructions" in updated
 
 
+@pytest.mark.parametrize(
+    ("turn_id", "expected_turn_key"),
+    [(None, None), ("turn-123", "turn-123")],
+)
 def test_codex_stop_hook_ingests_quietly(
     monkeypatch: pytest.MonkeyPatch,
     isolated_hook_transport: list[str],
+    turn_id: str | None,
+    expected_turn_key: str | None,
 ) -> None:
     from integrations.codex.hooks import stop
 
@@ -375,6 +381,7 @@ def test_codex_stop_hook_ingests_quietly(
             "cwd": r"C:\Dev\rore\Pallium",
             "session_id": "session-1",
             "transcript_path": "transcript.jsonl",
+            "turn_id": turn_id,
         },
     )
     monkeypatch.setattr(stop, "read_turn", lambda _: stop._common.TurnData(
@@ -410,7 +417,7 @@ def test_codex_stop_hook_ingests_quietly(
     assert len(payload) == 1
     item = payload[0]
     assert item["source_id"].startswith("cdx-")
-    assert item == {
+    expected_item = {
         "source_type": "codex",
         "source_id": item["source_id"],
         "content_type": "text/plain",
@@ -423,6 +430,9 @@ def test_codex_stop_hook_ingests_quietly(
         "visibility": "private",
         "artifact_kind": "message",
     }
+    if expected_turn_key is not None:
+        expected_item["source_turn_id"] = expected_turn_key
+    assert item == expected_item
 
 
 def test_codex_transcript_parser_reads_desktop_response_item_shape(tmp_path: Path) -> None:

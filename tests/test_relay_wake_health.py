@@ -129,19 +129,40 @@ def test_status_snapshot_is_read_only_and_does_not_expose_relay_content(client, 
         "recipient": "codex:target", "payload": "wake-health-private-payload", **scope,
     })
     assert sent.status_code == 200
+    import app.relay_wake_health as wake_health
+
     relay = client.app.state.pallium_service._storage
     before = relay.relay_codex_wake_snapshot()
-    first = client.get("/status").json()["relay_wake"]
-    second = client.get("/status").json()["relay_wake"]
+    observed_at = datetime.fromisoformat(sent.json()["created_at"]) + timedelta(seconds=1)
+    native_datetime = wake_health.datetime
+
+    class ObservationClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return observed_at.astimezone(tz)
+
+    # Compare read-only observations at equal times, then verify real age calculation.
+    with monkeypatch.context() as observation_clock:
+        observation_clock.setattr(wake_health, "datetime", ObservationClock)
+        first = client.get("/status").json()["relay_wake"]
+        second = client.get("/status").json()["relay_wake"]
+        assert datetime.fromisoformat(first["observed_at"]) == observed_at
+        assert first["oldest_pending_age_seconds"] == 1
+        assert first == second
+
+        observed_at += timedelta(seconds=1)
+        aged = client.get("/status").json()["relay_wake"]
+        assert aged == second | {
+            "observed_at": observed_at.isoformat(), "oldest_pending_age_seconds": 2,
+        }
+    assert wake_health.datetime is native_datetime
     after = relay.relay_codex_wake_snapshot()
 
     assert before == after
-    datetime.fromisoformat(first["observed_at"])
-    datetime.fromisoformat(second["observed_at"])
-    assert {k: v for k, v in first.items() if k != "observed_at"} == {k: v for k, v in second.items() if k != "observed_at"}
-    serialized = str(first)
-    assert "wake-health-private-payload" not in serialized
-    assert "wake-health-private-scope" not in serialized
+    for snapshot in (first, second, aged):
+        serialized = str(snapshot)
+        assert "wake-health-private-payload" not in serialized
+        assert "wake-health-private-scope" not in serialized
 
 
 SCOPE = {"container_ref": "git:example.test/health-東京"}

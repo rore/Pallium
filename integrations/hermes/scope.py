@@ -429,4 +429,3 @@ def resolve_scope(cwd: object, previous: dict | None = None,
         refs = [{"scope_ref": f"roadmap:v1:{repository_ref}#roadmap" if ref.startswith("agent-workflow:") else repository_ref,
                  "local_ref": ref} for ref in _structural_work_refs(current)]
     return {"cwd": current, "container_ref": container, "actor_ref": actor, "work_refs": refs}
-

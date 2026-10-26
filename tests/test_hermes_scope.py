@@ -236,7 +236,7 @@ def test_default_branch_has_no_work_refs(tmp_path, branch):
     assert scope.resolve_scope(str(project))["work_refs"] == []
 
 
-@pytest.mark.parametrize("record", ["", "<!-- agent-workflow:start -->", 
+@pytest.mark.parametrize("record", ["", "<!-- agent-workflow:start -->",
     "<!-- agent-workflow:end --><!-- agent-workflow:start -->", "x" * (256 * 1024 + 1)],
     ids=["empty", "missing-end", "reversed", "oversize"])
 def test_invalid_or_oversize_work_record_keeps_only_branch(tmp_path, record):

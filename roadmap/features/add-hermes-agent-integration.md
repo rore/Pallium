@@ -29,7 +29,7 @@ remaining Desktop/TUI qualification are still open. The accepted public-hook/too
 proof does not replace that frontend qualification.
 
 PR #324 delivered the reviewed Desktop/TUI integration toward
-production readiness, including scoped opt-in memory and normal-profile lifecycle
+production readiness, including scoped opt-in memory and historical fixed-profile lifecycle
 qualification. Historical slice-4 Work Record: `.agent-workflow/tasks/hermes-production-slice4.md`.
 The feature remains active for the unfinished platform, installation and recovery
 scope below. The two P1 blockers identified at

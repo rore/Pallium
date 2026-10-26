@@ -45,7 +45,7 @@
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -744,3 +744,28 @@ Read-only merge-tree identified conflicts only in integrations/hermes/__init__.p
 A clean-context nonimplementer must review this composition plan before source resolution. Existing source/native reviews are reused only where source and assumptions match; no prior green or native receipt qualifies the new composition. After coherent resolution run focused conflict/affected subsystem E2E, current test-plan selection and required full non-slow lane/platform CI once. Address review findings and reconcile the existing owner-managed roadmap before delivery; no parallel tracker. Merge only after required checks/review and actual disposition verification.
 
 Current state: clean source at 1bc96c9d before this record-only update; planning review pending.
+
+
+### Composition plan review
+
+Agent technical review: /root/pr352_composition_review, clean-context nonimplementer, GO on exact 33dbd3d6 against main 4b9a54e9. Adopt its refinements: preserve automatic mode's validated public bound route and 4096-character boundary without fixed-mode legacy fallback; extend registration-token and immediate injection rechecks to automatic publication and invalid/changed-route retirement while retaining persisted uncertain wake fences. Keep fixed_capture/fail_capture/role attribution/tombstones confined to fixed mode and keep source-ID helper names distinct. Preserve main's stronger admission fixture and combine explicit typed-refusal opt-in with a successful empty-turn witness in the retained-hook caller. Add focused CWD reentry/invalidation controls; retain current main's fixed-role/native-route tests. No inspected evidence supports closing the feature as unsafe/unwanted.
+
+Original user correction and approval remain the requirement authority; manager's current backlog assignment authorizes this source composition and ordinary verification/delivery. Existing live installations, host settings and native qualification remain outside this resume. Five pre-existing PR review threads were discovered and must receive evidence-based disposition before merge; do not silently discard them.
+
+
+### Current-main role provenance composition refinement
+
+Clean-context /root/pr352_composition_review accepted carrying main's existing passive role attribution into normal CWD capture. Reuse the actual nested relay_snapshot/attribution_fields helpers, return the same-response snapshot with dynamic registration, and freeze it in existing durable turn metadata. Existing stamps lacking capture provenance retain absent attribution, never backfilled source_turn_id or a later alias; core dedup rejects such provenance changes. Pass validated fields through existing /item-and-query and completion, with only source_turn_id on assistants and no synthetic role inheritance. No new endpoint/schema/state store/module. Validate rename/reload/next turn, absent legacy provenance, capture failure/dedup and project/actor isolation.
+
+Pre-existing review followups: correct bound-route prerequisite wording and historical fixed-profile terminology; normalize explicit tool arguments through the same existing container validator as request scope (no persistence identity rewrite); ask the configured interpreter for its POSIX purelib path under isolated/no-site stdlib execution. Preserve stale-turn security fences rather than inventing unsafe eviction; document the existing 10 MiB host quota and missing safe retirement. Source changes use deterministic named-file replacements because the machine-local apply_patch failure was already established.
+
+
+### Composition implementation and focused evidence
+
+Composed main into the existing PR branch without choosing an entire conflicting side. Preserved fixed-profile capture/role behavior and #364 public native wake routing; CWD registration and injection now recheck observation/registration tokens, scope and lifecycle after reentrant callbacks. CWD mode retains its existing public bound-route capability and 4096-character boundary. Added five public-hook/HTTP controls for invalid route retirement at accessor/response/publication and after the persisted wake fence.
+
+CWD role capture now freezes same-admission passive attribution in existing durable turn stamps, reuses it on reload and completion, preserves absent attribution on legacy stamps, and does not stamp synthetic turns. Three added public History controls prove rename/reload stability, completion dedup, next-turn name change and legacy absence. Same canonical container validation is applied to tool arguments and trusted scope; the real stdio caller proves equivalent GitHub spellings resolve the same endpoint while foreign scope remains refused. The stdlib-only dependency-directory probe now uses the configured interpreter's purelib scheme rather than a guessed POSIX lib directory.
+
+Focused pre-role composition: 583 PASS across test_hermes_project_scope, test_hermes_relay_plugin, test_hermes_role_attribution and test_codex_retained_wake (440.68s), using a checkout-local AnyIO4.14.2 overlay. Five new CWD route controls passed; three new role/legacy controls passed after correcting two new-fixture mistakes (assistant text did not match its query; query results do not expose source_turn_id). No existing protected assertion was weakened. MCP initially did not collect because a plain site-path append omitted pywin32's normal .pth initialization. The final disposable interpreter uses site.addsitedir for existing shared libraries plus local AnyIO4.14.2; app resolves to this checkout, MCP1.29.1 imports. The exact real stdio canonical-scope node, dependency-layout control and complete turn_capture file passed55/0skip in5.65s. No shared environment was changed. Full selected lane and independent result review remain pending.
+
+Pre-existing review dispositions: corrected setup prerequisites and historical qualification terminology. Preserve durable stale-turn fences; safe bounded retirement is not implemented and the existing host quota is now disclosed. No native/provider/WSL/service/live-profile execution has occurred during this resume.

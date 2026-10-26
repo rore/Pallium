@@ -215,6 +215,8 @@ def make_tool_adapter(context: PalliumContext, *, memory_enabled: bool = False) 
                 identity = _read_identity(request_context.meta, tool_name)
                 request_scope = _request_scope(request_context.meta, context)
                 bound = inspect.signature(handler).bind_partial(*args, **kwargs)
+                if bound.arguments.get("container_ref") is not None:
+                    bound.arguments["container_ref"] = validate_explicit_container_ref(bound.arguments["container_ref"])
                 _validate_arguments(tool_name, bound.arguments, request_scope, identity, memory_enabled=memory_enabled)
                 if tool_name in {"pallium_search_history", "pallium_search_history_by_work_ref"}:
                     nested = _as_mapping(_as_mapping(request_context.meta).get(_META_KEY))

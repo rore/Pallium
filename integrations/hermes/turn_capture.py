@@ -63,7 +63,7 @@ def _recall(response, scope):
 
 
 def capture_user(http, *, base, profile, session_id, turn_id, scope, user_message,
-                 conversation_history=None):
+                 conversation_history=None, attribution=None):
     """Return confirmed capture provenance; never retry an uncertain write."""
     if (not isinstance(scope, dict)
             or not all(_identifier(value) for value in
@@ -95,7 +95,9 @@ def capture_user(http, *, base, profile, session_id, turn_id, scope, user_messag
             "actor_ref": scope["actor_ref"], "agent_ref": "hermes", "visibility": "private",
             "query_text": user_message[:500], "query_limit": 5,
             "query_actor_ref": scope["actor_ref"], "query_trigger_origin": "user_prompt_submit",
-            "metadata": metadata, "work_refs": list(work_refs)}
+            "metadata": metadata, "work_refs": list(work_refs),
+            **{key: value for key, value in (attribution or {}).items()
+               if key in {"source_turn_id", "relay_name", "relay_attribution_state"}}}
     try:
         response = http(base, "POST", "/item-and-query", body=body)
         if not isinstance(response, dict) or not _identifier(response.get("source_item_id")):

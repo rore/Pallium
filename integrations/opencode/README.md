@@ -67,6 +67,8 @@ OpenCode needs both pieces:
 - the Pallium MCP endpoint for Relay send/reply tools and deliberate Session
   History search.
 
+Use exactly one Pallium adapter across all effective OpenCode configuration roots, including the default user, custom `OPENCODE_CONFIG_DIR`, and project roots; inspect each root for entries pointing to different physical copies. The upstream [V1 duplicate-loading report](https://github.com/Tencent/teamai-cli/pull/1405) has not been reproduced with Pallium, and V2 loading from multiple roots is unverified; when moving configuration, remove only an identified obsolete copy you control, with appropriate approval.
+
 The stable V1 local loader uses the explicit plugin file:
 
 ```jsonc

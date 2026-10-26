@@ -64,7 +64,7 @@ def _identity(session_id: str, turn_id: str = "turn-1", **extra: object) -> dict
 
 
 def test_session_scoped_stdio_keeps_concurrent_projects_and_actors_isolated(client):
-    projects = [("git:test/alpha", "actor-alpha"), ("git:test/beta", "actor-beta")]
+    projects = [("git:github.com/example/alpha", "actor-alpha"), ("git:test/beta", "actor-beta")]
     endpoints = []
     source_ids = []
     for index, (container, actor) in enumerate(projects):
@@ -128,6 +128,11 @@ def test_session_scoped_stdio_keeps_concurrent_projects_and_actors_isolated(clie
                 assert len(handler.calls) == before
                 valid = await transport.call_tool("pallium_relay_address", {}, meta=meta)
                 assert not valid.isError
+                spelling = "git:github.com/EXAMPLE/ALPHA.git"
+                canonical = await transport.call_tool("pallium_relay_address", {"container_ref": spelling},
+                    meta=_identity("dynamic-0", scope={"container_ref": spelling, "actor_ref": projects[0][1]}))
+                assert not canonical.isError
+                assert json.loads(canonical.content[0].text)["exact_selector"] == endpoints[0]
     try:
         asyncio.run(exercise())
     finally:

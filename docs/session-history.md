@@ -44,6 +44,16 @@ Both search tools accept an optional `source_thread_ref` for exact historical
 thread filtering. Omit it for broad cross-session History; the active requesting
 session is tracked independently for telemetry and response grouping.
 
+To search turns recorded under an exact Relay name, first call
+`pallium_relay_address` for the current session and pass its `relay_name` to
+`pallium_search_history`. Codex records the name from the validated turn-start
+Relay response and links delayed assistant output through the native turn ID.
+Legacy, unavailable, or unsupported-host attribution is never inferred; the
+response may set `incomplete_attribution` when eligible older Codex sources lack
+name evidence. The name filter does not widen container access, and normal
+redaction and forgetting rules still apply. Claude turn correlation is not yet
+supported.
+
 Search answers “where did we discuss this?” Expansion answers “what was the
 surrounding reasoning?” The bounds keep one match from turning into an entire
 transcript replay.
@@ -134,7 +144,7 @@ tool catalog. Separately, service-selected recall can enter bounded,
 lower-authority context during normal user capture even with memory tools off.
 Semantic packages default to disabled. History diagnostics remain unavailable;
 automatic standalone MCP reconnection remains unqualified. Automatic scope
-requires public session-owned cwd and surface APIs. Older hosts without them
+requires public session-owned cwd, surface and bound-route APIs. Older hosts without them
 can use intentional fixed-scope compatibility setup. The Hermes guide above
 describes capture bounds and compatibility; see
 [native coverage](designs/hermes-native-qualification.md) for qualification.

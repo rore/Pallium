@@ -1717,3 +1717,185 @@ def test_known_atomic_admission_refusal_preserves_old_project_and_can_retry(clie
     refuse = False
     assert pre(str(b), turn="retry")
     assert _sessions(client, _project("b"))[0]["scope_generation"] == 1
+
+
+def _send_cwd_message(client, container, endpoint):
+    response = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "peer", "container_ref": container})
+    assert response.status_code == 200, response.text
+    response = client.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": "peer", "recipient": endpoint,
+        "payload": "current route payload", "container_ref": container})
+    assert response.status_code == 200, response.text
+    return response.json()["message_id"]
+
+
+def _observe_cwd_poller(monkeypatch, changed):
+    accessor = sys.modules["hermes_cli.config"].load_config_readonly
+    revisited, reads = threading.Event(), []
+
+    def config():
+        value = accessor()
+        if changed.is_set() and threading.current_thread().name == "pallium-hermes-relay":
+            reads.append(True)
+            if len(reads) >= 8:
+                revisited.set()
+        return value
+
+    monkeypatch.setattr(sys.modules["hermes_cli.config"], "load_config_readonly", config)
+    return revisited
+
+
+@pytest.mark.parametrize("new_route", [None, "native:replacement"])
+def test_cwd_route_invalidated_at_dispatch_boundary_retains_pending_delivery(
+        client, project_plugin, tmp_path, monkeypatch, new_route):
+    module, ctx, pre, _create, _calls, _settings = project_plugin
+    root = _repo(tmp_path, "dispatch")
+    monkeypatch.setattr(module, "POLL_SECONDS", .01)
+    assert pre(str(root), turn="seed", route_key="native:original")
+    ctx.hooks["on_session_end"](session_id="session", turn_id="seed")
+    changed = threading.Event()
+    revisited = _observe_cwd_poller(monkeypatch, changed)
+    write = ctx.state.set
+
+    def invalidate(key, value):
+        write(key, value)
+        if key.startswith("wake:") and not changed.is_set():
+            assert pre(str(root), turn="new-route", route_key=new_route) is None
+            changed.set()
+
+    monkeypatch.setattr(ctx.state, "set", invalidate)
+    endpoint = _sessions(client, _project("dispatch"))[0]["endpoint_id"]
+    message = _send_cwd_message(client, _project("dispatch"), endpoint)
+    assert changed.wait(3) and revisited.wait(3)
+    assert not ctx.injections
+    wake, = (v for k, v in ctx.state.values.items() if k.startswith("wake:"))
+    assert wake["state"] == "injection_attempted" and wake["native_session_key"] == "native:original"
+    delivery = client.get("/relay/messages/" + message,
+                          params={"container_ref": _project("dispatch")}).json()["deliveries"][0]
+    assert (delivery["state"], delivery["attempts"]) == ("pending", 0)
+
+
+@pytest.mark.parametrize("phase", ["accessor", "response", "publication"])
+def test_cwd_stale_registration_cannot_restore_invalidated_native_route(
+        client, project_plugin, tmp_path, monkeypatch, phase):
+    module, ctx, pre, _create, _calls, _settings = project_plugin
+    root = _repo(tmp_path, "registration")
+    monkeypatch.setattr(module, "POLL_SECONDS", .01)
+    assert pre(str(root), turn="seed", route_key="native:original")
+    ctx.hooks["on_session_end"](session_id="session", turn_id="seed")
+    changed = threading.Event()
+    revisited = _observe_cwd_poller(monkeypatch, changed)
+
+    def invalidate():
+        changed.set()
+        assert pre(str(root), turn="newer", route_key=None) is None
+
+    if phase == "accessor":
+        original = type(ctx).session_cwd
+        def cwd(self):
+            value = original(self)
+            if not changed.is_set():
+                invalidate()
+            return value
+        monkeypatch.setattr(type(ctx), "session_cwd", cwd)
+    elif phase == "response":
+        original = module._json_request
+        def http(base, method, path, **kwargs):
+            value = original(base, method, path, **kwargs)
+            if method == "POST" and path == "/relay/turn" and not changed.is_set():
+                invalidate()
+            return value
+        monkeypatch.setattr(module, "_json_request", http)
+    else:
+        original = ctx.state.set
+        def write(key, value):
+            original(key, value)
+            if key.startswith("session:") and not changed.is_set():
+                invalidate()
+        monkeypatch.setattr(ctx.state, "set", write)
+    assert pre(str(root), turn="older", route_key="native:original") is None
+    assert changed.is_set()
+    endpoint = _sessions(client, _project("registration"))[0]["endpoint_id"]
+    message = _send_cwd_message(client, _project("registration"), endpoint)
+    assert revisited.wait(3)
+    assert not ctx.injections
+    delivery = client.get("/relay/messages/" + message,
+                          params={"container_ref": _project("registration")}).json()["deliveries"][0]
+    assert (delivery["state"], delivery["attempts"]) == ("pending", 0)
+
+
+def _cwd_role_history(client, name=None):
+    body = {"container_ref": _project("role-history"), "actor_ref": "actor-role-history",
+            "visibility": "private", "source_type": "hermes", "source_only": True,
+            "text": "project role marker café", "trigger_origin": "agent_pull", "limit": 30}
+    if name is not None:
+        body["relay_name"] = name
+    response = client.post("/query", json=body)
+    assert response.status_code == 200, response.text
+    return response.json()["results"]
+
+
+@pytest.mark.parametrize("reload", [False, True])
+def test_cwd_role_snapshot_survives_rename_reload_and_completion_dedup(
+        client, project_plugin, tmp_path, reload):
+    _module, ctx, pre, create, _calls, _settings = project_plugin
+    root = _repo(tmp_path, "role-history")
+    assert pre(str(root), turn="seed")
+    def name(value):
+        response = client.post("/relay/sessions/name", json={
+            "runtime": "hermes", "session_ref": "session", "container_ref": _project("role-history"),
+            "alias": value})
+        assert response.status_code == 200, response.text
+    name("planner")
+    text = "project role marker café"
+    history = [{"role": "user", "content": text, "message_uid": "user-first"}]
+    assert pre(str(root), turn="first", message=text, history=history)
+    name("later")
+    if reload:
+        for cleanup in ctx.cleanups:
+            cleanup()
+        ctx = create(ctx.state)
+    assert pre(str(root), turn="first", message=text, history=history, context=ctx)
+    rows = [*history, {"role": "assistant", "content": text + " answer", "message_uid": "assistant-first"}]
+    for _ in range(2):
+        ctx.hooks["post_llm_call"](session_id="session", turn_id="first", user_message=text,
+                                  assistant_response=text + " answer", conversation_history=rows)
+    found = _cwd_role_history(client, "planner")
+    assert len(found) == 2 and {row["role"] for row in found} == {"user", "assistant"}
+    assert all(row["relay_name"] == "planner" and row["relay_attribution_state"] == "named" for row in found)
+    assert not _cwd_role_history(client, "later")
+    ctx.hooks["on_session_end"](session_id="session", turn_id="first")
+    next_history = [{"role": "user", "content": text + " next", "message_uid": "user-next"}]
+    assert pre(str(root), turn="next", message=text + " next", history=next_history, context=ctx)
+    assert len(_cwd_role_history(client, "later")) == 1
+
+
+def test_cwd_legacy_active_turn_does_not_backfill_role_provenance(
+        client, project_plugin, tmp_path, monkeypatch):
+    module, ctx, pre, create, _calls, _settings = project_plugin
+    root = _repo(tmp_path, "role-history")
+    text = "project role marker café legacy"
+    history = [{"role": "user", "content": text, "message_uid": "legacy-user"}]
+    http = module._json_request
+    def legacy(base, method, path, **kwargs):
+        if path == "/item-and-query":
+            kwargs["body"] = {k: v for k, v in kwargs["body"].items()
+                              if k not in {"source_turn_id", "relay_name", "relay_attribution_state"}}
+        return http(base, method, path, **kwargs)
+    monkeypatch.setattr(module, "_json_request", legacy)
+    assert pre(str(root), turn="legacy", message=text, history=history)
+    for key, value in list(ctx.state.values.items()):
+        if key.startswith("turn:"):
+            ctx.state.set(key, {k: v for k, v in value.items() if k != "capture"})
+    for cleanup in ctx.cleanups:
+        cleanup()
+    ctx = create(ctx.state)
+    monkeypatch.setattr(module, "_json_request", http)
+    assert pre(str(root), turn="legacy", message=text, history=history, context=ctx)
+    ctx.hooks["post_llm_call"](session_id="session", turn_id="legacy", user_message=text,
+        assistant_response=text + " answer", conversation_history=[*history,
+        {"role": "assistant", "content": text + " answer", "message_uid": "legacy-assistant"}])
+    found = _cwd_role_history(client)
+    assert len(found) == 2 and all(row["relay_name"] is None for row in found)
+    assert all(row["relay_attribution_state"] == "unavailable" for row in found)

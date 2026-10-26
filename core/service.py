@@ -18,7 +18,7 @@ from core.consolidation_runner import ConsolidationRunner
 from core.container_ref import canonicalize_container_ref, validate_explicit_container_ref
 from core.filters import source_item_matches_filters
 from core.contracts import IngestResult, ItemProcessingResult, MemoryRetentionPolicy, ProcessResult, QueryResult, build_source_item
-from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, LookupRequestLinkError
+from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, LookupRequestLinkError, SourceTurnSnapshotConflictError
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
 from core.processing import (
     DEFAULT_PROCESSING_LEASE_SECONDS,
@@ -47,7 +47,39 @@ from core.text import normalize_for_index as _normalize_for_index
 from core.work_ref import _normalize_work_ref, _normalize_work_refs
 
 _WORK_REFS_METADATA_KEY = "pallium_work_refs"
+_ROLE_HISTORY_SOURCE_TYPES = frozenset({"codex", "claude-code", "opencode", "hermes"})
 _ANY_CONTAINER = object()
+
+
+def _validate_role_source_dedupe(
+    existing: SourceItem,
+    *,
+    role_history_source: bool,
+    role: str | None,
+    container_ref: str | None,
+    thread_ref: str | None,
+    source_turn_id: str | None,
+    relay_name: str | None,
+    relay_attribution_state: str,
+) -> None:
+    """Reject source-ID retries that disagree with immutable role attribution."""
+    if not role_history_source:
+        return
+    if (
+        existing.forgotten_at is not None
+        or existing.role != role
+        or existing.container_ref != container_ref
+        or existing.thread_ref != thread_ref
+        or existing.source_turn_id != source_turn_id
+    ):
+        raise SourceTurnSnapshotConflictError("conflicting source item identity")
+    # Rows without a usable turn key retain their legacy/unknown meaning. A
+    # keyed request is never allowed to relabel one of those rows.
+    if source_turn_id is not None and (
+        existing.relay_name != relay_name
+        or existing.relay_attribution_state != relay_attribution_state
+    ):
+        raise SourceTurnSnapshotConflictError("conflicting source turn snapshot")
 
 def _sanitize_work_ref_metadata(metadata: dict | None) -> dict | None:
     """Keep safe work refs and bounded diagnostics without changing selection."""
@@ -432,15 +464,113 @@ class PalliumService:
         source_ref: str | None = None,
         artifact_kind: str | None = None,
         visibility: str | None = None,
+        source_turn_id: str | None = None,
+        relay_name: str | None = None,
+        relay_attribution_state: str = "unknown",
     ) -> IngestResult:
         container_ref = canonicalize_container_ref(container_ref)
+        # Relay attribution is accepted only on a supported host's user snapshot.
+        # Assistant submissions cannot choose or overwrite the historical name;
+        # they can only correlate to the immutable same-scope user row.
+        role_history_source = source_type in _ROLE_HISTORY_SOURCE_TYPES and role in {"user", "assistant"}
+        prior_turn_snapshot = None
+        if role_history_source:
+            requested_relay_name = relay_name
+            requested_relay_state = relay_attribution_state
+            key_is_valid = (
+                self._storage.supports_source_turn_snapshots()
+                and isinstance(source_turn_id, str)
+                and bool(source_turn_id)
+                and source_turn_id == source_turn_id.strip()
+                and len(source_turn_id) <= 512
+                and not any(ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F for char in source_turn_id)
+                and isinstance(container_ref, str) and bool(container_ref)
+                and isinstance(thread_ref, str) and bool(thread_ref.strip())
+            )
+            source_turn_id = source_turn_id if key_is_valid else None
+            relay_name = None
+            relay_attribution_state = "unavailable"
+            if role == "user" and key_is_valid:
+                relay_attribution_state_input = requested_relay_state
+                if relay_attribution_state_input == "named":
+                    try:
+                        from core.relay import validate_alias
+                        canonical_name = validate_alias(requested_relay_name)
+                    except (TypeError, ValueError):
+                        canonical_name = None
+                    if canonical_name is not None:
+                        relay_name = canonical_name
+                        relay_attribution_state = "named"
+                elif relay_attribution_state_input == "unnamed" and requested_relay_name is None:
+                    relay_attribution_state = "unnamed"
+                # Equivalent retries reuse the immutable first snapshot. A
+                # changed state/name is a source conflict and fails closed.
+                try:
+                    prior_turn_snapshot = self._storage.find_source_turn_snapshot(
+                        source_type, container_ref, thread_ref, source_turn_id
+                    )
+                except ValueError as exc:
+                    raise SourceTurnSnapshotConflictError(
+                        "conflicting source turn snapshot"
+                    ) from exc
+                if prior_turn_snapshot is not None:
+                    if prior_turn_snapshot.forgotten_at is not None:
+                        raise SourceTurnSnapshotConflictError(
+                            "source turn snapshot has been forgotten"
+                        )
+                    if (
+                        prior_turn_snapshot.relay_name != relay_name
+                        or prior_turn_snapshot.relay_attribution_state != relay_attribution_state
+                    ):
+                        raise SourceTurnSnapshotConflictError(
+                            "conflicting source turn snapshot"
+                        )
+            elif role == "assistant" and key_is_valid:
+                try:
+                    prior_turn_snapshot = self._storage.find_source_turn_snapshot(
+                        source_type, container_ref, thread_ref, source_turn_id
+                    )
+                except ValueError as exc:
+                    raise SourceTurnSnapshotConflictError(
+                        "conflicting source turn snapshot"
+                    ) from exc
+                if prior_turn_snapshot is not None:
+                    if prior_turn_snapshot.forgotten_at is not None:
+                        raise SourceTurnSnapshotConflictError(
+                            "source turn snapshot has been forgotten"
+                        )
+                    relay_name = prior_turn_snapshot.relay_name
+                    relay_attribution_state = prior_turn_snapshot.relay_attribution_state
+                else:
+                    raise SourceTurnSnapshotConflictError(
+                        "source turn snapshot is unavailable"
+                    )
+        else:
+            source_turn_id = None
+            relay_name = None
+            relay_attribution_state = "unknown"
+
         existing_source_item = self._storage.find_source_item(source_type=source_type, source_id=source_id)
         if existing_source_item is not None:
+            _validate_role_source_dedupe(
+                existing_source_item,
+                role_history_source=role_history_source,
+                role=role,
+                container_ref=container_ref,
+                thread_ref=thread_ref,
+                source_turn_id=source_turn_id,
+                relay_name=relay_name,
+                relay_attribution_state=relay_attribution_state,
+            )
             vector_entry = self._vector_embedder.build_source_item_vector_entry(existing_source_item)
             if vector_entry is not None and existing_source_item.processing_status != "pending":
                 if self._vector_embedder.embed_and_persist_vector_entry(vector_entry):
                     self._vector_embedder.save_vector_index()
             return self._build_ingest_result(existing_source_item)
+        # Equivalent start retries may use a fresh source ID, but the existing
+        # user row remains the single immutable representative of this turn.
+        if role_history_source and role == "user" and prior_turn_snapshot is not None:
+            return self._build_ingest_result(prior_turn_snapshot)
 
         requested_package = use_case or self._default_use_case
         if use_case is not None and requested_package not in self._configured_use_cases:
@@ -518,6 +648,9 @@ class PalliumService:
             source_ref=source_ref,
             artifact_kind=artifact_kind,
             visibility=visibility,
+            source_turn_id=source_turn_id,
+            relay_name=relay_name,
+            relay_attribution_state=relay_attribution_state,
             use_case=requested_package if plugin is not None else None,
             processing_status=processing_status,
             processing_completed_at=processing_completed_at,
@@ -531,10 +664,52 @@ class PalliumService:
                 active_packages,
                 skip_packages=skip_packages,
             )
-        except IntegrityError:
+        except IntegrityError as integrity_error:
             existing = self._storage.find_source_item(source_type=source_type, source_id=source_id)
             if existing is not None:
+                _validate_role_source_dedupe(
+                    existing,
+                    role_history_source=role_history_source,
+                    role=role,
+                    container_ref=container_ref,
+                    thread_ref=thread_ref,
+                    source_turn_id=source_turn_id,
+                    relay_name=relay_name,
+                    relay_attribution_state=relay_attribution_state,
+                )
                 return self._build_ingest_result(existing)
+            # Two equivalent user-start retries can pass the optimistic
+            # snapshot lookup before either insert commits. Recover only the
+            # SQLite partial-index collision; other integrity failures must
+            # remain visible to the caller.
+            snapshot_unique_error = (
+                str(getattr(integrity_error, "orig", ""))
+                == "UNIQUE constraint failed: source_items.source_type, source_items.container_ref, "
+                "source_items.thread_ref, source_items.source_turn_id"
+            )
+            if (
+                snapshot_unique_error
+                and role_history_source
+                and role == "user"
+                and source_turn_id is not None
+            ):
+                try:
+                    prior = self._storage.find_source_turn_snapshot(
+                        source_type, container_ref, thread_ref, source_turn_id
+                    )
+                except ValueError as exc:
+                    raise SourceTurnSnapshotConflictError(
+                        "conflicting source turn snapshot"
+                    ) from exc
+                if prior is not None:
+                    if prior.forgotten_at is not None or (
+                        prior.relay_name != relay_name
+                        or prior.relay_attribution_state != relay_attribution_state
+                    ):
+                        raise SourceTurnSnapshotConflictError(
+                            "conflicting source turn snapshot"
+                        ) from integrity_error
+                    return self._build_ingest_result(prior)
             raise
         self._storage.create_index_entry(
             build_index_entry(
@@ -1020,6 +1195,7 @@ class PalliumService:
         include_trace: bool = False,
         trigger_origin: str | None = None,
         source_only: bool = False,
+        relay_name: str | None = None,
         record_history_lookup: bool = True,
         defer_delivery: bool = False,
         exclude_item_id: str | None = None,
@@ -1074,7 +1250,26 @@ class PalliumService:
             trigger_origin=trigger_origin,
             source_only=source_only,
             exclude_source_identity=exclude_source_identity,
+            relay_name=relay_name,
         )
+        if source_only and container_ref is not None and relay_name is not None:
+            coverage_filters = {
+                "source_type": source_type or "codex",
+                "role": role,
+                "artifact_kind": artifact_kind,
+                "thread_ref": thread_ref,
+                "actor_ref": actor_ref,
+                "work_refs": work_refs,
+            }
+            result = dataclasses.replace(
+                result,
+                incomplete_attribution=self._storage.has_incomplete_source_attribution(
+                    container_ref=container_ref,
+                    query_visibility=visibility,
+                    query_actor_ref=actor_ref,
+                    **coverage_filters,
+                ),
+            )
         # PR 0 step 8: retrieval barrier (defense in depth).
         # Even if a secret slips past the write barrier + LLM-response
         # wrapper (e.g. was persisted before PR 0, or a redaction miss),

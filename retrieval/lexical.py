@@ -98,6 +98,9 @@ class LexicalRetrievalProvider(RetrievalProvider):
         exact_source_work_query = bool(
             filters and filters.work_refs and target_kind == "source_item"
         )
+        exact_source_filter_query = bool(
+            filters and (filters.work_refs or filters.relay_name) and target_kind == "source_item"
+        )
         if not tokens and (text.strip() or not exact_source_work_query):
             trace = None
             if include_trace:
@@ -120,7 +123,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
 
         search_result = self._storage.search_index_entries(
             tokens=tokens,
-            limit=limit if exact_source_work_query else limit * 4,
+            limit=limit if exact_source_filter_query else limit * 4,
             filters=filters,
             query_container_ref=query_container_ref,
             query_visibility=visibility,
@@ -197,6 +200,8 @@ class LexicalRetrievalProvider(RetrievalProvider):
                         score=hit.score,
                         evidence=[build_evidence(source_item)],
                         visibility=source_item.visibility,
+                        relay_name=source_item.relay_name,
+                        relay_attribution_state=source_item.relay_attribution_state,
                         work_refs=work_refs_from_metadata(source_item.metadata),
                     )
                 )

@@ -177,6 +177,19 @@ print("public session context qualification passed")
 '''
 
 
+def _dependency_directory(python):
+    probe = subprocess.run([str(python), "-I", "-S", "-B", "-X", "utf8", "-c",
+        "import sys,sysconfig; print(sysconfig.get_path('purelib', vars={'base':sys.argv[1],'platbase':sys.argv[1]}))",
+        str(python.parent.parent)], check=True, capture_output=True, text=True, encoding="utf-8", timeout=10)
+    return Path(probe.stdout.strip()).resolve()
+
+
+def test_dependency_directory_uses_the_interpreters_layout():
+    import sys
+    import sysconfig
+    assert _dependency_directory(Path(sys.executable)) == Path(sysconfig.get_path("purelib")).resolve()
+
+
 def test_real_public_session_context_isolation():
     source = os.environ.get("PALLIUM_HERMES_CWD_SOURCE")
     python = os.environ.get("PALLIUM_HERMES_CWD_PYTHON")
@@ -185,7 +198,7 @@ def test_real_public_session_context_isolation():
     assert source and python, "source and interpreter must be configured together"
     source, python = Path(source).resolve(), Path(python).resolve()
     assert source.is_dir() and python.is_file(), "configured source/interpreter missing"
-    packages = python.parent.parent / "Lib" / "site-packages" if os.name == "nt" else python.parent.parent / "lib"
+    packages = _dependency_directory(python)
     assert packages.is_dir(), "configured interpreter dependency directory missing"
     root = Path(__file__).resolve().parents[1] / "build" / ("hermes-context-probe-" + uuid.uuid4().hex)
     root.mkdir(parents=True)

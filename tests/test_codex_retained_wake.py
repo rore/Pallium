@@ -1009,17 +1009,64 @@ def http_wake(client, retained, monkeypatch, tmp_path):
         assert not worker.is_alive()
     http.close()
 
-def recover(journey, *, hook_completed=None):
+def recover(journey, *, hook_completed=None, until=None, now=None):
     _, relay, registry, _, _, _, workers = journey
-    recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=registry)
-    if hook_completed is not None:
-        assert hook_completed.wait(5), "recovery hook did not complete"
-    for worker in workers:
-        worker.join(5)
-        assert not worker.is_alive()
+    deadline = time.monotonic() + 5 if until is not None else None
+    for _ in range(8 if until is not None else 1):
+        if deadline is not None:
+            assert time.monotonic() < deadline, "recovery progress exceeded wall-time bound"
+        recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=registry)
+        if hook_completed is not None:
+            assert hook_completed.wait(5), "recovery hook did not complete"
+        for worker in workers:
+            worker.join(5 if deadline is None else max(0, deadline - time.monotonic()))
+            assert not worker.is_alive()
+        if deadline is not None:
+            assert time.monotonic() < deadline, "recovery progress exceeded wall-time bound"
+        if until is None or until():
+            return
+        if now is not None:
+            from datetime import datetime, timezone
+            for fence in registry.reservations():
+                if (fence.outcome in {"accepted", "uncertain"}
+                        and fence.correlated_claim_attempts is None
+                        and fence.retry_not_before is not None
+                        and fence.retry_not_before > now[0].timestamp()):
+                    state = relay.codex_wake_reservation_state(delivery_id=fence.delivery_id)
+                    assert state["state"] == "pending"
+                    assert state["recipient_endpoint_id"] == fence.recipient_endpoint_id
+                    assert state["wake_target"] == {"runtime": "codex", "session_ref": fence.session_ref,
+                                                   "container_ref": fence.container_ref}
+                    now[0] = datetime.fromtimestamp(fence.retry_not_before, timezone.utc)
+        time.sleep(.01)
+    pytest.fail("recovery progress exceeded eight settled sweeps")
 
 
-def _observe_transition_attempts(journey, monkeypatch, operation, *, force_refusal=False):
+def _released_without_owner(journey, attempts, expected):
+    _, relay, registry, _, desktop, _, _ = journey
+    assert desktop.owners == []
+    assert all(attempt["reservations"] == expected for attempt in attempts)
+    successes = [attempt for attempt in attempts if "result" in attempt]
+    assert len(successes) <= 1
+    for attempt in attempts:
+        if "error_type" in attempt:
+            assert attempt["error_type"] is ImmediateTransactionBusyError
+        else:
+            assert attempt["result"] == expected
+    for fence in expected:
+        state = relay.codex_wake_reservation_state(delivery_id=fence.delivery_id)
+        assert state["state"] == "pending" and state["attempts"] == 0
+        assert state["recipient_endpoint_id"] == fence.recipient_endpoint_id
+    current = registry.reservations()
+    assert current in (expected, ())
+    if current == ():
+        assert len(successes) == 1
+        return True
+    assert successes == []
+    return False
+
+
+def _observe_transition_attempts(journey, monkeypatch, operation, *, force_refusal=False, forced_attempts=1):
     """Observe one journey's bounded transition; recovery stays explicit in its test."""
     assert operation in {"release", "retry", "retry_target", "begin_native_attempt"}
     relay = journey[1]
@@ -1033,7 +1080,7 @@ def _observe_transition_attempts(journey, monkeypatch, operation, *, force_refus
                    "reservations": kwargs.get("reservations", ())}
         attempts.append(attempt)
         try:
-            if force_refusal and len(attempts) == 1:
+            if force_refusal and len(attempts) <= forced_attempts:
                 attempt["forced"] = True
                 raise ImmediateTransactionBusyError(
                     "controlled transition refusal",
@@ -1547,10 +1594,8 @@ def test_failed_spend_has_zero_owner_calls(http_wake, monkeypatch, force_refusal
         pending = response.json()["deliveries"][0]
         assert pending["delivery_id"] == delivery["delivery_id"]
         assert pending["state"] == "pending" and pending["attempts"] == 0
-        recover(http_wake)
-        assert len(attempts) == 2 and "error_type" not in attempts[1]
-        assert attempts[1]["reservations"] == expected
-        assert attempts[1].get("result") == expected
+        recover(http_wake, until=lambda: _released_without_owner(http_wake, attempts, expected))
+        assert len(attempts) >= 2 and attempts[-1].get("result") == expected
     else:
         assert "error_type" not in attempts[0] and attempts[0].get("result") == expected
     assert all(not worker.is_alive() for worker in workers)
@@ -1593,11 +1638,11 @@ def test_owner_response_allows_hook_claim_ack_before_return(http_wake):
 
 @pytest.mark.parametrize("loss", ["source", "desktop", "channel", "epoch", "unresolved"])
 def test_connection_loss_defers_without_owner(
-    http_wake, loss, monkeypatch, force_refusal=False,
+    http_wake, loss, monkeypatch, force_refusal=False, forced_attempts=1,
 ):
     http, _, registry, service, desktop, send, _ = http_wake
     attempts = _observe_transition_attempts(
-        http_wake, monkeypatch, "release", force_refusal=force_refusal,
+        http_wake, monkeypatch, "release", force_refusal=force_refusal, forced_attempts=forced_attempts,
     )
     if loss == "source":
         service.source.gone = True
@@ -1623,7 +1668,7 @@ def test_connection_loss_defers_without_owner(
         pending = response.json()["deliveries"][0]
         assert pending["delivery_id"] == delivery["delivery_id"]
         assert pending["state"] == "pending" and pending["attempts"] == 0
-        recover(http_wake)
+        recover(http_wake, until=lambda: _released_without_owner(http_wake, attempts, expected))
     else:
         assert len(attempts) == 1 and "error_type" not in attempts[0]
         assert len(attempts[0]["reservations"]) == 1
@@ -1634,6 +1679,12 @@ def test_connection_loss_defers_without_owner(
 def test_connection_loss_release_refusal_recovers_without_owner(http_wake, monkeypatch):
     test_connection_loss_defers_without_owner(
         http_wake, "unresolved", monkeypatch, force_refusal=True,
+    )
+
+
+def test_connection_loss_repeated_release_refusals_recover_without_owner(http_wake, monkeypatch):
+    test_connection_loss_defers_without_owner(
+        http_wake, "unresolved", monkeypatch, force_refusal=True, forced_attempts=2,
     )
 
 @pytest.mark.parametrize("change", [{"epoch": "wrong"}, {"sequence": True}, {"thread_ref": ""},
@@ -1705,7 +1756,7 @@ def test_default_setup_and_http_transport_isolation(monkeypatch):
 
 
 
-def _hook_runner(http, monkeypatch, state, events, tmp_path):
+def _hook_runner(http, monkeypatch, state, events, tmp_path, *, allow_preclaim_refusal=False):
     turn_witness = []
     script = "user_prompt_submit" if state == "idle" else "session_start"
     # Restore the previous alias (including absence) for existing hook state isolation.
@@ -1722,8 +1773,16 @@ def _hook_runner(http, monkeypatch, state, events, tmp_path):
         monkeypatch.setattr(hook, "derive_container_ref", lambda *a: SCOPE["container_ref"])
         monkeypatch.setattr(hook, "pin_container", lambda *a, **k: None)
         monkeypatch.setattr(hook, "_fetch_retrieval_fallback", lambda *a: [])
+    refusals = []
     def relay(method, path, body, **kwargs):
         response = http.request(method, path, json=body)
+        if allow_preclaim_refusal and response.status_code == 503:
+            assert path == "/relay/turn"
+            assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+            assert response.json()["detail"]["retryable"] is True
+            assert response.headers["Retry-After"] == "1"
+            refusals.append((method, path, dict(body)))
+            return None  # One native hook request failed before claim; recovery is separate.
         assert response.status_code == 200, response.text
         result = response.json()
         if (method, path) == ("POST", "/relay/turn"):
@@ -1756,7 +1815,46 @@ def _hook_runner(http, monkeypatch, state, events, tmp_path):
             assert allow_return and result is None
         if allow_return:
             assert turn_witness and all(turn_witness), "empty hook did not complete an empty Relay turn"
+    run.refusals = refusals
     return run
+
+
+@pytest.mark.parametrize("allow_refusal", [False, True])
+def test_hook_runner_preclaim_refusal_requires_explicit_opt_in(
+    http_wake, monkeypatch, tmp_path, allow_refusal,
+):
+    http, relay, _, _, desktop, send, _ = http_wake
+    first = send()
+    events, requests = [], []
+    if allow_refusal:
+        run = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path,
+                           allow_preclaim_refusal=True)
+    else:
+        run = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
+    hook = sys.modules["relay_test_retained_session_start"]
+    body = {"runtime": "codex", "session_ref": TARGET, **SCOPE}
+    before = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"]
+    owners = tuple(desktop.owners)
+
+    def refuse(**kwargs):
+        requests.append(kwargs)
+        raise ImmediateTransactionBusyError("controlled hook refusal", acquisition_stage="setup_deadline")
+
+    with monkeypatch.context() as fault:
+        fault.setattr(relay._store, "relay_turn", refuse)
+        if allow_refusal:
+            assert hook.relay_request("POST", "/relay/turn", body) is None
+        else:
+            with pytest.raises(AssertionError, match="relay_busy"):
+                hook.relay_request("POST", "/relay/turn", body)
+    assert len(requests) == 1 and events == []
+    assert len(run.refusals) == int(allow_refusal)
+    assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"] == before
+    assert tuple(desktop.owners) == owners
+    run()
+    assert [event[0] for event in events] == ["emit", "ack"]
+    result, = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"]
+    assert (result["delivery_id"], result["state"], result["attempts"]) == (first["delivery_id"], "delivered", 1)
 
 
 @pytest.mark.parametrize("state,event", [("idle", "UserPromptSubmit"), ("notLoaded", "SessionStart")])
@@ -1792,8 +1890,9 @@ def test_selected_transport_actual_hook_emits_then_acks(http_wake, monkeypatch, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["none", "release-twice", "claim-once"])
 async def test_production_lifespan_automatically_recovers_spent_retained_wake(
-    retained, monkeypatch, tmp_path, test_db_url, capsys,
+    retained, monkeypatch, tmp_path, test_db_url, capsys, fault,
 ):
     from datetime import datetime, timedelta, timezone
 
@@ -1822,14 +1921,29 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
     monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
     reconcilers, callbacks, recovery_threads, workers, recovered_fences, events, closed = [], [], [], [], [], [], []
     emitted, recovery_completed = threading.Event(), threading.Event()
+    proof_ready, release_faults_cleared, released, release_sweep_completed = (threading.Event() for _ in range(4))
+    twice_refused, claim_failed, early_sweep = (threading.Event() for _ in range(3))
+    release_attempts, claim_refusals, failed_at_sweep = [], [], []
+    original_desktop = desktop
     recover = main.recover_expired_relay_wakes
     schedule = codex_wake._schedule_reserved_codex_relay_wake
 
     def observe_recovery(*args, **kwargs):
+        if not proof_ready.is_set():
+            return
+        if fault == "release-twice" and (
+            released.is_set()
+            or len(release_attempts) >= 2 and not release_faults_cleared.is_set()
+        ):
+            return
         recovery_threads.append(threading.get_ident())
         try:
             return recover(*args, **kwargs)
         finally:
+            if released.is_set():
+                release_sweep_completed.set()
+            if claim_failed.is_set() and len(recovery_threads) > failed_at_sweep[0]:
+                early_sweep.set()
             if emitted.is_set():
                 recovery_completed.set()
 
@@ -1860,6 +1974,36 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
             expected_database=tmp_path / "test-relay.db", legacy=registry._path, monkeypatch=monkeypatch,
         )
         close_storage = storage.close
+        transition, turn = registry._relay.codex_wake_transition, storage.relay_turn
+
+        def observed_transition(operation, **kwargs):
+            if fault != "release-twice" or operation != "release":
+                return transition(operation, **kwargs)
+            expected = kwargs["reservations"]
+            release_attempts.append(expected)
+            if len(release_attempts) <= 2:
+                if len(release_attempts) == 2:
+                    twice_refused.set()
+                raise ImmediateTransactionBusyError(
+                    "controlled release refusal", acquisition_stage="setup_deadline",
+                )
+            result = transition(operation, **kwargs)
+            if result:
+                assert result == expected
+                released.set()
+            return result
+
+        def observed_turn(**kwargs):
+            if fault == "claim-once" and proof_ready.is_set() and not claim_refusals:
+                assert kwargs["runtime"] == "codex" and kwargs["session_ref"] == TARGET
+                claim_refusals.append(dict(kwargs))
+                raise ImmediateTransactionBusyError(
+                    "controlled preclaim refusal", acquisition_stage="setup_deadline",
+                )
+            return turn(**kwargs)
+
+        monkeypatch.setattr(registry._relay, "codex_wake_transition", observed_transition)
+        monkeypatch.setattr(storage, "relay_turn", observed_turn)
 
         def close():
             close_storage()
@@ -1877,6 +2021,8 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
                 for runtime, session in (("claude-code", "sender"), ("codex", TARGET)):
                     response = http.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **SCOPE})
                     assert response.status_code == 200, response.text
+                if fault == "release-twice":
+                    desktop.unresolved = True
                 sent = http.post("/relay/messages", json={
                     "sender_runtime": "claude-code", "sender_session_ref": "sender",
                     "recipient": f"codex:{TARGET}", "message_id": "production-recovery",
@@ -1888,52 +2034,137 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
                 assert all(not worker.is_alive() for worker in workers)
                 first, = sent.json()["deliveries"]
                 fence = registry.snapshot(first["recipient_endpoint_id"])
-                assert fence is not None and fence.outcome == "uncertain"
+                assert fence is not None
+                assert fence.outcome == ("prepared" if fault == "release-twice" else "uncertain")
                 assert fence.correlated_claim_attempts is None
-                assert fence.retry_not_before > now[0].timestamp()
+                assert (fence.retry_not_before is None) == (fault == "release-twice")
+                if fault != "release-twice":
+                    assert fence.retry_not_before > now[0].timestamp()
                 state = http.get("/relay/messages/production-recovery", params=SCOPE).json()["deliveries"][0]
                 assert (state["state"], state["attempts"]) == ("pending", 0)
-                assert len(desktop.owners) == 1
-                hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
+                assert len(desktop.owners) == (0 if fault == "release-twice" else 1)
+                # A lost backlog notification is a fixture prerequisite; recovery must find stored work.
+                from app import dependencies
+                with monkeypatch.context() as setup:
+                    setup.setattr(dependencies, "dispatch_relay_wake", lambda *a, **k: None)
+                    backlog = http.post("/relay/messages", json={
+                        "sender_runtime": "claude-code", "sender_session_ref": "sender",
+                        "recipient": f"codex:{TARGET}", "message_id": "production-backlog",
+                        "payload": "backlog payload — 東京", **SCOPE,
+                    })
+                assert backlog.status_code == 200, backlog.text
+                second, = backlog.json()["deliveries"]
+                hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path,
+                                    allow_preclaim_refusal=fault == "claim-once")
 
                 def owner(request):
                     recovered_fences.append(registry.snapshot(first["recipient_endpoint_id"]))
                     hook(request["params"]["arguments"]["prompt"])
-                    emitted.set()
+                    if fault == "claim-once" and not any(event[0] == "ack" for event in events):
+                        assert len(claim_refusals) == 1
+                        failed_at_sweep.append(len(recovery_threads))
+                        claim_failed.set()
+                    else:
+                        emitted.set()
 
                 desktop.on_owner = owner
                 previous_writes = len(desktop.writes)
                 assert registry.snapshot(first["recipient_endpoint_id"]) == fence
-                now[0] = datetime.fromtimestamp(fence.retry_not_before, timezone.utc) + timedelta(seconds=1)
+                if fault == "release-twice":
+                    proof_ready.set()
+                    assert twice_refused.wait(5), "Periodic recovery did not revisit refused release"
+                    assert release_attempts == [(fence,), (fence,)]
+                    assert registry.snapshot(first["recipient_endpoint_id"]) == fence
+                    assert desktop.owners == [] and service.retained_registration is None
+                    assert http.get("/relay/messages/production-recovery", params=SCOPE).json()["deliveries"][0] == state
+                    release_faults_cleared.set()
+                    assert release_sweep_completed.wait(5), "Periodic release sweep did not settle after refusal cleared"
+                    for worker in workers:
+                        worker.join(5)
+                    assert release_attempts.count((fence,)) == 3
+                    current = registry.snapshot(first["recipient_endpoint_id"])
+                    if current is not None:
+                        assert current.generation > fence.generation and current.outcome == "prepared"
+                        assert current.delivery_id in {first["delivery_id"], second["delivery_id"]}
+                        assert (current.recipient_endpoint_id, current.container_ref) == (
+                            fence.recipient_endpoint_id, fence.container_ref,
+                        )
+                    assert original_desktop.owners == [] and service.retained_registration is None
+                    # An unresolved channel grants no new wake. A natural hook is the explicit prerequisite.
+                    hook()
+                    emitted.set()
+                else:
+                    now[0] = datetime.fromtimestamp(fence.retry_not_before, timezone.utc) + timedelta(seconds=1)
+                    proof_ready.set()
+                if fault == "claim-once":
+                    assert claim_failed.wait(5), "Expected real hook preclaim503 was not observed"
+                    for worker in workers:
+                        worker.join(5)
+                    current = registry.snapshot(first["recipient_endpoint_id"])
+                    assert current.outcome == "uncertain" and current.generation > fence.generation
+                    assert current.correlated_claim_attempts is None
+                    assert current.retry_not_before > now[0].timestamp()
+                    assert current.delivery_id == first["delivery_id"] and current.container_ref == SCOPE["container_ref"]
+                    scope_events = tuple(events)
+                    assert len(desktop.owners) == 2 and len(scope_events) == 1
+                    assert scope_events[0][0] == "emit" and "[Pallium Relay" not in scope_events[0][2]
+                    assert first["delivery_id"] not in scope_events[0][2]
+                    assert second["delivery_id"] not in scope_events[0][2]
+                    assert early_sweep.wait(5), "No actual production sweep ran before cooldown"
+                    assert registry.snapshot(first["recipient_endpoint_id"]) == current
+                    assert len(desktop.owners) == 2 and tuple(events) == scope_events
+                    for message_id in ("production-recovery", "production-backlog"):
+                        pending = http.get(f"/relay/messages/{message_id}", params=SCOPE).json()["deliveries"][0]
+                        assert (pending["state"], pending["attempts"]) == ("pending", 0)
+                    now[0] = datetime.fromtimestamp(current.retry_not_before, timezone.utc) + timedelta(seconds=1)
                 assert emitted.wait(5), "Automatic recovery did not emit the expired spent wake"
-                assert recovery_completed.wait(5), "Natural recovery callback did not settle"
+                if fault != "release-twice":
+                    assert recovery_completed.wait(5), "Natural recovery callback did not settle"
                 for worker in workers:
                     worker.join(5)
                 assert all(not worker.is_alive() for worker in workers)
-                assert len(desktop.owners) == 2
-                recovered, = recovered_fences
-                assert recovered is not None and recovered.generation > fence.generation
-                assert (recovered.recipient_endpoint_id, recovered.delivery_id) == (
-                    fence.recipient_endpoint_id, fence.delivery_id,
-                )
-                assert recovered.outcome == "uncertain" and recovered.correlated_claim_attempts is None
-                tools = [request["params"]["tool"] for request in desktop.writes[previous_writes:]]
-                assert tools[:2] == [
-                    "read_thread", "send_message_to_thread",
-                ]
-                assert tools[2:] in ([], ["read_thread"])
-                assert desktop.owners[1]["params"]["arguments"]["prompt"] == codex_wake._wake_prompt(first["delivery_id"])
-                assert [entry[0] for entry in events] == ["emit", "ack"]
-                assert "autonomous payload — 東京" in events[0][2]
+                if fault == "release-twice":
+                    assert original_desktop.owners == [] and recovered_fences == []
+                else:
+                    assert len(desktop.owners) == (3 if fault == "claim-once" else 2)
+                    assert len(recovered_fences) == (2 if fault == "claim-once" else 1)
+                    assert len({item.generation for item in recovered_fences}) == len(recovered_fences)
+                    recovered = recovered_fences[-1]
+                    assert recovered is not None and recovered.generation > fence.generation
+                    assert (recovered.recipient_endpoint_id, recovered.delivery_id) == (
+                        fence.recipient_endpoint_id, fence.delivery_id,
+                    )
+                    assert recovered.outcome == "uncertain" and recovered.correlated_claim_attempts is None
+                    tools = [request["params"]["tool"] for request in desktop.writes[previous_writes:]]
+                    assert tools[:2] == ["read_thread", "send_message_to_thread"]
+                    if fault == "none":
+                        assert tools[2:] in ([], ["read_thread"])
+                    else:
+                        assert tools.count("send_message_to_thread") == 2
+                        assert all(tool in {"read_thread", "send_message_to_thread"} for tool in tools)
+                    assert desktop.owners[-1]["params"]["arguments"]["prompt"] == codex_wake._wake_prompt(first["delivery_id"])
+                assert [entry[0] for entry in events] == (["emit", "emit", "ack"] if fault == "claim-once" else ["emit", "ack"])
+                assert "autonomous payload — 東京" in events[-2][2]
                 delivered = http.get("/relay/messages/production-recovery", params=SCOPE).json()["deliveries"][0]
                 assert (delivered["state"], delivered["attempts"]) == ("delivered", 1)
+                backlog_state = http.get("/relay/messages/production-backlog", params=SCOPE).json()["deliveries"][0]
+                assert backlog_state["delivery_id"] == second["delivery_id"]
+                assert (backlog_state["state"], backlog_state["attempts"]) == ("delivered", 1)
+                assert "backlog payload — 東京" in events[-2][2]
                 assert registry.reservations() == ()
                 assert callbacks[0] is reconcilers[0]._claim_recovery
                 assert recovery_threads and set(recovery_threads) == {reconcilers[0]._thread.ident}
                 assert sqlite_queue.time is native_queue_time and time.monotonic is native_monotonic
-                output = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+                outputs = [json.loads(line)["hookSpecificOutput"]["additionalContext"]
+                           for line in capsys.readouterr().out.splitlines() if line]
+                payload_outputs = [value for value in outputs if first["delivery_id"] in value]
+                assert len(payload_outputs) == 1
+                output, = payload_outputs
                 assert output.count(first["delivery_id"]) == 1 and "autonomous payload — 東京" in output
+                assert output.count(second["delivery_id"]) == 1 and "backlog payload — 東京" in output
         finally:
+            proof_ready.set()
+            release_faults_cleared.set()
             for worker in workers:
                 worker.join(5)
             assert all(not worker.is_alive() for worker in workers)

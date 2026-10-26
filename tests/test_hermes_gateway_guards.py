@@ -1766,4 +1766,3 @@ def test_installed_sdk2_guard_survives_source_pythonpath_and_fails_closed(tmp_pa
                                 cwd=tmp_path, capture_output=True, text=True, timeout=10)
         assert failed.returncode == 78
         assert "must-not-start" not in failed.stdout
-
