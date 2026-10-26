@@ -2736,9 +2736,12 @@ def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
     assert registration.state == "idle" and registration.delivery_id is None
 
 
+@pytest.mark.parametrize("force_claim_refusals", [False, True])
 def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
-    client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys,
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys, force_claim_refusals,
 ) -> None:
+    import time
+    from core.errors import ImmediateTransactionBusyError
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -2787,8 +2790,18 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
         })
         return response.status_code == 204
 
+    phase, hook_requests, refusals, acknowledged_ids = ["initial-stop"], [], [], []
+
     def relay_request(method, path, body, *, timeout=0.75):
+        hook_requests.append((phase[0], method, path))
         response = http.request(method, path, json=body)
+        if response.status_code == 503:
+            assert path == "/relay/turn"
+            assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+            assert response.json()["detail"]["retryable"] is True
+            assert response.headers["Retry-After"] == "1"
+            refusals.append((phase[0], dict(body)))
+            return None
         assert response.status_code == 200, response.text
         return response.json() if response.content else None
 
@@ -2802,6 +2815,7 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
             })
             assert response.status_code == 200
             acknowledged.append(delivery)
+            acknowledged_ids.append(delivery["delivery_id"])
         return acknowledged
 
     stop = _load_claude_hook("stop", monkeypatch)
@@ -2830,6 +2844,17 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
     assert transported.wait(timeout=0.5)
     assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
 
+    forced, turn = [], relay._store.relay_turn
+
+    def refuse_claim(**kwargs):
+        if (force_claim_refusals and phase[0] in {"prompt", "stop"}
+                and phase[0] not in forced and kwargs.get("max_chars", 0) > 0):
+            assert kwargs["runtime"] == "claude-code" and kwargs["session_ref"] == PAYLOAD["session_ref"]
+            forced.append(phase[0])
+            raise ImmediateTransactionBusyError("controlled lifecycle refusal", acquisition_stage="late_begin")
+        return turn(**kwargs)
+
+    monkeypatch.setattr(relay._store, "relay_turn", refuse_claim)
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
     monkeypatch.setattr(sys.modules[prompt.relay_turn.__module__], "SESSIONS_DIR", tmp_path / "hook-sessions")
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
@@ -2846,15 +2871,62 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
     monkeypatch.setattr(prompt, "read_hook_input", lambda: {
         "session_id": PAYLOAD["session_ref"],
         "cwd": str(tmp_path),
-        "prompt": "Pallium Relay wake: a persisted delivery may be pending.",
+        "prompt": "Pallium Relay wake notice: new messages available.",
     })
 
-    with pytest.raises(SystemExit):
-        prompt.main()
+    output, deadline = "", time.monotonic() + 5
+    for _ in range(8):
+        assert time.monotonic() < deadline, "Claude recovery exceeded wall-time bound"
+        phase[0], before_requests, before_refusals = "prompt", len(hook_requests), len(refusals)
+        with pytest.raises(SystemExit):
+            prompt.main()
+        captured = capsys.readouterr()
+        current_output = captured.out + captured.err
+        output += current_output
+        assert len(hook_requests) == before_requests + 1
+        delivered = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+        if delivered["state"] == "delivered":
+            break
+        assert len(refusals) == before_refusals + 1 and acknowledged_ids == []
+        assert "wake after crash ✓" not in current_output
+        assert delivered["delivery_id"] == claimed["delivery_id"] and delivered["attempts"] == 1
+        assert registry.recovery_candidates() == []  # The real prompt registered busy.
+        before_transport = len(transport_calls)
+        recover_expired_relay_wakes(relay, registry)
+        assert len(transport_calls) == before_transport
 
-    assert "wake after crash ✓" in capsys.readouterr().out
-    delivered = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+        phase[0], before_requests, before_refusals = "stop", len(hook_requests), len(refusals)
+        try:
+            stop.main()
+        except SystemExit as stopped:
+            assert stopped.code == 2
+        captured = capsys.readouterr()
+        current_output = captured.out + captured.err
+        output += current_output
+        assert len(hook_requests) == before_requests + 1
+        delivered = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+        if delivered["state"] == "delivered":
+            break
+        assert len(refusals) == before_refusals + 1 and acknowledged_ids == []
+        assert "wake after crash ✓" not in current_output
+        assert delivered["delivery_id"] == claimed["delivery_id"] and delivered["attempts"] == 1
+        candidate, = registry.recovery_candidates()
+        assert candidate["state"] == "idle"  # Only the actual Stop re-enables native wake.
+        transported.clear()
+        recover_expired_relay_wakes(relay, registry)
+        assert transported.wait(timeout=0.5)
+        assert len(transport_calls) == before_transport + 1
+    else:
+        pytest.fail("Claude recovery exceeded eight lifecycle steps")
+    assert time.monotonic() < deadline, "Claude recovery exceeded wall-time bound"
+    assert forced == (["prompt", "stop"] if force_claim_refusals else [])
+    assert output.count("wake after crash ✓") == 1
+    assert acknowledged_ids == [claimed["delivery_id"]]
     assert delivered["state"] == "delivered" and delivered["attempts"] == 2
+    (tmp_path / "claude-recovery-boundary.json").write_text(json.dumps({
+        "forced": forced, "http_refusals": refusals, "hook_requests": hook_requests,
+        "native_wakes": len(transport_calls), "delivered": delivered["delivery_id"],
+    }), encoding="utf-8")
     transport_calls.clear()
     recover_expired_relay_wakes(relay, registry)
     assert transport_calls == []

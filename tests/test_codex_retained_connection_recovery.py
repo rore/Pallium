@@ -341,14 +341,20 @@ def _defer_on_state_timeout(http_wake, retained, bridge, *, unresolved=False, na
     return http, service, first, natives
 
 
+@pytest.mark.parametrize("force_release_refusal", [False, True])
 def test_native_tool_failure_reopens_same_registration_for_hook_delivery(
-        http_wake, retained, monkeypatch, capsys, tmp_path, client):
+        http_wake, retained, monkeypatch, capsys, tmp_path, client, force_release_refusal):
     from app import codex_bridge_pipe as bridge
+    from core.errors import ImmediateTransactionBusyError
+    from tests.test_codex_retained_wake import _observe_transition_attempts
     http, _, registry, service, first, send, _ = http_wake
     _, _, natives = retained
     events = []
     hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
     original_read = first.read
+    attempts = _observe_transition_attempts(
+        http_wake, monkeypatch, "release", force_refusal=force_release_refusal,
+    )
 
     def unavailable_read(deadline):
         envelope = original_read(deadline)
@@ -359,8 +365,19 @@ def test_native_tool_failure_reopens_same_registration_for_hook_delivery(
 
     first.read = unavailable_read
     delivery = send()
-    assert first.owners == [] and registry.reservations() == ()
-    assert service.retained_registration is not None
+    assert first.owners == [] and service.retained_registration is not None
+    assert len(attempts) == 1
+    expected, = attempts[0]["reservations"]
+    if "error_type" in attempts[0]:
+        assert attempts[0]["error_type"] is ImmediateTransactionBusyError
+        assert registry.reservations() == (expected,)
+        assert expected.outcome == "prepared" and expected.correlated_claim_attempts is None
+        assert (expected.delivery_id, expected.recipient_endpoint_id, expected.container_ref) == (
+            delivery["delivery_id"], delivery["recipient_endpoint_id"], SCOPE["container_ref"],
+        )
+    else:
+        assert not force_release_refusal and attempts[0]["result"] == (expected,)
+        assert registry.reservations() == ()
     trace_executor = client.app.state.pallium_service._relay_trace_executor
     # Native-worker completion does not drain diagnostic writes.
     trace_executor.submit(lambda: None).result(timeout=2)
@@ -388,7 +405,20 @@ def test_native_tool_failure_reopens_same_registration_for_hook_delivery(
         return desktop
 
     monkeypatch.setattr(bridge, "_DesktopIO", reconnect)
-    recover(http_wake)
+    def completed():
+        if [event[0] for event in events] == ["emit", "ack"]:
+            return True
+        assert events == [] and first.owners == []
+        assert service.retained_registration is not None
+        current = registry.snapshot(delivery["recipient_endpoint_id"])
+        if current is not None:
+            assert current.outcome == "prepared" and current.correlated_claim_attempts is None
+            assert (current.delivery_id, current.container_ref) == (delivery["delivery_id"], SCOPE["container_ref"])
+        pending = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
+        assert (pending["state"], pending["attempts"]) == ("pending", 0)
+        return False
+
+    recover(http_wake, until=completed)
 
     assert len(natives) == 2 and natives[0].closed and len(natives[1].owners) == 1
     assert sum(w.get("params", {}).get("tool") == "read_thread" for w in first.writes) == 1
