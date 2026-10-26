@@ -21,7 +21,7 @@
 **Plan review:** Agent technical review: /root/roles_review, 2026-10-26, GO with no findings on the initial Work Record plan; relayed by parent before guide edits.
 **Approvals:** Not required at this risk level. User requested defining the roles and assigning suitable agents.
 **Exceptions:** —
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -34,18 +34,19 @@ Parent verified acceptance: @historydev in turn 01a17838-5150-7390-b4ca-a0a8f04a
 
 No exact source-provider relationship references supplied to this child. The primary checkout's pending workflow refresh template includes Relationships, but this branch's checker does not support it; kept this note outside the structured block and left workflow files unchanged.
 
-Worktree: C:/Dev/rore/Pallium/build/pallium-roles. Parent owns agent assignments and later delivery. No runtime changes authorized by this subtask.
+Worktree: C:/Dev/rore/Pallium/build/pallium-roles. Parent owns agent assignments and delivery through draft PR https://github.com/rore/Pallium/pull/360. Retain this worktree for validation evidence and PR completion. No runtime changes authorized by this subtask.
 
 ## Evidence
 
 - Mapping validation: three unique exact names, contained readable Markdown files, and all local links passed.
 - Import boundaries passed; Redline classified the four role files gray with no required checkpoints.
 - git diff --check passed. Whole-change selector chose full validation because roles/ is unknown.
-- Full suite first failed before collection because sandbox temporary-directory creation was unavailable. The isolated xdist retry entered tests but produced no completion output for several minutes; interrupted only that owned process. Full serial run uses -n 0 and isolated build/roles-pytest-serial; result pending, not claimed passing.
+- Full suite first failed before collection because sandbox temporary-directory creation was unavailable. The isolated xdist retry and full serial retry (-n 0) stalled without completing a test. Interrupted only those owned processes; no tests were skipped or changed.
+- A single bounded diagnostic of tests/behavior_contracts/test_codex_busy_wake.py::test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overtaken_wake with -n 0 -o faulthandler_timeout=30 showed a stall at line 98: Starlette TestClient starts an AnyIO portal, whose asyncio Windows event-loop initialization blocks in socket._fallback_socketpair -> socket.accept. This is before the request executes; no application assertion failed. The underlying environment cause remains unproven. The diagnostic process was stopped after recording the trace in build/roles-stall-diagnostic.log. Full validation remains incomplete.
 - Workflow checker passed all predicates after using the branch-supported Work Record fields and explicit criterion-to-method lines.
 
 ## Result review
 
 Agent technical review: /root/roles_review, content GO on 2026-10-26, conditional on required verification. Its stale pending-History-assignment finding is corrected above using parent-provided current acceptance evidence.
-Reviewed revision: 701608cd plus the four new roles/ files; no application diff.
-Verification adequacy: mapping and link checks pass; full suite is still running. Parent independently reviewed the guide content and found no additional issue.
+Reviewed revision: 86f201c2 role content, based on 701608cd; no application diff.
+Verification adequacy: mapping, link, import-boundary and workflow checks pass; required full validation is blocked by the runtime stall above. Parent independently reviewed the guide content and found no additional issue. Do not claim merge readiness. Next action: parent resolves validation environment or obtains required CI evidence before delivery; no application debugging added to this role-definition change.
