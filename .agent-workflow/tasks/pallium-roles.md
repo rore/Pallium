@@ -20,8 +20,8 @@
 - Verification criterion -> git diff --check, test-plan selector and workflow/redline checks; run any required selected checks.
 **Plan review:** Agent technical review: /root/roles_review, 2026-10-26, GO with no findings on the initial Work Record plan; relayed by parent before guide edits.
 **Approvals:** Not required at this risk level. User requested defining the roles and assigning suitable agents.
-**Exceptions:** —
-**State:** Blocked
+**Exceptions:** Scoped guidance-only merge: user requested merge and explicitly rejected blocking this change on unrelated Relay tests. Preserve failed application-suite evidence; no test or selector changes and no claim of green application CI.
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -51,4 +51,4 @@ Worktree: C:/Dev/rore/Pallium/build/pallium-roles. Parent owns agent assignments
 
 Agent technical review: /root/roles_review, content GO on 2026-10-26, conditional on required verification. Its stale pending-History-assignment finding is corrected above using parent-provided current acceptance evidence.
 Reviewed revision: 86f201c2 role content, based on 701608cd; no application diff.
-Verification adequacy: mapping, link, import-boundary and workflow checks pass; required full validation is blocked by the actual failure and hosted failures above. Parent independently reviewed the guide content and found no additional issue. Do not claim merge readiness. Next action: parent resolves validation failure or obtains required CI evidence before delivery; no application debugging added to this role-definition change.
+Verification adequacy: mapping, link, import-boundary and workflow checks pass. Parent independently reviewed the guide content and found no additional issue. The entire change contains only three Markdown role guides, their YAML mapping, and this record; application code, tests, integrations and runtime configuration are unchanged. Following the user's explicit merge request and rejection of unrelated Relay tests as a guidance-only merge gate, proceed with the scoped exception above. Application-suite failures remain unresolved and are not represented as passing. The selector's treatment of roles/ as unknown is a separate process defect; no broad policy exemption is introduced here.
