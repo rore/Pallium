@@ -2956,6 +2956,14 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope
     )["deliveries"] == []
 
+    # An overtaken notice is still coordination, even with no remaining delivery.
+    phase[0], before_requests = "overtaken-notice", len(hook_requests)
+    prompt.main()
+    captured = capsys.readouterr()
+    assert "wake after crash ✓" not in captured.out + captured.err
+    assert len(hook_requests) == before_requests + 1
+    assert acknowledged_ids == [claimed["delivery_id"]]
+
 
 def test_cross_container_duplicate_native_claude_endpoints_wake_independently(
     client, monkeypatch: pytest.MonkeyPatch,

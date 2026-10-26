@@ -19,7 +19,7 @@
 **Plan review:** Agent technical review: @astra-reviewer turn01a17a37-4f5c-70e2-9c26-4194dc2ae5ca accepts explicit strict-default preclaim-refusal opt-in only for callers asserting bounded recovery, including the runner recreated after restart. Declines exact total-refusal1 because additional legitimate typed busy responses remain permitted inside finite recovery. Strengthen evidence that the controlled injection produced exactly one corresponding hook HTTP refusal; preserve owner/generation/cooldown/state and final delivery oracles. Earlier plan/result reviews remain recorded below. Actual correction/result review follows focused evidence. Product scope GO: @astra-reviewer turn01a17a46-6aa4-7041-b5ec-4f9b9530c978 verified controlled RED and approves exact native notice only, bypass real dedup and guard both /items and /item-and-query, legitimate registration/claim/emission/ACK intact, real Stop/idle/reconciler gates and ordinary/near-match behavior preserved. Actual diff and result review still required.
 **Approvals:** Approved by user 2026-10-26 15:48 UTC: "and since i won't be here, i'm approving all of this, and also the agents should not block waiting for my actions". Trusted forwarding source01a171bf-bb98-71d3-ba6f-52b36f5ca022 quotes the preceding15:47UTC overnight priority to fix/merge local Relay and Hermes wake bugs, then resolve seven open PRs, using minimal process. Manager offer manager-shared-acquisition-offer-20261026 accepted; isolated focused corrections/checks/publication/merge through normal gates are covered. No installed environment or frozen PR353 execution is covered. Historical2026-10-08 approval remains in prior history.
 **Exceptions:** None
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Recovery
@@ -209,7 +209,7 @@ Sole Relaydev receives base3c7941c64651d1b4910b083f516c9cfec74f31a1 through this
 
 Retain the managed checkout, branch and ignored evidence under @pal-dev1 until composition/qualification and evidence custody are confirmed. Prior branches and ignored receipts remain recoverable. Archive only when no active owner or follow-up needs this checkout; preserve ignored receipts first.
 
-## Result review
+## Historical retained recovery result review
 
 Agent technical review: @astra-reviewer turn01a17a13-7392-77f3-9a93-ddaee9c152f6, Source/result GO for bounded contribution handoff.
 Reviewed revision: c35a706f62d89f7083cea5016500938564bf9e12.
@@ -274,3 +274,17 @@ Affected qualification completed502passed/2failed/2skipped173.90s, affected.{log
 
 
 Known-failure recheck after the stored/effective-state correction passed2cases in2.51s,21deselected (known-fixed.{log,xml}). Both use a validated canonical prompt UUID where requested. The two skips in the broad run are unchanged POSIX socket transport cases on Windows. Only the two normal Claude variants still need rechecking for the canonical-UUID success path; all other unchanged affected evidence is reused. No second broad run is claimed or requested.
+
+
+Canonical-UUID normal cases passed2tests in3.33s (normal-uuid.{log,xml}), so the successful keyed /items exclusion is now exercised with a validated UUID. Add one final overtaken-notice check to the same journey: after ACK/public empty read, the exact notice invokes one real hook request, emits no second payload/ACK and still must not enter memory. Recheck only the four changed Claude variants for this final empty-obligation assertion; reuse all unaffected scope results.
+
+
+## Final narrow-fix verification
+
+Final four Claude variants passed4tests in3.70s, claude-final.{log,xml}: valid native UUID or no UUID, immediate success or controlled prompt-and-Stop refusals, actual primed dedup, no synthetic /items or /item-and-query, conditional later natural Stop delivery, original expired claim and effective pending readback, exact ACK-authoritative fence release and one native transport. Each also checks the overtaken notice against an empty remaining queue without another payload/ACK or memory request. This supersedes the provisional invalid-UUID coverage for those variants.
+
+Broad affected selection remains honestly recorded as502passed/2failed/2existingWindows-platformskips173.90s. Both failed stored-state assertions were corrected and passed focused recheck; all changed Claude variants were then requalified, while unaffected passed cases are reused. Counts overlap and are not added. Original18-case guard result and controlled RED receipts remain. No second broad application run or hidden CI retry occurred. Import boundaries passed; exact incremental Redline is GRAY advisory1, no checkpoints or boundary violations, with only the Claude prompt hook gray. Source-integrity.json confirms controller, storage, native budgets, shared common hooks, protected busy behavior and accepted-inflight durability tests equal the previous handoff. Normal full composed CI remains Relaydev's gate.
+
+CodeRabbit4382822921 is addressed by strict-default selective opt-in. For4382822937, exact TOTAL observed refusal1 is declined with independent contract review; the actual controlled injection is correlated to exactly one HTTP refusal within its owning callback, while separately observed natural refusals retain finite bounds, state/cooldown/owner/generation and terminal delivery oracles. The actual observed refusals and controlled indices remain in the existing test evidence. This is a precise safety-preserving correction, not unconditional response tolerance.
+
+Source/result technical review of the final commit is pending. The native notice fix is eligible for its own narrow acceptance; broader automatic-recovery acceptance stays OPEN under the recorded ACK-only inflight limitation. No installed host verification or live environment change is claimed.
