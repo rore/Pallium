@@ -16,7 +16,7 @@ SELECTOR_PATHS = {
     "pyproject.toml", "pytest.ini", "tox.ini",
 }
 GOVERNANCE_FILES = {
-    "AGENTS.md", "scripts/agent-workflow-check.py",
+    "AGENTS.md", "roles/mapping.yaml", "scripts/agent-workflow-check.py",
     ".agents/skills/agent-workflow/scripts/agent-workflow-check.py",
     ".claude/skills/agent-workflow/scripts/agent-workflow-check.py",
 }
@@ -31,6 +31,8 @@ FULL_TESTS = ["python -m pytest tests/ -x -q"]
 
 def _is_governance(path: str) -> bool:
     if path in GOVERNANCE_FILES:
+        return True
+    if path.startswith("roles/") and path.endswith(".md") and path.count("/") == 1:
         return True
     if path.startswith(".agent-workflow/tasks/") and path.endswith(".md") and path.count("/") == 2:
         return True
@@ -59,7 +61,7 @@ def classify(paths: list[str] | None) -> tuple[str, str]:
         return "full", "selection policy, CI, test files, or behavior contracts changed"
     if all(_is_docs(path) or _is_governance(path) for path in paths):
         if any(_is_governance(path) for path in paths):
-            return "governance", "supported Agent Workflow files and documentation only"
+            return "governance", "supported agent guidance, Agent Workflow files and documentation only"
         return "docs", "recognized Markdown documentation only"
     return "full", "application, mixed, runtime, or unrecognized paths changed"
 

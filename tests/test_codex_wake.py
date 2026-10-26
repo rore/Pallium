@@ -3291,7 +3291,11 @@ def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
         f"/relay/messages/{later['message_id']}", params=scope,
     ).json()["deliveries"][0]["state"] == "pending"
 
-def test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract(client) -> None:
+def test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract(client, monkeypatch) -> None:
+    from itertools import count
+    from types import SimpleNamespace
+    from storage import sqlite_queue
+
     app = FastAPI()
     app.include_router(build_router(
         client.app.state.pallium_service,
@@ -3299,10 +3303,17 @@ def test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract(client) 
     ))
     route = TestClient(app)
     with patch("app.dependencies.schedule_codex_relay_wake") as schedule:
-        for runtime, session in (("claude-code", "sender"), ("codex", "target")):
-            assert route.post("/relay/turn", json={
-                "runtime": runtime, "session_ref": session, **SCOPE,
-            }).status_code == 200
+        # Registration prepares this ACK journey; restore native time before the contract checks.
+        native_queue_time = sqlite_queue.time
+        with monkeypatch.context() as setup_patch:
+            setup_time = SimpleNamespace(**vars(native_queue_time))
+            setup_time.monotonic = count(step=0.001).__next__
+            setup_patch.setattr(sqlite_queue, "time", setup_time)
+            for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+                assert route.post("/relay/turn", json={
+                    "runtime": runtime, "session_ref": session, **SCOPE,
+                }).status_code == 200
+        assert sqlite_queue.time is native_queue_time
         sent = []
         for message_id in ("batch-1", "batch-2"):
             response = route.post("/relay/messages", json={
