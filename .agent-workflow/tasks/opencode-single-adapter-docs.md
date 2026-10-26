@@ -62,3 +62,9 @@ Plan review passed. The README adds exactly two sentences covering applicable ro
 ## Result review
 
 Agent technical review: `/root/role_history_developer/role_history_plan_review` — GO on the actual diff at `b1880e976b637783cc0f46ee030a9c1a98767c1`. The reviewer approved the wording and scope, asked that “managed copy” be replaced with “copy you control,” and confirmed the upstream report is linked, Pallium non-reproduction is stated, and V2 multi-root behavior remains unverified. The reviewer could not attest the full selector check or a Redline result. Remaining: obtain valid repository Redline evidence and the selected full-lane validation before marking Ready for review.
+
+## Delivery check (2026-10-26)
+
+The refreshed selector still selects `python -m pytest tests/ -x -q` for the two changed paths. The fresh Redline report classifies `integrations/opencode/README.md` as GRAY, with no checkpoint or boundary violation; the configured import-linter report contains zero violations. The workflow check exits 1 (advisory): all blocking predicates pass, with only the same-commit Work Record/code advisory.
+
+That selected full-suite run was executed once with Python 3.13.14 and stopped red: 6,835 passed, 27 skipped, 2 xfailed, and one failure in 440.51 seconds. The first failure was `tests/test_setup_skill_recovery_e2e.py::test_setup_skill_create_replace_repeat_and_uninstall[claude-code]`, where the existing installer recovery test hit WinError 5 while renaming its generated private temporary skill directory at `app/cli/setup_claude_code.py:87`. Neither changed file touches that installer path. The failure and retained temporary recovery directory are not repaired or retried here. State remains Blocked pending the normal PR check result; no application or environment behavior changed.
