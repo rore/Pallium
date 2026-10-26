@@ -382,8 +382,48 @@ def _toml_multiline_delimiter(line: str, active: str | None) -> str | None:
     return active
 
 
-def _features_section(content: str) -> re.Match[str] | None:
-    return re.search(r"(?ms)^\[features\]\n.*?(?=^\[|\Z)", content)
+def _features_section(content: str) -> slice | None:
+    start, offset, multiline = None, 0, None
+    for line in content.splitlines(keepends=True):
+        if multiline is None and line.lstrip().startswith("["):
+            try:
+                header = tomllib.loads(line)
+            except tomllib.TOMLDecodeError:
+                header = {}
+            if header:
+                if start is not None:
+                    return slice(start, offset)
+                if header == {"features": {}}:
+                    start = offset
+        multiline = _toml_multiline_delimiter(line, multiline)
+        offset += len(line)
+    return slice(start, offset) if start is not None else None
+
+
+def _update_feature_flag_body(body: str, *, enable_hooks: bool) -> str:
+    """Change only actual managed assignments, never multiline string content."""
+    kept, multiline, hooks_present = [], None, False
+    for line in body.splitlines(keepends=True):
+        if multiline is None:
+            try:
+                values = tomllib.loads(line)
+            except tomllib.TOMLDecodeError:
+                values = {}
+            if "codex_hooks" in values:
+                if type(values["codex_hooks"]) is not bool:
+                    raise ValueError("Unsupported Codex legacy hook feature value")
+                continue
+            if enable_hooks and "hooks" in values:
+                if type(values["hooks"]) is not bool:
+                    raise ValueError("Unsupported Codex hook feature value")
+                hooks_present = True
+                if values["hooks"] is False:
+                    line = line.replace("false", "true", 1)
+        kept.append(line)
+        multiline = _toml_multiline_delimiter(line, multiline)
+    if enable_hooks and not hooks_present:
+        kept.insert(0, "hooks = true\n")
+    return "".join(kept)
 
 
 def _ensure_feature_flag(content: str) -> str:
@@ -393,13 +433,10 @@ def _ensure_feature_flag(content: str) -> str:
         if content and not content.endswith("\n"):
             content += "\n"
         return content + "\n[features]\nhooks = true\n"
-    body = section.group()[len("[features]\n"):]
-    body = re.sub(r"^codex_hooks\s*=\s*\w+\s*\n?", "", body, flags=re.MULTILINE)
-    if re.search(r"^hooks\s*=", body, re.MULTILINE):
-        body = re.sub(r"^hooks\s*=\s*\w+", "hooks = true", body, flags=re.MULTILINE)
-    else:
-        body = "hooks = true\n" + body
-    return content[:section.start()] + "[features]\n" + body + content[section.end():]
+    header, _, body = content[section].partition("\n")
+    body = _update_feature_flag_body(body, enable_hooks=True)
+    return content[:section.start] + header + "\n" + body + content[section.stop:]
+
 
 def _ensure_mcp_server(content: str, port: int = 19836) -> str:
     """Ensure [mcp_servers.pallium] section exists in config.toml with correct port."""
@@ -466,10 +503,11 @@ def _remove_feature_flag(content: str) -> str:
     section = _features_section(content)
     if section is None:
         return content
-    body = section.group()[len("[features]\n"):]
-    body = re.sub(r"^codex_hooks\s*=\s*\w+\s*\n?", "", body, flags=re.MULTILINE)
-    replacement = "[features]\n" + body if body.strip() else ""
-    return content[:section.start()] + replacement + content[section.end():]
+    header, _, body = content[section].partition("\n")
+    body = _update_feature_flag_body(body, enable_hooks=False)
+    replacement = header + "\n" + body if body.strip() else ""
+    return content[:section.start] + replacement + content[section.stop:]
+
 
 def _install_relay_profile() -> None:
     """Install Pallium's dedicated profile over the existing MCP server."""

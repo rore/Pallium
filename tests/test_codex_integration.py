@@ -148,18 +148,23 @@ env = { PALLIUM_MCP_TRANSPORT = "stdio" }
     assert f'PYTHONPATH = "{tmp_path.as_posix()}"' in content
 
 
+@pytest.mark.parametrize("delimiter", ['"""', "'''"])
 def test_codex_setup_migrates_nested_pallium_tables_and_preserves_siblings(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    delimiter: str,
 ) -> None:
     import tomllib
 
+    feature_notes = "[other]\nhooks = false\ncodex_hooks = true\n"
+    features_config = ('["features"] # retained header\ncodex_hooks = false\nhooks = false # retained value comment\nother_feature = true\nnotes = '
+                       + delimiter + "\n" + feature_notes + delimiter + "\n")
     config_path = tmp_path / ".codex" / "config.toml"
     config_path.parent.mkdir(parents=True)
     config_path.write_text(
         '[mcp_servers.other]\ncommand = "other"\nnotes = """\n'
         '[mcp_servers.pallium.env]\n'
-        'This header-looking line is string content.\n"""\n'
+        'This header-looking line is string content.\n[features]\nhooks = false\ncodex_hooks = true\n"""\n'
         'quote_edge_four = """\n'
         + r'ends after an escaped quote: \""""'
         + '\nquote_edge_five = """\nends after two quotes: """""\n'
@@ -171,9 +176,11 @@ def test_codex_setup_migrates_nested_pallium_tables_and_preserves_siblings(
         '[mcp_servers.pallium.tools.custom_tool]\n'
         'approval_mode = "prompt"\n\n'
         '[mcp_servers.pallium_extra]\ncommand = "sibling"\n\n'
-        '[other]\nvalue = "keep"\n',
+        '[other]\nvalue = "keep"\n' + features_config,
         encoding="utf-8",
     )
+    original = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    original_notes = original["mcp_servers"]["other"]["notes"]
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(setup_codex, "_codex_config_path", lambda: config_path)
     monkeypatch.setattr(setup_codex, "_codex_relay_profile_path", lambda: tmp_path / ".codex" / "relay-profile.toml")
@@ -194,6 +201,12 @@ def test_codex_setup_migrates_nested_pallium_tables_and_preserves_siblings(
     assert config_path.read_text(encoding="utf-8") == installed
 
     parsed = tomllib.loads(installed)
+    assert parsed["mcp_servers"]["other"]["notes"] == original_notes
+    assert parsed["features"]["notes"] == feature_notes
+    assert parsed["features"]["hooks"] is True and parsed["features"]["other_feature"] is True
+    assert "codex_hooks" not in parsed["features"]
+    assert '["features"] # retained header' in installed
+    assert "hooks = true # retained value comment" in installed
     servers = parsed["mcp_servers"]
     pallium = servers["pallium"]
     assert pallium["env"]["CUSTOM_SETTING"] == "preserve-me"
@@ -213,6 +226,9 @@ def test_codex_setup_migrates_nested_pallium_tables_and_preserves_siblings(
     assert removed["mcp_servers"]["other"]["command"] == "other"
     assert removed["mcp_servers"]["pallium_extra"]["command"] == "sibling"
     assert removed["other"]["value"] == "keep"
+    assert removed["mcp_servers"]["other"]["notes"] == original_notes
+    assert removed["features"]["notes"] == feature_notes
+    assert removed["features"]["hooks"] is True and "codex_hooks" not in removed["features"]
 
 
 def test_codex_setup_rejects_invalid_generated_toml_without_writing(
@@ -238,6 +254,8 @@ def test_codex_setup_rejects_invalid_generated_toml_without_writing(
     [
         '[mcp_servers.pallium.env]\nCUSTOM_SETTING = 42\n',
         '[mcp_servers.pallium.tools.custom_tool]\nenabled = true\n',
+        '[features]\nhooks = "unsupported"\n',
+        '[features]\ncodex_hooks = "unsupported"\n',
     ],
 )
 def test_codex_setup_rejects_unsupported_nested_settings_without_writing(
