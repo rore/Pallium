@@ -55,7 +55,7 @@ Continuing isolated emergency bugfix/PR/green merge authorized. PR363 profile up
 —
 
 **State:**
-Implementing
+Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -76,5 +76,7 @@ Whole-change selector reports the full lane. Under the human's emergency instruc
 
 ## Result review
 
-Pending.
+Agent technical review: astra-reviewer, turn01a178e1-8248-7ec0-a8ab-03889c1d0439, reviewed dd7bd64f and found a validation-to-dispatch race. Route invalidation could win after the binding check but before injection. Current tests changed routes only after injection and missed that interleaving. No GO yet.
+
+Review correction: keep the existing RLock across the short host scheduling call, and recheck the binding after profile validation immediately before dispatch. Other-thread invalidation serializes with dispatch; synchronous reentrant callbacks remain supported. Two deterministic state-write boundary cases replace/invalidate the route after wake persistence and before dispatch, then assert no stale injection, no claim, and conservative attempted-wake fencing. Both failed before this correction (build/hermes-route-race-before.log,2 failed in1.82s); both plus late-refusal replacement and the two-conversation payload/ACK case passed afterward (build/hermes-route-race-after.log,4 passed in2.49s). Native gateway scheduling returns before dispatch and the classic host enqueues, so this does not hold a lock across model execution. No new transport/fence policy.
 

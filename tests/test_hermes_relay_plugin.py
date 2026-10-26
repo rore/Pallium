@@ -571,6 +571,49 @@ def test_native_route_change_preserves_attempted_wake(client, plugin_context, mo
     assert delivery["state"] == "pending" and delivery["attempts"] == 0
 
 
+@pytest.mark.parametrize("new_route", ["opaque-replacement-route", ""])
+def test_native_route_invalidated_at_dispatch_boundary_is_not_used(
+        client, plugin_context, monkeypatch, new_route):
+    module, create, config = plugin_context
+    native = ModuleType("hermes_cli.plugin_session")
+    native.session_key = lambda: "opaque-original-route"
+    monkeypatch.setitem(sys.modules, native.__name__, native)
+    monkeypatch.setattr(module, "POLL_SECONDS", .01)
+    ctx = create()
+    ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="seed", user_message="seed")
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="seed")
+    set_state = ctx.state.set
+    invalidated, revisited = threading.Event(), threading.Event()
+
+    def invalidate_after_fence(key, value):
+        set_state(key, value)
+        if key.startswith("wake:") and not invalidated.is_set():
+            # Synchronous host callbacks can reenter even while the RLock is held.
+            native.session_key = lambda: new_route
+            ctx.hooks["pre_llm_call"](
+                session_id="ses_שלום", turn_id="route-change", user_message="seed")
+            invalidated.set()
+
+    reads = []
+
+    def current_config():
+        if invalidated.is_set() and threading.current_thread().name == "pallium-hermes-relay":
+            reads.append(True)
+            if len(reads) >= 8:
+                revisited.set()
+        return config
+
+    monkeypatch.setattr(ctx.state, "set", invalidate_after_fence)
+    monkeypatch.setattr(sys.modules["hermes_cli.config"], "load_config_readonly", current_config)
+    endpoint = client.get("/relay/sessions", params={"runtime": "hermes", **SCOPE}).json()[0]["endpoint_id"]
+    message = send(client, endpoint)
+    assert invalidated.wait(2) and revisited.wait(2)
+    assert not ctx.injections
+    assert _persisted_wake(ctx)["state"] == "injection_attempted"
+    delivery = status(client, message)["deliveries"][0]
+    assert delivery["state"] == "pending" and delivery["attempts"] == 0
+
+
 @pytest.mark.parametrize("ambient_profile", ["default", "sibling"])
 def test_poller_keeps_named_profile_after_foreground_context_ends(
         client, plugin_context, monkeypatch, ambient_profile):

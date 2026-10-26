@@ -478,9 +478,9 @@ def register(ctx):
             state.set(key("wake", session_id), wake)  # persist metadata fence before enqueue
             if old:
                 clear_wake(session_id, old)
-        if profile_ok() and not ctx.inject_message(
-                _marker(wake["delivery_id"], nonce), role="user", session_key=target[1]):
-            with lock:
+            if (profile_ok() and wake_targets.get(session_id) == target
+                    and not ctx.inject_message(
+                        _marker(wake["delivery_id"], nonce), role="user", session_key=target[1])):
                 current = wake_scope(session_id)
                 if (profile_ok() and current and same_wake(current, wake)
                         and current.get("state") == "injection_attempted"):
