@@ -56,7 +56,7 @@ Ordinary isolated bugfix/PR/merge authorized by user; no new live-environment ap
 —
 
 **State:**
-Ready to implement
+Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -69,9 +69,15 @@ Plan review accepted before test edits. Emergency instruction relayed by manager
 
 Pre-fix actual MCP regression transport-failed-healthy failed with unavailable/stopped on the next caller. Production fix changes only the existing same-client continuation condition for typed transport/deadline failures after successful authenticated recovery. Other primary failures still stop the worker; fresh-caller restart behavior is unchanged. Added actual NativeInventoryClient/RetainedService protocol journeys simulate a lost foreground registration response, then verify later idle re-enrollment without another caller, preserving original admitted metadata and exact operation counts. These three protocol journeys passed. Two affected-file serial run is in progress in task-private PALLIUM_HOME with live URL disabled. No production diagnostics, protocol or protected-test changes were needed.
 
+Focused verification completed at application revision1bc66bbffd28819d6bb4956e1eedf277883f93c6: python -m pytest tests/test_codex_worker_reconnect.py tests/test_codex_retained_connection_recovery.py -q -n 0:217 passed in56.96s. Output build/emergency-focused.log. Existing shared dependencies were read without modification; PALLIUM_HOME task-private and base URL127.0.0.1:1. Selector reports full lane; local full-suite repetition deferred per human emergency instruction relayed by manager, required hosted CI remains a merge gate. Installed acceptance and original error category remain unresolved.
+
 Diagnosis uses current source, installed ancestry, client close log and service source-close log. Original error category is unresolved; do not label the historical incident reproduced until a matching boundary is established.
 
 ## Result review
 
-Pending.
+Agent technical review: /root/reregister_plan_review, clean-context non-implementer, 2026-10-26: GO; no blocking findings. Narrow condition matches plan. Refusal/invalid/generic-primary cases still stop; no failed metadata replacement or caller replay. Actual-protocol fixture proves processed registration with lost response then authenticated healthy readiness and later idle recovery using original admitted turn. Source inspection confirms exact epoch/sequence validation rejects stale registration responses; queued stale native response was not fault-injected.
+
+Reviewed revision: 1bc66bbffd28819d6bb4956e1eedf277883f93c6.
+
+Verification adequacy:217 focused tests passed; adequate for the bounded implementation and preserved safety checks. Simulated native transport does not establish installed Win32 cancellation/recovery or payload consumption; original incident attribution and installed acceptance remain open. Risk remains Elevated/Moderate. Local broader suite omitted under the explicit emergency instruction, required hosted checks still required before merge.
 
