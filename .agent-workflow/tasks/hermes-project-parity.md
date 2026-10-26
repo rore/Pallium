@@ -790,3 +790,8 @@ Clean reviewer accepted aad55f33 after the two result corrections. Root then ide
 ### Final affected-subsystem verification
 
 After the terminal full91 run, moved the existing observation-token/stop block before session_surface and added the surface phase to the existing accessor/response/publication regression. Clean reviewer confirmed this exact gap and approach; no new mechanism or fixed-mode change. The entire final CWD caller/HTTP/History subsystem passed115/0skip in197.76s, including all boundary, transition, stale/reentrant callback, renamed/reloaded/partial capture and legacy-provenance controls. Receipt build/pr352-final-cwd.xml. Full91 remains RED; no second full run or native experiment was started. The current-head normal hosted matrix remains pending; Blocked state is retained until required-result disposition.
+
+
+### Result review of final source
+
+Agent technical result review: /root/pr352_composition_review, clean-context nonimplementer, accepted exact66dbfeaa1d8a66d7e6bd25a264eb5d2d43e766d9 after verifying the final surface-token ordering and regression. No further source findings. The metadata-only successor recording this receipt leaves application/test/dependency/workflow bytes unchanged. This acceptance is source-only; full91 remains RED and diagnostics do not establish a cure. Hosted current-head CI and separate required checkpoint/result disposition remain pending. Existing native receipts are historical and no native qualification was rerun.
