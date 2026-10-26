@@ -8,6 +8,7 @@ import threading
 import pytest
 
 from core.codex_wake import CodexWakeRegistry, WAKE_RETRY_COOLDOWN_SECONDS
+from core.errors import ImmediateTransactionBusyError
 from core.relay import RELAY_CLAIM_LEASE_SECONDS
 from tests.test_codex_retained_wake import (
     SCOPE, TARGET, _hook_runner, http_wake, recover, retained as retained_fixture,
@@ -294,7 +295,7 @@ def test_nullable_legacy_retry_deadline_recovers_and_hook_acks(http_wake, monkey
 @pytest.mark.parametrize("restart", [False, True])
 def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
     client, http_wake, monkeypatch, tmp_path, capsys, fault, moved, restart, request,
-    *, force_backlog_refusal=False, force_retry_refusal=False,
+    *, force_backlog_refusal=False, force_retry_refusal=False, force_recovered_claim_refusal=False,
 ):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -346,8 +347,18 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
     else:
         monkeypatch.setattr(hook, "acknowledge_relay", fail_ack)
     owner_finished = threading.Event()
+    owner_fences, forced_claim = [], []
+    original_turn = relay._store.relay_turn
+    def refuse_recovered_claim(**kwargs):
+        if force_recovered_claim_refusal and len(owner_fences) > 1 and not forced_claim:
+            assert kwargs["runtime"] == "codex" and kwargs["session_ref"] == TARGET
+            forced_claim.append(dict(kwargs))
+            raise ImmediateTransactionBusyError("controlled recovered preclaim refusal", acquisition_stage="setup_deadline")
+        return original_turn(**kwargs)
+    monkeypatch.setattr(relay._store, "relay_turn", refuse_recovered_claim)
 
     def on_owner(request):
+        owner_fences.append(registry.snapshot(target["endpoint_id"]))
         try:
             run_hook(request["params"]["arguments"]["prompt"])
         finally:
@@ -588,8 +599,16 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
                     "delivery_id": first["delivery_id"], "recipient_endpoint_id": first["recipient_endpoint_id"],
                     "state": "pending",
                 }, attempts
-                recover(journey)
-            assert len(attempts) == (2 if refused else 1), attempts
+                def rearmed():
+                    if "error_type" in attempts[-1]:
+                        assert all(attempt.get("error_type") is ImmediateTransactionBusyError for attempt in attempts)
+                        assert authority() == before and deliveries() == before_deliveries
+                        assert tuple(desktop.owners) == owners_before and tuple(events) == events_before
+                        return False
+                    return isinstance(attempts[-1].get("result"), type(fence))
+                recover(journey, until=rearmed)
+            assert len(attempts) >= (2 if refused else 1), attempts
+            assert all(attempt.get("error_type") is ImmediateTransactionBusyError for attempt in attempts[:-1]), attempts
             assert all(attempt["reservation"] == fence for attempt in attempts), attempts
             assert "error_type" not in attempts[-1], attempts
             replacement = attempts[-1].get("result")
@@ -603,7 +622,30 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
             assert added_owners[0]["params"]["arguments"]["threadId"] == TARGET, attempts
             assert first["delivery_id"] in added_owners[0]["params"]["arguments"]["prompt"], attempts
             assert tuple(events[:len(events_before)]) == events_before, attempts
-            assert [event[0] for event in events[len(events_before):]] == ["emit", "ack"], attempts
+            if run_hook.refusals:
+                original_states = [(row["delivery_id"], row["state"], row["attempts"]) for row in before_deliveries]
+                def delivered_after_refusal():
+                    rows = deliveries()
+                    assert all(attempt.get("error_type", ImmediateTransactionBusyError) is ImmediateTransactionBusyError
+                               for attempt in attempts)
+                    if all(row["state"] == "delivered" for row in rows):
+                        return True
+                    assert [(row["delivery_id"], row["state"], row["attempts"]) for row in rows] == original_states
+                    current = registry.snapshot(first["recipient_endpoint_id"])
+                    assert current.delivery_id == first["delivery_id"] and current.container_ref == SCOPE["container_ref"]
+                    assert current.correlated_claim_attempts is None
+                    assert all(event[0] == "emit" and "[Pallium Relay" not in event[2]
+                               for event in events[len(events_before):])
+                    return False
+                recover(journey, until=delivered_after_refusal, now=now)
+            assert len(forced_claim) == int(force_recovered_claim_refusal)
+            assert len(desktop.owners) - len(owners_before) == 1 + len(run_hook.refusals)
+            assert len({item.generation for item in owner_fences}) == len(owner_fences)
+            for item in owner_fences:
+                assert item.recipient_endpoint_id == target["endpoint_id"] and item.delivery_id == first["delivery_id"]
+            added_events = events[len(events_before):]
+            relay_events = [event for event in added_events if event[0] != "emit" or "[Pallium Relay" in event[2]]
+            assert [event[0] for event in relay_events] == ["emit", "ack"], attempts
         else:
             recover(journey)
         for message_id in ("claim-failure-original", "claim-failure-backlog"):
@@ -629,6 +671,15 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
             worker.join()
         if restart:
             http.close()
+
+
+def test_unloaded_recovered_preclaim_refusal_respects_cooldown_and_recovers_backlog(
+    client, http_wake, monkeypatch, tmp_path, capsys, request,
+):
+    test_unloaded_hook_claim_failure_recovers_original_and_backlog(
+        client, http_wake, monkeypatch, tmp_path, capsys,
+        "claim-response", False, True, request, force_recovered_claim_refusal=True,
+    )
 
 
 def test_unloaded_backlog_precommit_refusal_preserves_claim_and_recovery(

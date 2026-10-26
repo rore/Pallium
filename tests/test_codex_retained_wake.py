@@ -1009,17 +1009,64 @@ def http_wake(client, retained, monkeypatch, tmp_path):
         assert not worker.is_alive()
     http.close()
 
-def recover(journey, *, hook_completed=None):
+def recover(journey, *, hook_completed=None, until=None, now=None):
     _, relay, registry, _, _, _, workers = journey
-    recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=registry)
-    if hook_completed is not None:
-        assert hook_completed.wait(5), "recovery hook did not complete"
-    for worker in workers:
-        worker.join(5)
-        assert not worker.is_alive()
+    deadline = time.monotonic() + 5 if until is not None else None
+    for _ in range(8 if until is not None else 1):
+        if deadline is not None:
+            assert time.monotonic() < deadline, "recovery progress exceeded wall-time bound"
+        recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=registry)
+        if hook_completed is not None:
+            assert hook_completed.wait(5), "recovery hook did not complete"
+        for worker in workers:
+            worker.join(5 if deadline is None else max(0, deadline - time.monotonic()))
+            assert not worker.is_alive()
+        if deadline is not None:
+            assert time.monotonic() < deadline, "recovery progress exceeded wall-time bound"
+        if until is None or until():
+            return
+        if now is not None:
+            from datetime import datetime, timezone
+            for fence in registry.reservations():
+                if (fence.outcome in {"accepted", "uncertain"}
+                        and fence.correlated_claim_attempts is None
+                        and fence.retry_not_before is not None
+                        and fence.retry_not_before > now[0].timestamp()):
+                    state = relay.codex_wake_reservation_state(delivery_id=fence.delivery_id)
+                    assert state["state"] == "pending"
+                    assert state["recipient_endpoint_id"] == fence.recipient_endpoint_id
+                    assert state["wake_target"] == {"runtime": "codex", "session_ref": fence.session_ref,
+                                                   "container_ref": fence.container_ref}
+                    now[0] = datetime.fromtimestamp(fence.retry_not_before, timezone.utc)
+        time.sleep(.01)
+    pytest.fail("recovery progress exceeded eight settled sweeps")
 
 
-def _observe_transition_attempts(journey, monkeypatch, operation, *, force_refusal=False):
+def _released_without_owner(journey, attempts, expected):
+    _, relay, registry, _, desktop, _, _ = journey
+    assert desktop.owners == []
+    assert all(attempt["reservations"] == expected for attempt in attempts)
+    successes = [attempt for attempt in attempts if "result" in attempt]
+    assert len(successes) <= 1
+    for attempt in attempts:
+        if "error_type" in attempt:
+            assert attempt["error_type"] is ImmediateTransactionBusyError
+        else:
+            assert attempt["result"] == expected
+    for fence in expected:
+        state = relay.codex_wake_reservation_state(delivery_id=fence.delivery_id)
+        assert state["state"] == "pending" and state["attempts"] == 0
+        assert state["recipient_endpoint_id"] == fence.recipient_endpoint_id
+    current = registry.reservations()
+    assert current in (expected, ())
+    if current == ():
+        assert len(successes) == 1
+        return True
+    assert successes == []
+    return False
+
+
+def _observe_transition_attempts(journey, monkeypatch, operation, *, force_refusal=False, forced_attempts=1):
     """Observe one journey's bounded transition; recovery stays explicit in its test."""
     assert operation in {"release", "retry", "retry_target", "begin_native_attempt"}
     relay = journey[1]
@@ -1033,7 +1080,7 @@ def _observe_transition_attempts(journey, monkeypatch, operation, *, force_refus
                    "reservations": kwargs.get("reservations", ())}
         attempts.append(attempt)
         try:
-            if force_refusal and len(attempts) == 1:
+            if force_refusal and len(attempts) <= forced_attempts:
                 attempt["forced"] = True
                 raise ImmediateTransactionBusyError(
                     "controlled transition refusal",
@@ -1547,10 +1594,8 @@ def test_failed_spend_has_zero_owner_calls(http_wake, monkeypatch, force_refusal
         pending = response.json()["deliveries"][0]
         assert pending["delivery_id"] == delivery["delivery_id"]
         assert pending["state"] == "pending" and pending["attempts"] == 0
-        recover(http_wake)
-        assert len(attempts) == 2 and "error_type" not in attempts[1]
-        assert attempts[1]["reservations"] == expected
-        assert attempts[1].get("result") == expected
+        recover(http_wake, until=lambda: _released_without_owner(http_wake, attempts, expected))
+        assert len(attempts) >= 2 and attempts[-1].get("result") == expected
     else:
         assert "error_type" not in attempts[0] and attempts[0].get("result") == expected
     assert all(not worker.is_alive() for worker in workers)
@@ -1593,11 +1638,11 @@ def test_owner_response_allows_hook_claim_ack_before_return(http_wake):
 
 @pytest.mark.parametrize("loss", ["source", "desktop", "channel", "epoch", "unresolved"])
 def test_connection_loss_defers_without_owner(
-    http_wake, loss, monkeypatch, force_refusal=False,
+    http_wake, loss, monkeypatch, force_refusal=False, forced_attempts=1,
 ):
     http, _, registry, service, desktop, send, _ = http_wake
     attempts = _observe_transition_attempts(
-        http_wake, monkeypatch, "release", force_refusal=force_refusal,
+        http_wake, monkeypatch, "release", force_refusal=force_refusal, forced_attempts=forced_attempts,
     )
     if loss == "source":
         service.source.gone = True
@@ -1623,7 +1668,7 @@ def test_connection_loss_defers_without_owner(
         pending = response.json()["deliveries"][0]
         assert pending["delivery_id"] == delivery["delivery_id"]
         assert pending["state"] == "pending" and pending["attempts"] == 0
-        recover(http_wake)
+        recover(http_wake, until=lambda: _released_without_owner(http_wake, attempts, expected))
     else:
         assert len(attempts) == 1 and "error_type" not in attempts[0]
         assert len(attempts[0]["reservations"]) == 1
@@ -1634,6 +1679,12 @@ def test_connection_loss_defers_without_owner(
 def test_connection_loss_release_refusal_recovers_without_owner(http_wake, monkeypatch):
     test_connection_loss_defers_without_owner(
         http_wake, "unresolved", monkeypatch, force_refusal=True,
+    )
+
+
+def test_connection_loss_repeated_release_refusals_recover_without_owner(http_wake, monkeypatch):
+    test_connection_loss_defers_without_owner(
+        http_wake, "unresolved", monkeypatch, force_refusal=True, forced_attempts=2,
     )
 
 @pytest.mark.parametrize("change", [{"epoch": "wrong"}, {"sequence": True}, {"thread_ref": ""},
@@ -1721,8 +1772,16 @@ def _hook_runner(http, monkeypatch, state, events, tmp_path):
         monkeypatch.setattr(hook, "derive_container_ref", lambda *a: SCOPE["container_ref"])
         monkeypatch.setattr(hook, "pin_container", lambda *a, **k: None)
         monkeypatch.setattr(hook, "_fetch_retrieval_fallback", lambda *a: [])
+    refusals = []
     def relay(method, path, body, **kwargs):
         response = http.request(method, path, json=body)
+        if response.status_code == 503:
+            assert path == "/relay/turn"
+            assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+            assert response.json()["detail"]["retryable"] is True
+            assert response.headers["Retry-After"] == "1"
+            refusals.append((method, path, dict(body)))
+            return None  # One native hook request failed before claim; recovery is separate.
         assert response.status_code == 200, response.text
         return response.json()
     monkeypatch.setattr(hook, "relay_request", relay)
@@ -1746,6 +1805,7 @@ def _hook_runner(http, monkeypatch, state, events, tmp_path):
         with pytest.raises(SystemExit) as exited:
             hook.main()
         assert exited.value.code == 0
+    run.refusals = refusals
     return run
 
 
@@ -1955,19 +2015,6 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
                         claim_failed.set()
                     else:
                         emitted.set()
-
-                if fault == "claim-once":
-                    hook_module = sys.modules["relay_test_retained_session_start"]
-                    def request_once(method, path, body, **kwargs):
-                        response = http.request(method, path, json=body)
-                        if response.status_code == 503:
-                            assert path == "/relay/turn" and len(claim_refusals) == 1
-                            assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
-                            assert response.headers["Retry-After"] == "1"
-                            return None  # Production transport refuses this turn; it does not retry HTTP.
-                        assert response.status_code == 200, response.text
-                        return response.json()
-                    monkeypatch.setattr(hook_module, "relay_request", request_once)
 
                 desktop.on_owner = owner
                 previous_writes = len(desktop.writes)
