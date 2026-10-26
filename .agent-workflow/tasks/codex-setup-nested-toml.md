@@ -106,7 +106,7 @@ At5e6784829d24f1ebe6a814eed2690879de642e3b, the complete affected tests/test_cod
 Import-boundary check passed. Whole-change selector reports exactly three intended paths and requires full application lane. Current incremental Redline is GRAY advisory1, no required checkpoints or boundary violations. Current-source technical result review is accepted below; the normal current-head hosted full CI must pass before merge. No extra local full-suite run or failed-workflow retry is claimed. Original8137 counts and old platform failures remain historical. No installed configuration or service was accessed or changed.
 
 
-## Result review
+## Previous preservation result review
 
 Agent technical review: @astra-reviewer turn01a17a7a-c13d-7980-a389-63e5ec4257bb, bounded correction SOURCE/RESULT GO.
 Reviewed revision: 5e6784829d24f1ebe6a814eed2690879de642e3b versus merged19700112; unchanged original child source uses its recorded native review only.
@@ -143,3 +143,12 @@ Reviewed plan implemented without new parser/helper/dependency: candidate table 
 Seven audited registration-only scopes use counts2,3,3,3,3,2 plus moved-sender1; actual sends/claims/ACKs/replies/name/takeover/concurrent-race/no-delivery/no-wake remain outside. AST comparison of all ten cross-container helper/test bodies against c7d32a9a confirms identical statements after removing only the seven new scopes. Fixture implementation, protected tests, production Relay paths unchanged (current-scope-proof.json). No scope/count expansion was necessary. No local full-suite repeat. Deterministic named-file UTF8 edit fallback used due previously documented apply_patch1385 limitation; no installed state changed.
 
 Current source/test diff submitted for existing reviewer result review; fresh selector/Redline/workflow and normal published-head full CI remain before authorized merge. Retain isolated checkout/evidence until complete and custody agreed.
+
+
+## Result review
+
+Agent technical review: @astra-reviewer turn01a17a96-3886-7982-b554-91111571259c, consolidated SOURCE/RESULT GO.
+Reviewed revision: b75dfb41 versus c7d32a9a; earlier original/preservation reviews apply only to unchanged material.
+Verification adequacy: Independently inspected actual four-path diff, both header sites/original offsets/non-header state preservation, original install validation and original/candidate uninstall validation with return2 before writes/cleanup. Read both-delimiter nested-array lifecycle and three no-write/no-cleanup regressions; independently parsed124 current affected tests0fail/error/skip40.911s XML/40.93s footer. Actual registration diff contains only seven exact prerequisite scopes/counts; subjects remain outside and unchanged. No blocking finding; no repeated local tests requested. Proceed to fresh governance, same-PR publication and current-head full CI, resolve review threads before merge. Prior failedCI stays failed; physical admission delay cause/cure unproven. No live config/install permission, atomic-write or concurrent-editor claim.
+
+Whole-change selector selects full with exactly four paths; current Redline GRAY advisory1,3classifiedfiles498lines, no API/schema/security/boundary violation or required checkpoint. Historical qualification remains labeled. Only record changes follow reviewed b75dfb41 code/test bytes.
