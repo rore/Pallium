@@ -255,6 +255,7 @@ def register(ctx):
     reply_identity = contextvars.ContextVar("pallium_hermes_reply_identity", default=None)
     sessions, claims, admitted, observed_requests, ended_turns = {}, {}, {}, {}, {}
     wake_targets = {}
+    registration_tokens = {}
     turn_contexts = {}
     poller = None
     bridge = None
@@ -398,11 +399,15 @@ def register(ctx):
                 and session.get("destination_health") == "active")
 
     def register_session(session_id, expected=None):
-        saved = scope(session_id)
-        if expected is not None and saved != expected:
-            return None
+        with lock:
+            saved = scope(session_id)
+            if stop.is_set() or expected is not None and saved != expected:
+                return None
+            token = registration_tokens[session_id] = object()
         route = _runtime_wake_route(session_id)
         with lock:
+            if stop.is_set() or registration_tokens.get(session_id) is not token:
+                return None
             previous = wake_targets.get(session_id)
             if previous and (previous[0] != saved or previous[1] != route):
                 wake_targets.pop(session_id, None)
@@ -442,9 +447,12 @@ def register(ctx):
         record = {"profile": profile, "container_ref": container,
                   "session_ref": session_id, "endpoint_id": session["endpoint_id"]}
         with lock:
-            if expected is not None and (record != expected or scope(session_id) != expected):
+            if (stop.is_set() or registration_tokens.get(session_id) is not token
+                    or expected is not None and (record != expected or scope(session_id) != expected)):
                 return None
             state.set(key("session", session_id), record)
+            if stop.is_set() or registration_tokens.get(session_id) is not token:
+                return None
             sessions[session_id] = record
             wake_targets[session_id] = (dict(record), route)
         return record, relay_snapshot(session)

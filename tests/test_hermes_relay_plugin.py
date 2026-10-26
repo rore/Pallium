@@ -614,6 +614,108 @@ def test_native_route_invalidated_at_dispatch_boundary_is_not_used(
     assert delivery["state"] == "pending" and delivery["attempts"] == 0
 
 
+@pytest.mark.parametrize("phase", ["accessor", "response", "publication"])
+@pytest.mark.parametrize("new_route", ["opaque-new-route", ""])
+def test_older_registration_cannot_restore_a_superseded_native_route(
+        client, plugin_context, monkeypatch, phase, new_route):
+    import contextvars
+
+    module, create, config = plugin_context
+    route = contextvars.ContextVar("native_registration_route", default="opaque-old-route")
+    paused, resume, newer_done = threading.Event(), threading.Event(), threading.Event()
+    native = ModuleType("hermes_cli.plugin_session")
+
+    def native_key():
+        value = route.get()
+        if phase == "accessor" and threading.current_thread().name == "older-registration":
+            paused.set()
+            assert resume.wait(5)
+        return value
+
+    native.session_key = native_key
+    monkeypatch.setitem(sys.modules, native.__name__, native)
+    monkeypatch.setattr(module, "POLL_SECONDS", .01)
+    ctx = create()
+    hook = ctx.hooks["pre_llm_call"]
+    hook(session_id="ses_שלום", turn_id="seed", user_message="seed")
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="seed")
+    http, write_state = module._json_request, ctx.state.set
+    reentered = []
+
+    def request(base, method, path, **kwargs):
+        result = http(base, method, path, **kwargs)
+        if (phase == "response" and threading.current_thread().name == "older-registration"
+                and method == "POST" and path == "/relay/turn"):
+            paused.set()
+            assert resume.wait(5)
+        return result
+
+    def publish(key, value):
+        write_state(key, value)
+        if (phase == "publication" and key.startswith("session:") and not reentered
+                and threading.current_thread().name == "older-registration"):
+            reentered.append(True)
+            token = route.set(new_route)
+            try:
+                hook(session_id="ses_שלום", turn_id="newer", user_message="seed")
+                newer_done.set()
+            finally:
+                route.reset(token)
+
+    monkeypatch.setattr(module, "_json_request", request)
+    monkeypatch.setattr(ctx.state, "set", publish)
+    errors = []
+
+    def register_older():
+        try:
+            hook(session_id="ses_שלום", turn_id="older", user_message="seed")
+        except Exception as error:
+            errors.append(error)
+
+    older = threading.Thread(target=register_older, name="older-registration")
+    older.start()
+    token = route.set(new_route)
+    try:
+        try:
+            if phase == "publication":
+                assert newer_done.wait(5)
+            else:
+                assert paused.wait(5)
+                hook(session_id="ses_שלום", turn_id="newer", user_message="seed")
+        finally:
+            resume.set()
+            older.join(5)
+        assert not older.is_alive() and not errors
+        endpoint = client.get("/relay/sessions", params={"runtime": "hermes", **SCOPE}).json()[0]["endpoint_id"]
+        message = send(client, endpoint, payload="Payload for the latest registration שלום")
+        revisited, reads = threading.Event(), []
+
+        def current_config():
+            if threading.current_thread().name == "pallium-hermes-relay":
+                reads.append(True)
+                if len(reads) >= 8:
+                    revisited.set()
+            return config
+
+        monkeypatch.setattr(sys.modules["hermes_cli.config"], "load_config_readonly", current_config)
+        assert revisited.wait(3)
+        if new_route:
+            _await(lambda: ctx.injections)
+            assert ctx.injections[0][1]["session_key"] == new_route
+            request_body = _admit_plugin_wake(ctx, ctx.injections[0][0], "wake")
+            observed = []
+            _execute_request(ctx, request_body, lambda actual: observed.append(actual), **HOST_EXECUTION)
+            assert message["payload"] in observed[0]["messages"][0]["content"]
+            assert status(client, message)["deliveries"][0]["state"] == "delivered"
+            ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="wake")
+        else:
+            assert not ctx.injections
+            assert status(client, message)["deliveries"][0]["attempts"] == 0
+            assert not any(key.startswith("wake:") for key in ctx.state.values)
+    finally:
+        route.reset(token)
+
+
 @pytest.mark.parametrize("ambient_profile", ["default", "sibling"])
 def test_poller_keeps_named_profile_after_foreground_context_ends(
         client, plugin_context, monkeypatch, ambient_profile):
