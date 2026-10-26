@@ -8,7 +8,7 @@ Hermes wakes target the native host route of the intended conversation instead o
 Pallium Hermes native integration.
 
 **Scope:**
-integrations/hermes/__init__.py runtime route capture and poller target selection; focused tests/test_hermes_relay_plugin.py fixture and routing regressions. Supporting CI correction in tests/test_codex_wake_retry_edges.py controls only preparatory claim acquisition timing, preserving the actual recovery and deadline assertions.
+integrations/hermes/__init__.py runtime route capture and poller target selection; focused tests/test_hermes_relay_plugin.py fixture and routing regressions. Supporting CI correction in tests/test_codex_wake_retry_edges.py controls only preparatory claim acquisition timing, preserving the actual recovery and deadline assertions. Additional CI controls cover only initial registration timing in tests/test_codex_wake.py and failure diagnostics in the unchanged one-shot test in tests/test_queue_concurrent_claim.py.
 
 **Constraints:**
 Copy host-provided identity unchanged; never construct native routes from profile/name/session text. Preserve Relay session refs, profile/endpoint/claim/ACK and uncertain-wake fences. No desktop control, forced turn, resend, receive or unapproved state/config/installed edits. Retain legacy callback-ID targeting only when the public route module is genuinely absent.
@@ -23,7 +23,7 @@ Two distinct conversations in one profile use their respective runtime-provided 
 {"schema_version":1,"sources":null,"pull_requests":[]}
 
 **Behavior changes:**
-[{"target":"task-context.scope","classification":"coverage-only","before":"integrations/hermes/__init__.py runtime route capture and poller target selection; focused tests/test_hermes_relay_plugin.py fixture and routing regressions.","after":"integrations/hermes/__init__.py runtime route capture and poller target selection; focused tests/test_hermes_relay_plugin.py fixture and routing regressions. Supporting CI correction in tests/test_codex_wake_retry_edges.py controls only preparatory claim acquisition timing, preserving the actual recovery and deadline assertions.","reason":"CI312 refused the initial setup claim before the guard scenario; reuse the adjacent deterministic setup-clock pattern without changing product behavior or tested claim/ACK/recovery obligations."}]
+[{"target":"task-context.scope","classification":"coverage-only","before":"integrations/hermes/__init__.py runtime route capture and poller target selection; focused tests/test_hermes_relay_plugin.py fixture and routing regressions.","after":"integrations/hermes/__init__.py runtime route capture and poller target selection; focused tests/test_hermes_relay_plugin.py fixture and routing regressions. Supporting CI correction in tests/test_codex_wake_retry_edges.py controls only preparatory claim acquisition timing, preserving the actual recovery and deadline assertions.","reason":"CI312 refused the initial setup claim before the guard scenario; reuse the adjacent deterministic setup-clock pattern without changing product behavior or tested claim/ACK/recovery obligations."},{"target":"task-context.scope","classification":"coverage-only","before":"integrations/hermes/__init__.py runtime route capture and poller target selection; focused tests/test_hermes_relay_plugin.py fixture and routing regressions. Supporting CI correction in tests/test_codex_wake_retry_edges.py controls only preparatory claim acquisition timing, preserving the actual recovery and deadline assertions.","after":"integrations/hermes/__init__.py runtime route capture and poller target selection; focused tests/test_hermes_relay_plugin.py fixture and routing regressions. Supporting CI correction in tests/test_codex_wake_retry_edges.py controls only preparatory claim acquisition timing, preserving the actual recovery and deadline assertions. Additional CI controls cover only initial registration timing in tests/test_codex_wake.py and failure diagnostics in the unchanged one-shot test in tests/test_queue_concurrent_claim.py.","reason":"Second CI run failed an unrelated registration setup and lost concurrent worker exceptions. Preserve the existing five-call/three-winner requirement and report errors explicitly; no retry or progress relaxation."}]
 
 **Risk:**
 Elevated
@@ -58,7 +58,7 @@ Continuing isolated emergency bugfix/PR/green merge authorized. PR363 profile up
 —
 
 **State:**
-Ready for review
+Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -96,4 +96,6 @@ Initial hosted run40353532229: Linux3.13 passed, Windows smoke passed; Linux3.12
 Bounded plan delta: wrap only that initial claim in the exact scoped sqlite_queue.time monotonic counter pattern already used by the adjacent concurrent recovery test. Assert immediate restoration and original delivery/attempt identity. All competing hook claims, ACKs, recovery checks and native deadline/busy tests remain unchanged. No production change or protected test path. Astra plan GO turn01a178f3-aad3-7aa2-a683-37e8142c4d18 endorses setup-only timing control, requiring final review/CI and retaining the unexplained real acquisition evidence. Existing Hermes source GO is retained; no repeated Hermes or broad local suite for this test-only delta.
 
 Agent technical review: astra-reviewer, turn01a178f7-2d3c-7400-94f7-95d9effc52e4: GO for test-only setup delta; recovery/safety assertions remain intact. Reviewed revision: 6aec6b0122ef04eb93dba23323fc62d6f7ca0676. Verification adequacy:7 affected cases passed in4.57s; the full affected edge file30 passed in19.69s, build/hermes-route-ci-{focused,subsystem}.log. Original delayed native acquisition remains unexplained; this does not claim a product latency repair. Fresh full hosted CI is required on the final head.
+
+Second CI run40356299090: Linux3.12 failed test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract at initial target registration,503 late_begin/setup_pragma1167ms. Windows smoke failed test_concurrent_claim_many_workers_no_duplicates with2/3 winners and unhandled worker ImmediateTransactionBusyError at BEGIN IMMEDIATE. Logs build/pr364-ci2-{linux312,windows}-failed.log retained. No retries or product fix inferred. Astra turn01a17902-29c6-7443-b492-bbc193919b26 rejected a retrying-test proposal because it would weaken the five-single-call requirement; that proposal is abandoned. It endorsed setup-only registration timing and independent error/join/exact-ID diagnostics. Manager turn01a17906-2164-7da2-92f5-e5aeab3c68f6 directs this bounded correction and one fresh candidate CI; any further failure goes to an existing storage owner, without expanding this Hermes PR.
 
