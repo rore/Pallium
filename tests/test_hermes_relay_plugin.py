@@ -1389,11 +1389,15 @@ def test_raw_execution_never_admits_historical_or_rewritten_context(client, plug
     assert status(client, message)["deliveries"][0]["state"] == "claimed"
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("size", [1, 1600, 1601, 2400, 16000])
-def test_plugin_payload_boundaries_never_ack_a_preview(client, plugin_context, size):
+def test_plugin_payload_boundaries_never_ack_a_preview(client, plugin_context, size, relay_admission_clock):
     _, create, _ = plugin_context
     payload = "é" * size
-    ctx, marker, message = _plugin_wake(client, create, payload)
+    ctx, marker, message = _plugin_wake(
+        client, create, payload,
+        preparation=relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=1),
+    )
     result = ctx.hooks["pre_llm_call"](
         session_id="ses_שלום", turn_id="wake", user_message=marker,
     )
