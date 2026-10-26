@@ -1873,7 +1873,7 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
     monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
     reconcilers, callbacks, recovery_threads, workers, recovered_fences, events, closed = [], [], [], [], [], [], []
     emitted, recovery_completed = threading.Event(), threading.Event()
-    proof_ready, release_faults_cleared, released = (threading.Event() for _ in range(3))
+    proof_ready, release_faults_cleared, released, release_sweep_completed = (threading.Event() for _ in range(4))
     twice_refused, claim_failed, early_sweep = (threading.Event() for _ in range(3))
     release_attempts, claim_refusals, failed_at_sweep = [], [], []
     original_desktop = desktop
@@ -1892,6 +1892,8 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
         try:
             return recover(*args, **kwargs)
         finally:
+            if released.is_set():
+                release_sweep_completed.set()
             if claim_failed.is_set() and len(recovery_threads) > failed_at_sweep[0]:
                 early_sweep.set()
             if emitted.is_set():
@@ -2027,11 +2029,18 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
                     assert desktop.owners == [] and service.retained_registration is None
                     assert http.get("/relay/messages/production-recovery", params=SCOPE).json()["deliveries"][0] == state
                     release_faults_cleared.set()
-                    assert released.wait(5), "Periodic release did not complete after refusal cleared"
+                    assert release_sweep_completed.wait(5), "Periodic release sweep did not settle after refusal cleared"
                     for worker in workers:
                         worker.join(5)
-                    assert registry.reservations() == () and original_desktop.owners == []
-                    assert service.retained_registration is None
+                    assert release_attempts.count((fence,)) == 3
+                    current = registry.snapshot(first["recipient_endpoint_id"])
+                    if current is not None:
+                        assert current.generation > fence.generation and current.outcome == "prepared"
+                        assert current.delivery_id in {first["delivery_id"], second["delivery_id"]}
+                        assert (current.recipient_endpoint_id, current.container_ref) == (
+                            fence.recipient_endpoint_id, fence.container_ref,
+                        )
+                    assert original_desktop.owners == [] and service.retained_registration is None
                     # An unresolved channel grants no new wake. A natural hook is the explicit prerequisite.
                     hook()
                     emitted.set()

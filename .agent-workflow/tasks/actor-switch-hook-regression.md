@@ -19,7 +19,7 @@
 **Plan review:** Agent technical review: @astra-reviewer turn01a17a05-42b8-7d21-9acb-9dd5189620e1 proof actualdiff GO at a6048f63 plus supportedappfallback full conditions. Permits optional finite progress mode in existing recover fixture only: default onepass unchanged, walltime+sweep bounds, realentrypoints/settledworkers/perstepassertions, UTC onlycurrentpublished eligibleuncorrelatedpending deadline. Strict503boolean/header mapsNone/noHTTPretry; retain onesuccessfulrelease/rearm, alltypedrefusal authority, oneownerpergeneration/finalpayload/ACK/identity/counts. Actualcorrection/resultreview remains required.
 **Approvals:** Approved by user 2026-10-26 15:48 UTC: "and since i won't be here, i'm approving all of this, and also the agents should not block waiting for my actions". Trusted forwarding source01a171bf-bb98-71d3-ba6f-52b36f5ca022 quotes the preceding15:47UTC overnight priority to fix/merge local Relay and Hermes wake bugs, then resolve seven open PRs, using minimal process. Manager offer manager-shared-acquisition-offer-20261026 accepted; isolated focused corrections/checks/publication/merge through normal gates are covered. No installed environment or frozen PR353 execution is covered. Historical2026-10-08 approval remains in prior history.
 **Exceptions:** None
-**State:** Ready for review
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Recovery
@@ -159,7 +159,7 @@ Configured import-boundary adapter passed; exact0fb..HEAD RedlineBLUE/no checkpo
 
 Retain this managed isolated checkout and private evidence under @pal-dev1 until Relaydev has composed and qualified this contribution and evidence custody is confirmed; then archive through managed workflow preserving ignored receipts first. Do not archive active evidence or installed integration references. Canonical roadmap/PR ownership remains manager/Relaydev, current correction does not close broader OpenCode/Hermes reliability.
 
-## Result review
+## Historical legacy result review
 
 Agent technical review: @astra-reviewer source/contract GO turn01a179d5-f52c-7bd1-8a39-c715e927b850 and terminal validation GO turn01a179d8-1810-7aa2-a278-44c0f1ec07ca.
 Reviewed revision: c1a31847a4e9a0557dc1efe628e9969949ee3e22.
@@ -185,3 +185,15 @@ Independent proof review at turn01a17a05-42b8-7d21-9acb-9dd5189620e1 accepted a6
 The shared hook adapter maps only the exact documented relay/turn503 body, strict retryable boolean and Retry-After1 to a single failed request. It performs no HTTP retry. Repeated release refusals preserve the original pending obligation and zero owners until exactly one successful release. The recovered preclaim refusal preserves scope-only hook metadata, uncertain custody and public delivery state until a later eligible generation claims, emits and ACKs the original and backlog once. All prior payload, attempt, identity and duplicate-owner assertions remain.
 
 Focused qualification: seven cases passed in6.86s, zero failures/skips, receipts build/retained-recovery-proof/focused.{log,xml}. This includes the exact two failed CI nodes, controlled repeated release, controlled recovered preclaim refusal and all three autonomous production-lifespan modes. The run uses the supported private Windows functional runtime in runtime.json; it does not reproduce or explain the historical Linux acquisition delay. Both affected files passed265cases in108.52s with zero failures/skips, receipts affected.{log,xml}; these include the focused cases and are not summed. A subsequent two-line assertion enforces the five-second bound after worker settlement as well as before each sweep; focused and direct-caller checks follow. The configured import-boundary adapter passed; the whole-change selector requires the normal full application lane for Relaydev's composed PR. No local full-suite retry or standalone publication is authorized for this contribution.
+
+
+## Direct-caller failure assessment
+
+The final-source connected run completed130passed/9failed36.33s (callers.{log,xml}), retained without claiming success. Seven harness tests rejected their isolated fake installation because the supplied temporary path was under .codex/worktrees; the unchanged installation-root guard is correct. The protected competing-hook test resolved the real repository container while its temporary cwd was inside that checkout; a neutral isolated temporary path is required before attributing a product failure. No protected assertion or installation guard is edited.
+
+The release proof exposed a real observation race: successful original release is signaled before the same production sweep finishes enumerating pending candidates. A successor prepared generation is permitted while custody remains unavailable. The proof now checks exactly two refusals and one successful original release, then accepts only a later prepared generation with the same delivery/endpoint/container and zero owners before the explicit natural hook. Final exact payload/ACK/attempt and empty-reservation assertions remain unchanged. No backend race or lost obligation is inferred from the previous premature intermediate-empty assertion.
+
+
+Neutral temporary-path diagnosis verified: all seven fake-install guard cases passed unchanged; the protected competing-hook case still failed while its tmp cwd was inside the primary Git checkout, then passed unchanged when tmp cwd moved to the Windows temporary directory outside both repositories. Remaining-failure run2passed3.82s (remaining-fixed.{log,xml}); prior failed-only run7passed/2failed7.03s retained callers-fixed.{log,xml}. These were isolated test trees, never actual installed hooks/configuration.
+
+The release proof also now waits for the whole recovery callback to settle and joins its scheduled workers before inspecting the successor. A valid successor may anchor either original or backlog delivery for the same endpoint/container; zero native owners, original release count and all final consumption assertions remain. Final connected qualification is running against this exact correction using a neutral private temporary directory; final-callers.{log,xml} will supersede the failed connected receipt without erasing it.
