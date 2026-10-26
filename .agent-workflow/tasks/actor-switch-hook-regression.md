@@ -19,7 +19,7 @@
 **Plan review:** Agent technical review: @astra-reviewer turn01a17970-ca7d-77f0-ba07-e6525bb0cb6e DEFER unmatched local probe; recommends removing serial-only policy/test requirement absent separately documented value, retaining selection/reporting checks. Manager turn01a17975-8567-7312-86af-bae61a9a8b15 confirms serial restoration already directed and batching with Relaydev. This is the bounded restoration plan; no diagnostic execution permission inferred.
 **Approvals:** Approved by user 2026-10-26 15:48 UTC: "and since i won't be here, i'm approving all of this, and also the agents should not block waiting for my actions". Trusted forwarding source01a171bf-bb98-71d3-ba6f-52b36f5ca022 quotes the preceding15:47UTC overnight priority to fix/merge local Relay and Hermes wake bugs, then resolve seven open PRs, using minimal process. Manager offer manager-shared-acquisition-offer-20261026 accepted; isolated focused corrections/checks/publication/merge through normal gates are covered. No installed environment or frozen PR353 execution is covered. Historical2026-10-08 approval remains in prior history.
 **Exceptions:** None
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Recovery
@@ -152,3 +152,13 @@ Verification adequacy: Full six-file delta, unchanged helper call order/phase so
 Whole-delta selector requires full application qualification for CI changes. This dedicated non-merge diagnostic does not claim release qualification; explicit manager direction limits execution to this one observation, no full suite. The normal PR364 full gate remains FAILED. Static Redline is evaluated over exact9c6..HEAD with no fabricated PR label; review source above records the actual architecture assessment.
 
 Static checks: configured import-boundary adapter passed; exact9c6..HEAD Redline/Workflow completed with advisory exit1 solely because this non-PR branch has no architecture-reviewed PR label. Actual independent architecture GO is recorded above; no label or checkpoint metadata was fabricated. Earlier reporter invocation lacked its required backend report and was corrected by running the configured adapter, without policy changes. Exact baseline/source checks pass. Diagnostic files are the only executable delta; original product/test source remains byte-identical9c6.
+
+## Single GitHub observation result — inconclusive, execution stopped
+
+Run40382159730/job121780956258/attempt1 at reviewed sourcefe4018750c182ccf4658e858ae6b87a634f96a90 completed successfully: one unchanged original atomic-reply[claude-code] test passed in2.62seconds, original pytest exit0. Artifact12678673261 ZIP SHA256a6f7c0ce4eafcaacd365ccf201f2ea44aa5de32d5e1f6a19e576335db27670e6 verified before inspection. Private custody build/registration-probe retains exact ZIP, runtime.json, registration-probe.json, registration.xml, pytest.log/status and result-summary.json with individual hashes. No second dispatch, test retry or source fix.
+
+Captured actual runtime Linux6.17.0-1022-azure/glibc2.39,CPython3.13.16,SQLite3.45.1,SQLAlchemy2.1.6,AnyIO4.15.1,Starlette1.10.0,FastAPI0.162.0,httpx0.28.1,httpx2/httpcore2 2.16.0,pytest8.4.2/xdist3.8.0. These recorded Python/key package versions match failed CI; original native SQLite was unrecorded, so exact executor equivalence remains unproved.
+
+Exactly one expected second-registration call captured;18paired spans, no overflow/unmatched/errors, prior profiler/exact GC callback preserved and GC policy unchanged. Observed turn6.308975ms; setup_pragma phase0.401474ms, its native busy_timeout cursor0.024076ms; begin_immediate phase0.149825ms/native0.012759ms. No GC events during the observed call. The historical1883ms setup delay did NOT recur. These are profiled finite-call observations, not a causal explanation, exoneration of GC/native blocking/scheduling under the full workload, or a production fix.
+
+STOP disposition: targeted diagnostic completed with valid bounded capture and nonreproduction; cause remains unknown, PR364 full gate remains FAILED. No repeat or broadened batch. Manager owns next disposition; Relaydev retains composed CI/native acceptance. This existing record remains Blocked on unresolved overall qualification, not on a request for human approval. Dedicated diagnostic branch stays out of merge. User installed environment and frozen PR353/old observer batches remain untouched.
