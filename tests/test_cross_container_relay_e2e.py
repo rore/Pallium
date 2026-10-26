@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
@@ -51,9 +53,11 @@ def _counts(client: TestClient) -> tuple[int, int]:
         )
 
 
-def test_actor_variation_does_not_partition_cross_container_lifecycle(client):
-    sender = _turn(client, "codex", "sender", SOURCE, actor="actor-register-sender")["session"]
-    target = _turn(client, "codex", "target", TARGET, actor="actor-register-target")["session"]
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_actor_variation_does_not_partition_cross_container_lifecycle(client, relay_admission_clock):
+    with relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=2):
+        sender = _turn(client, "codex", "sender", SOURCE, actor="actor-register-sender")["session"]
+        target = _turn(client, "codex", "target", TARGET, actor="actor-register-target")["session"]
     assert _name(client, "target", "review", TARGET, actor_ref="actor-name").status_code == 200
 
     exact = _send(client, "sender", target["endpoint_id"], payload="exact → שלום 你好", actor="actor-send-exact")
@@ -74,7 +78,8 @@ def test_actor_variation_does_not_partition_cross_container_lifecycle(client):
     })
     assert ack.status_code == 200, ack.text
 
-    moved_sender = _turn(client, "codex", "sender", TARGET, actor="actor-register-moved")["session"]
+    with relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=1):
+        moved_sender = _turn(client, "codex", "sender", TARGET, actor="actor-register-moved")["session"]
     assert moved_sender["endpoint_id"] != sender["endpoint_id"]
     assert client.get(
         f"/relay/messages/{exact_message['message_id']}",
@@ -111,10 +116,12 @@ def test_actor_variation_does_not_partition_cross_container_lifecycle(client):
     }
 
 
-def test_name_takeover_ignores_actor_variation_and_only_moves_the_name(client):
-    _turn(client, "codex", "sender", SOURCE)
-    old = _turn(client, "codex", "old", TARGET)["session"]
-    new = _turn(client, "codex", "new", SOURCE)["session"]
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_name_takeover_ignores_actor_variation_and_only_moves_the_name(client, relay_admission_clock):
+    with relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=3):
+        _turn(client, "codex", "sender", SOURCE)
+        old = _turn(client, "codex", "old", TARGET)["session"]
+        new = _turn(client, "codex", "new", SOURCE)["session"]
     assert _name(client, "old", "review", TARGET, actor_ref="actor-old-owner").status_code == 200
     pending = _send(client, "sender", "@review").json()
 
@@ -144,7 +151,8 @@ def test_name_takeover_ignores_actor_variation_and_only_moves_the_name(client):
     assert _send(client, "sender", "@review").status_code == 404
 
 
-def test_rejected_legacy_and_runtime_selectors_have_no_delivery_or_wake_side_effects(client):
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_rejected_legacy_and_runtime_selectors_have_no_delivery_or_wake_side_effects(client, relay_admission_clock):
     wakes: list[dict] = []
     app = FastAPI()
     app.include_router(create_router(
@@ -153,9 +161,10 @@ def test_rejected_legacy_and_runtime_selectors_have_no_delivery_or_wake_side_eff
         relay_send_callback=lambda result, _scope: wakes.append(result),
     ))
     caller = TestClient(app)
-    _turn(caller, "codex", "sender", SOURCE)
-    first = _turn(caller, "codex", "duplicate", SOURCE)["session"]
-    second = _turn(caller, "codex", "duplicate", TARGET)["session"]
+    with relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=3):
+        _turn(caller, "codex", "sender", SOURCE)
+        first = _turn(caller, "codex", "duplicate", SOURCE)["session"]
+        second = _turn(caller, "codex", "duplicate", TARGET)["session"]
     assert _name(caller, "duplicate", "review", SOURCE).status_code == 200
     before = _counts(client)
 
@@ -169,10 +178,12 @@ def test_rejected_legacy_and_runtime_selectors_have_no_delivery_or_wake_side_eff
     assert first["endpoint_id"] != second["endpoint_id"]
 
 
-def test_actor_global_alias_takeover_can_cross_runtimes_without_rebinding_pending_delivery(client):
-    _turn(client, "codex", "sender", SOURCE)
-    old = _turn(client, "codex", "codex-owner", TARGET)["session"]
-    new = _turn(client, "claude-code", "claude-owner", SOURCE)["session"]
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_actor_global_alias_takeover_can_cross_runtimes_without_rebinding_pending_delivery(client, relay_admission_clock):
+    with relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=3):
+        _turn(client, "codex", "sender", SOURCE)
+        old = _turn(client, "codex", "codex-owner", TARGET)["session"]
+        new = _turn(client, "claude-code", "claude-owner", SOURCE)["session"]
     assert _name(client, "codex-owner", "handoff", TARGET).status_code == 200
     pending = _send(client, "sender", "@handoff").json()
 
@@ -190,10 +201,12 @@ def test_actor_global_alias_takeover_can_cross_runtimes_without_rebinding_pendin
         params={"container_ref": SOURCE},
     ).json()["deliveries"][0]["recipient_endpoint_id"] == old["endpoint_id"]
 
-def test_concurrent_first_claim_of_global_alias_has_one_owner_and_one_route(client):
-    _turn(client, "codex", "sender", SOURCE)
-    codex = _turn(client, "codex", "codex-contender", TARGET)["session"]
-    claude = _turn(client, "claude-code", "claude-contender", SOURCE)["session"]
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_concurrent_first_claim_of_global_alias_has_one_owner_and_one_route(client, relay_admission_clock):
+    with relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=3):
+        _turn(client, "codex", "sender", SOURCE)
+        codex = _turn(client, "codex", "codex-contender", TARGET)["session"]
+        claude = _turn(client, "claude-code", "claude-contender", SOURCE)["session"]
     contenders = (
         {"runtime": "codex", "session_ref": "codex-contender", "container_ref": TARGET},
         {"runtime": "claude-code", "session_ref": "claude-contender", "container_ref": SOURCE},
@@ -215,9 +228,11 @@ def test_concurrent_first_claim_of_global_alias_has_one_owner_and_one_route(clie
     ]
     assert [session["endpoint_id"] for session in sessions if session["alias"] == "race"] == [owner]
 
-def test_cross_container_reply_chain_and_bounded_backlog_continuation(client):
-    sender = _turn(client, "codex", "chain-sender", SOURCE)["session"]
-    target = _turn(client, "codex", "chain-target", TARGET)["session"]
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_cross_container_reply_chain_and_bounded_backlog_continuation(client, relay_admission_clock):
+    with relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=2):
+        sender = _turn(client, "codex", "chain-sender", SOURCE)["session"]
+        target = _turn(client, "codex", "chain-target", TARGET)["session"]
     initial = _send(
         client, "chain-sender", target["endpoint_id"], payload="chain-0"
     ).json()

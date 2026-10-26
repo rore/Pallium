@@ -156,8 +156,11 @@ def test_codex_setup_migrates_nested_pallium_tables_and_preserves_siblings(
 ) -> None:
     import tomllib
 
+    nested_array = ('[\n ["[", "]", "# ["], # brackets in values and comments: [ ]\n [\n'
+                    + delimiter + "\n[mcp_servers.fake]\n" + delimiter + '],\n ["features"]\n]\n')
     feature_notes = "[other]\nhooks = false\ncodex_hooks = true\n"
-    features_config = ('["features"] # retained header\ncodex_hooks = false\nhooks = false # retained value comment\nother_feature = true\nnotes = '
+    features_config = ('["features"] # retained header\nnames = ' + nested_array
+                       + 'codex_hooks = false\nhooks = false # retained value comment\nother_feature = true\nnotes = '
                        + delimiter + "\n" + feature_notes + delimiter + "\n")
     config_path = tmp_path / ".codex" / "config.toml"
     config_path.parent.mkdir(parents=True)
@@ -168,7 +171,8 @@ def test_codex_setup_migrates_nested_pallium_tables_and_preserves_siblings(
         'quote_edge_four = """\n'
         + r'ends after an escaped quote: \""""'
         + '\nquote_edge_five = """\nends after two quotes: """""\n'
-        + '[mcp_servers.pallium]\ncommand = "old"\n\n'
+        + 'nested = ' + nested_array
+        + '[mcp_servers.pallium]\ncommand = "old"\nargs = ' + nested_array + '\n'
         '[mcp_servers.other_fake]\ncommand = "keep too"\n\n'
         '[mcp_servers.pallium.env]\n'
         'PALLIUM_BASE_URL = "http://old.invalid"\n'
@@ -203,6 +207,8 @@ def test_codex_setup_migrates_nested_pallium_tables_and_preserves_siblings(
     parsed = tomllib.loads(installed)
     assert parsed["mcp_servers"]["other"]["notes"] == original_notes
     assert parsed["features"]["notes"] == feature_notes
+    assert parsed["features"]["names"] == original["features"]["names"]
+    assert parsed["mcp_servers"]["other"] == original["mcp_servers"]["other"]
     assert parsed["features"]["hooks"] is True and parsed["features"]["other_feature"] is True
     assert "codex_hooks" not in parsed["features"]
     assert '["features"] # retained header' in installed
@@ -220,6 +226,12 @@ def test_codex_setup_migrates_nested_pallium_tables_and_preserves_siblings(
     assert servers["pallium_extra"]["command"] == "sibling"
     assert parsed["other"]["value"] == "keep"
 
+    hand_edited = installed.replace(
+        'args = ["-P", "-m", "app.run", "mcp"]\n', 'args = ' + nested_array, 1,
+    )
+    assert hand_edited != installed
+    tomllib.loads(hand_edited)
+    config_path.write_text(hand_edited, encoding="utf-8")
     assert setup_codex.uninstall() == 0
     removed = tomllib.loads(config_path.read_text(encoding="utf-8"))
     assert "pallium" not in removed["mcp_servers"]
@@ -228,6 +240,8 @@ def test_codex_setup_migrates_nested_pallium_tables_and_preserves_siblings(
     assert removed["other"]["value"] == "keep"
     assert removed["mcp_servers"]["other"]["notes"] == original_notes
     assert removed["features"]["notes"] == feature_notes
+    assert removed["features"]["names"] == original["features"]["names"]
+    assert removed["mcp_servers"]["other"] == original["mcp_servers"]["other"]
     assert removed["features"]["hooks"] is True and "codex_hooks" not in removed["features"]
 
 
@@ -274,6 +288,35 @@ def test_codex_setup_rejects_unsupported_nested_settings_without_writing(
 
     assert setup_codex.install() == 2
     assert config_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("fault", ["malformed-original", "unsupported-feature", "malformed-candidate"])
+def test_codex_uninstall_rejects_unsafe_config_before_writes_or_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys, fault: str,
+) -> None:
+    config_path = tmp_path / ".codex" / "config.toml"
+    config_path.parent.mkdir(parents=True)
+    original = (
+        b"[" if fault == "malformed-original"
+        else b'[features]\ncodex_hooks = "unsupported"\n' if fault == "unsupported-feature"
+        else b'[mcp_servers.pallium]\ncommand = "old"\n'
+    )
+    config_path.write_bytes(original)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(setup_codex, "_codex_config_path", lambda: config_path)
+    if fault == "malformed-candidate":
+        monkeypatch.setattr(setup_codex, "_remove_mcp_server", lambda _content: "[")
+    for name in ("_write_toml", "_remove_relay_profile", "_remove_agents_md_block", "_remove_skill"):
+        monkeypatch.setattr(
+            setup_codex, name, lambda *_args, **_kwargs: pytest.fail("unsafe uninstall mutated state"),
+        )
+    monkeypatch.setattr(
+        setup_codex.codex_readiness, "reconcile_uninstall",
+        lambda **_kwargs: pytest.fail("unsafe uninstall removed hooks/readiness"),
+    )
+    assert setup_codex.uninstall() == 2
+    assert config_path.read_bytes() == original
+    assert "Could not safely update" in capsys.readouterr().err
 
 
 def test_codex_mcp_config_adds_repo_local_and_uv_venv_paths(

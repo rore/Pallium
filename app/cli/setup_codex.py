@@ -387,6 +387,7 @@ def _features_section(content: str) -> slice | None:
     for line in content.splitlines(keepends=True):
         if multiline is None and line.lstrip().startswith("["):
             try:
+                tomllib.loads(content[:offset])
                 header = tomllib.loads(line)
             except tomllib.TOMLDecodeError:
                 header = {}
@@ -477,21 +478,26 @@ def _remove_mcp_server(content: str) -> str:
     kept: list[str] = []
     in_pallium_subtree = False
     multiline_string: str | None = None
+    offset = 0
     for line in content.splitlines(keepends=True):
+        line_start = offset
+        offset += len(line)
         stripped = line.strip()
         if multiline_string is None and stripped.startswith("["):
             try:
+                tomllib.loads(content[:line_start])
                 header = tomllib.loads(line)
             except tomllib.TOMLDecodeError:
                 header = {}
-            servers = header.get("mcp_servers", {})
-            is_pallium_table = isinstance(servers, dict) and "pallium" in servers
-            in_pallium_subtree = is_pallium_table
-            if is_pallium_table:
-                if kept and not kept[-1].strip():
-                    kept.pop()
-                multiline_string = _toml_multiline_delimiter(line, multiline_string)
-                continue
+            if header:
+                servers = header.get("mcp_servers", {})
+                is_pallium_table = isinstance(servers, dict) and "pallium" in servers
+                in_pallium_subtree = is_pallium_table
+                if is_pallium_table:
+                    if kept and not kept[-1].strip():
+                        kept.pop()
+                    multiline_string = _toml_multiline_delimiter(line, multiline_string)
+                    continue
         if not in_pallium_subtree:
             kept.append(line)
         multiline_string = _toml_multiline_delimiter(line, multiline_string)
@@ -970,6 +976,7 @@ def install(
     config_path = _codex_config_path()
     config_content = _read_toml(config_path)
     try:
+        _parse_toml(config_content)
         config_content = _ensure_feature_flag(config_content)
         config_content = _ensure_mcp_server(config_content, port=port)
     except ValueError as exc:
@@ -1049,8 +1056,14 @@ def uninstall() -> int:
     config_path = _codex_config_path()
     if config_path.exists():
         config_content = _read_toml(config_path)
-        config_content = _remove_mcp_server(config_content)
-        config_content = _remove_feature_flag(config_content)
+        try:
+            _parse_toml(config_content)
+            config_content = _remove_mcp_server(config_content)
+            config_content = _remove_feature_flag(config_content)
+            _parse_toml(config_content)
+        except ValueError as exc:
+            print(f"ERROR: Could not safely update Codex configuration: {exc}", file=sys.stderr)
+            return 2
         _write_toml(config_path, config_content)
         print(f"  Removed MCP server and feature flags from {config_path}")
     _remove_relay_profile()
