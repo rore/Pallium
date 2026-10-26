@@ -56,7 +56,7 @@ Isolated bugfix/PR/green merge already authorized. No new Hermes installed/plugi
 —
 
 **State:**
-Ready to implement
+Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -73,5 +73,9 @@ Read-only Hermes helper experiment: caller_home=Pelican, ordinary poller_home=de
 
 ## Result review
 
-Astra reviewer inspected1931a902 and confirmed the production fix and203+52 logs. One coverage finding required explicitly attempting marker admission under default/sibling profile before restoring named scope. Added existing pre_llm_call refusal assertion and exact unchanged unclaimed delivery snapshot; both changed cases passed in1.97s, build/hermes-profile-review-delta.log. Production unchanged. Final narrow delta endorsement pending.
+Agent technical review: astra-reviewer, independent non-implementer. Initial1931a902 review confirmed the production fix and203+52 logs; one coverage finding required attempting marker admission under default/sibling before restoring named scope. Added pre_llm_call refusal and exact unchanged unclaimed snapshot; both changed cases passed in1.97s, build/hermes-profile-review-delta.log. Final turn01a178b5-1af5-7490-b234-161bb1d7cbaa endorsed this delta: GO, no remaining findings. Production unchanged.
+
+Reviewed revision: b8f659e8c1e2b1709b8c4cc596614e245a990b42.
+
+Verification adequacy:203 plugin plus52 History/role tests and two strengthened delta cases verify profile-context retention, wrong-profile refusal, complete payload/ACK and mutable-config fencing through caller surfaces. Installed reply receipt is not yet verified. Required hosted full CI remains the merge gate. No live change approval is implied by technical review.
 
