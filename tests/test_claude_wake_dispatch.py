@@ -2737,8 +2737,9 @@ def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
 
 
 @pytest.mark.parametrize("force_claim_refusals", [False, True])
+@pytest.mark.parametrize("with_prompt_id", [False, True])
 def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
-    client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys, force_claim_refusals,
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys, force_claim_refusals, with_prompt_id,
 ) -> None:
     import time
     from core.errors import ImmediateTransactionBusyError
@@ -2820,6 +2821,7 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
 
     stop = _load_claude_hook("stop", monkeypatch)
     monkeypatch.setattr(sys.modules[stop.relay_turn.__module__], "SESSIONS_DIR", tmp_path / "hook-sessions")
+    monkeypatch.setattr(sys.modules[stop.relay_turn.__module__], "STATE_DIR", tmp_path / "hook-state")
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
     monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(stop, "register_claude_wake", register)
@@ -2857,12 +2859,12 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
     monkeypatch.setattr(relay._store, "relay_turn", refuse_claim)
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
     monkeypatch.setattr(sys.modules[prompt.relay_turn.__module__], "SESSIONS_DIR", tmp_path / "hook-sessions")
+    monkeypatch.setattr(sys.modules[prompt.relay_turn.__module__], "STATE_DIR", tmp_path / "hook-state")
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
     monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(prompt, "register_claude_wake", register)
     monkeypatch.setattr(prompt, "relay_request", relay_request)
     monkeypatch.setattr(prompt, "acknowledge_relay", acknowledge)
-    monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
     monkeypatch.setattr(
         prompt,
         "pallium_request",
@@ -2872,56 +2874,66 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
         "session_id": PAYLOAD["session_ref"],
         "cwd": str(tmp_path),
         "prompt": "Pallium Relay wake notice: new messages available.",
+        "prompt_id": f"native-wake-{len(transport_calls)}" if with_prompt_id else None,
     })
 
+    common = sys.modules[prompt.relay_turn.__module__]
+    notice = "Pallium Relay wake notice: new messages available."
+    assert common.check_dedup(notice, PAYLOAD["session_ref"]) is False
+    assert common.check_dedup(notice, PAYLOAD["session_ref"]) is True
+    expected_fence, = registry.recovery_candidates()
+    assert expected_fence["state"] == "wake_inflight"
+    assert (expected_fence["runtime"], expected_fence["session_ref"], expected_fence["container_ref"],
+            expected_fence["delivery_id"]) == ("claude-code", PAYLOAD["session_ref"], scope["container_ref"], claimed["delivery_id"])
     output, deadline = "", time.monotonic() + 5
-    for _ in range(8):
-        assert time.monotonic() < deadline, "Claude recovery exceeded wall-time bound"
-        phase[0], before_requests, before_refusals = "prompt", len(hook_requests), len(refusals)
-        with pytest.raises(SystemExit):
-            prompt.main()
-        captured = capsys.readouterr()
-        current_output = captured.out + captured.err
-        output += current_output
-        assert len(hook_requests) == before_requests + 1
-        delivered = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
-        if delivered["state"] == "delivered":
-            break
-        assert len(refusals) == before_refusals + 1 and acknowledged_ids == []
-        assert "wake after crash ✓" not in current_output
-        assert delivered["delivery_id"] == claimed["delivery_id"] and delivered["attempts"] == 1
-        assert registry.recovery_candidates() == []  # The real prompt registered busy.
-        before_transport = len(transport_calls)
-        recover_expired_relay_wakes(relay, registry)
-        assert len(transport_calls) == before_transport
 
-        phase[0], before_requests, before_refusals = "stop", len(hook_requests), len(refusals)
-        try:
-            stop.main()
-        except SystemExit as stopped:
-            assert stopped.code == 2
-        captured = capsys.readouterr()
-        current_output = captured.out + captured.err
-        output += current_output
-        assert len(hook_requests) == before_requests + 1
-        delivered = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
-        if delivered["state"] == "delivered":
-            break
-        assert len(refusals) == before_refusals + 1 and acknowledged_ids == []
-        assert "wake after crash ✓" not in current_output
-        assert delivered["delivery_id"] == claimed["delivery_id"] and delivered["attempts"] == 1
-        candidate, = registry.recovery_candidates()
-        assert candidate["state"] == "idle"  # Only the actual Stop re-enables native wake.
-        transported.clear()
+    def assert_fenced():
+        pending = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+        assert (pending["delivery_id"], pending["state"], pending["attempts"]) == (claimed["delivery_id"], "pending", 1)
+        assert pending["recipient_endpoint_id"] == claimed["recipient_endpoint_id"]
+        assert acknowledged_ids == [] and "wake after crash ✓" not in output
+        assert registry.recovery_candidates() == [expected_fence]
+        before_transport = tuple(transport_calls)
         recover_expired_relay_wakes(relay, registry)
-        assert transported.wait(timeout=0.5)
-        assert len(transport_calls) == before_transport + 1
-    else:
-        pytest.fail("Claude recovery exceeded eight lifecycle steps")
+        assert tuple(transport_calls) == before_transport
+        return pending
+
+    phase[0], before_requests, before_refusals = "prompt", len(hook_requests), len(refusals)
+    try:
+        prompt.main()
+    except SystemExit as prompted:
+        assert prompted.code == 0
+    captured = capsys.readouterr()
+    output += captured.out + captured.err
+    assert len(hook_requests) == before_requests + 1
+    delivered = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+    if delivered["state"] != "delivered":
+        assert len(refusals) == before_refusals + 1
+        assert_fenced()
+        # These Stops are explicit later host events; reconciliation cannot create them.
+        for _ in range(8):
+            assert time.monotonic() < deadline, "Claude recovery exceeded wall-time bound"
+            phase[0], before_requests, before_refusals = "stop", len(hook_requests), len(refusals)
+            try:
+                stop.main()
+            except SystemExit as stopped:
+                assert stopped.code == 2
+            captured = capsys.readouterr()
+            output += captured.out + captured.err
+            assert len(hook_requests) == before_requests + 1
+            delivered = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+            if delivered["state"] == "delivered":
+                break
+            assert len(refusals) == before_refusals + 1
+            assert_fenced()
+        else:
+            pytest.fail("Claude recovery exceeded eight explicit natural Stop events")
     assert time.monotonic() < deadline, "Claude recovery exceeded wall-time bound"
+    assert len(transport_calls) == 1  # An accepted wake remains fenced until its exact ACK.
     assert forced == (["prompt", "stop"] if force_claim_refusals else [])
     assert output.count("wake after crash ✓") == 1
     assert acknowledged_ids == [claimed["delivery_id"]]
+    assert registry.recovery_candidates() == []
     assert delivered["state"] == "delivered" and delivered["attempts"] == 2
     (tmp_path / "claude-recovery-boundary.json").write_text(json.dumps({
         "forced": forced, "http_refusals": refusals, "hook_requests": hook_requests,

@@ -65,8 +65,9 @@ def main() -> None:
 
         if not isinstance(prompt, str) or not prompt or prompt.startswith("/"):
             return
+        internal_wake = prompt == "Pallium Relay wake notice: new messages available."
         source_turn_id = source_turn_key(payload.get("prompt_id"))
-        if session_id and not (has_session and source_turn_id) and check_dedup(
+        if not internal_wake and session_id and not (has_session and source_turn_id) and check_dedup(
             prompt, session_id
         ):
             return
@@ -118,7 +119,7 @@ def main() -> None:
 
         # Preserve the start snapshot when delivery exits ingestion or retrieval
         # skips a short prompt; no content or role attribution is inferred later.
-        if has_session and source_turn_id is not None and content and (
+        if not internal_wake and has_session and source_turn_id is not None and content and (
             rendered_deliveries or len(content) < 20
         ):
             pallium_request("POST", "/items", [{
@@ -143,6 +144,8 @@ def main() -> None:
                 return
             acknowledge_relay(rendered_deliveries, container_ref=container_ref)
             sys.exit(0)
+        if internal_wake:
+            return
 
         work_refs_metadata = build_work_refs_metadata(
             cwd, payload.get("pallium_work_refs"), discovery,
