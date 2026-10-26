@@ -58,7 +58,7 @@ Continuing isolated emergency bugfix/PR/green merge authorized. PR363 profile up
 —
 
 **State:**
-Ready to implement
+Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -112,4 +112,6 @@ Agent technical plan review: astra-reviewer, turn01a17927-1709-75b3-9768-227303a
 Implemented the ephemeral token guards before invalidation, before state publication and after a reentrant state write; stopped plugin callbacks cannot publish. Six deterministic caller-surface schedules (accessor, response, synchronous publication reentry, each with newer valid/invalid route) failed before the source correction (6 failed in4.57s) and passed afterward (6 passed in3.64s), build/hermes-route-registration-{before,after}.log. Valid routes complete full payload/ACK; invalid routes cause no injection, claim or wake fence. Affected Hermes plugin/History/role files are running once; result review and terminal pass remain gates.
 
 Accepted the exact reviewed cache prerequisite range39d21623..8f7528ab from pal-dev1, preserving all four commits as c6c2d32a/e2887c3e/3a5bfc2d/ac41b00e. Only tests/test_claude_wake_registration.py and its existing actor-switch-hook-regression Work Record changed. Final test SHA256 BFB93044795461C1B61C19C81E8AAF64CD160C3A78431D0EFDBB8ACD4188DC8E matches the handoff;35 focused and78 affected-file passes and independent Astra GO are reused, not rerun. Read the complete handoff through status paging; no receive/ACK/resend. Composed-head full hosted CI follows final native review. No live action or stale633c2f50 artifact application; operator staging will use the final reviewed source hash.
+
+Agent technical review: astra-reviewer, turn01a17930-17b8-7c20-baec-c1ff62fadf10: Source RESULT GO, no remaining registration finding. Reviewed revision: db1303dc00422d2a5b04455497f6196f8777b0b1. Verification adequacy: all six deterministic stale-publication cases fail old code and pass new; final affected plugin/History/role files272 passed in180.46s (build/hermes-route-registration-subsystem.log). Session-keyed tokens preserve independent conversations, newer invalid callbacks remain authoritative, and post-write checks fence reentry. Cache prerequisite exact-byte evidence reused. Required composed-head full hosted CI and installed acceptance remain open. CodeRabbit finding4379632699 is valid/fixed; reply and resolve after publication with this actual source commit. No new live changes or source-persistence contract change.
 
