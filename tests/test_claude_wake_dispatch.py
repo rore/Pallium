@@ -2892,7 +2892,14 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
 
     def assert_fenced():
         pending = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
-        assert (pending["delivery_id"], pending["state"], pending["attempts"]) == (claimed["delivery_id"], "pending", 1)
+        assert (pending["delivery_id"], pending["state"], pending["attempts"]) == (
+            claimed["delivery_id"], claimed["state"], claimed["attempts"],
+        )
+        assert relay.pending_candidate(runtime="claude-code", session_ref=PAYLOAD["session_ref"],
+                                       delivery_id=claimed["delivery_id"], **scope) == {
+            "delivery_id": claimed["delivery_id"], "recipient_endpoint_id": claimed["recipient_endpoint_id"],
+            "state": "pending",
+        }
         assert pending["recipient_endpoint_id"] == claimed["recipient_endpoint_id"]
         assert acknowledged_ids == [] and "wake after crash ✓" not in output
         assert registry.recovery_candidates() == [expected_fence]
