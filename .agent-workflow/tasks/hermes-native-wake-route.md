@@ -58,7 +58,7 @@ Continuing isolated emergency bugfix/PR/green merge authorized. PR363 profile up
 —
 
 **State:**
-Ready to implement
+Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -98,4 +98,6 @@ Bounded plan delta: wrap only that initial claim in the exact scoped sqlite_queu
 Agent technical review: astra-reviewer, turn01a178f7-2d3c-7400-94f7-95d9effc52e4: GO for test-only setup delta; recovery/safety assertions remain intact. Reviewed revision: 6aec6b0122ef04eb93dba23323fc62d6f7ca0676. Verification adequacy:7 affected cases passed in4.57s; the full affected edge file30 passed in19.69s, build/hermes-route-ci-{focused,subsystem}.log. Original delayed native acquisition remains unexplained; this does not claim a product latency repair. Fresh full hosted CI is required on the final head.
 
 Second CI run40356299090: Linux3.12 failed test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract at initial target registration,503 late_begin/setup_pragma1167ms. Windows smoke failed test_concurrent_claim_many_workers_no_duplicates with2/3 winners and unhandled worker ImmediateTransactionBusyError at BEGIN IMMEDIATE. Logs build/pr364-ci2-{linux312,windows}-failed.log retained. No retries or product fix inferred. Astra turn01a17902-29c6-7443-b492-bbc193919b26 rejected a retrying-test proposal because it would weaken the five-single-call requirement; that proposal is abandoned. It endorsed setup-only registration timing and independent error/join/exact-ID diagnostics. Manager turn01a17906-2164-7da2-92f5-e5aeab3c68f6 directs this bounded correction and one fresh candidate CI; any further failure goes to an existing storage owner, without expanding this Hermes PR.
+
+Agent technical review: astra-reviewer, turn01a17909-2ea4-7b90-8752-6cb5b2a99a53: GO. Reviewed revision: b5b319d46ac432eb993e629ab53b8a9008902029. Verification adequacy:2 focused cases passed in2.11s; affected files240 passed in66.60s (build/hermes-route-ci2-{focused,subsystem}.log). Original one-shot5 calls/3 winners remains unchanged; all worker errors now fail explicitly and exact source IDs are checked. Native timing restored immediately after registration setup. Full hosted CI on final head remains required. No underlying acquisition repair or installed success is claimed.
 
