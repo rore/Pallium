@@ -1899,3 +1899,45 @@ def test_cwd_legacy_active_turn_does_not_backfill_role_provenance(
     found = _cwd_role_history(client)
     assert len(found) == 2 and all(row["relay_name"] is None for row in found)
     assert all(row["relay_attribution_state"] == "unavailable" for row in found)
+
+
+@pytest.mark.parametrize("failure", ["before-write", "lost-response"])
+def test_cwd_partial_capture_keeps_first_role_after_rename_reload_and_completion(
+        client, project_plugin, tmp_path, monkeypatch, failure):
+    module, ctx, pre, create, _calls, _settings = project_plugin
+    root = _repo(tmp_path, "role-history")
+    assert pre(str(root), turn="seed")
+    def name(alias):
+        response = client.post("/relay/sessions/name", json={
+            "runtime": "hermes", "session_ref": "session", "container_ref": _project("role-history"),
+            "alias": alias})
+        assert response.status_code == 200, response.text
+    name("planner")
+    text = "project role marker café partial"
+    history = [{"role": "user", "content": text, "message_uid": "partial-user"}]
+    http = module._json_request
+    attempted = []
+    def uncertain(base, method, path, **kwargs):
+        if path == "/item-and-query" and not attempted:
+            attempted.append(copy.deepcopy(kwargs["body"]))
+            if failure == "lost-response":
+                http(base, method, path, **kwargs)
+            raise TimeoutError("controlled capture uncertainty")
+        return http(base, method, path, **kwargs)
+    monkeypatch.setattr(module, "_json_request", uncertain)
+    assert pre(str(root), turn="partial", message=text, history=history)
+    assert len(attempted) == 1 and attempted[0]["relay_name"] == "planner"
+    name("later")
+    for cleanup in ctx.cleanups:
+        cleanup()
+    ctx = create(ctx.state)
+    monkeypatch.setattr(module, "_json_request", http)
+    assert pre(str(root), turn="partial", message=text, history=history, context=ctx)
+    for _ in range(2):
+        ctx.hooks["post_llm_call"](session_id="session", turn_id="partial", user_message=text,
+            assistant_response=text + " answer", conversation_history=[*history,
+            {"role": "assistant", "content": text + " answer", "message_uid": "partial-assistant"}])
+    found = _cwd_role_history(client, "planner")
+    assert len(found) == 2 and {row["role"] for row in found} == {"user", "assistant"}
+    assert all(row["relay_name"] == "planner" and row["relay_attribution_state"] == "named" for row in found)
+    assert not _cwd_role_history(client, "later")

@@ -196,7 +196,7 @@ def test_real_public_session_context_isolation():
     if not source and not python:
         pytest.skip("set PALLIUM_HERMES_CWD_SOURCE and PALLIUM_HERMES_CWD_PYTHON for source qualification")
     assert source and python, "source and interpreter must be configured together"
-    source, python = Path(source).resolve(), Path(python).resolve()
+    source, python = Path(source).resolve(), Path(python).absolute()
     assert source.is_dir() and python.is_file(), "configured source/interpreter missing"
     packages = _dependency_directory(python)
     assert packages.is_dir(), "configured interpreter dependency directory missing"
@@ -226,3 +226,29 @@ def test_real_public_session_context_isolation():
     assert len(receipt["expected_guard_denials"]) == 5
     assert receipt["unexpected_guard_denials"] == []
     assert len(receipt["denied_optional_version_probes"]) <= 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX venv interpreter symlink layout")
+def test_public_context_probe_keeps_configured_venv_symlink(tmp_path, monkeypatch):
+    import sys
+    source = tmp_path / "source"
+    source.mkdir()
+    python = tmp_path / "venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.symlink_to(Path(sys.executable))
+    packages = python.parent.parent / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+    packages.mkdir(parents=True)
+    monkeypatch.setenv("PALLIUM_HERMES_CWD_SOURCE", str(source))
+    monkeypatch.setenv("PALLIUM_HERMES_CWD_PYTHON", str(python))
+    lookup = _dependency_directory
+    checked = []
+    class LayoutChecked(Exception):
+        pass
+    def check(configured):
+        assert configured == python and configured != python.resolve()
+        checked.append(lookup(configured))
+        raise LayoutChecked
+    monkeypatch.setattr(sys.modules[__name__], "_dependency_directory", check)
+    with pytest.raises(LayoutChecked):
+        test_real_public_session_context_isolation()
+    assert checked == [packages.resolve()]
