@@ -328,7 +328,8 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
         monkeypatch.setitem(SCOPE, "container_ref", destination)
 
     events = []
-    run_hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
+    run_hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path,
+                            allow_preclaim_refusal=fault != "ack-response")
     hook = sys.modules["relay_test_retained_session_start"]
     request, acknowledge = hook.relay_request, hook.acknowledge_relay
 
@@ -347,7 +348,7 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
     else:
         monkeypatch.setattr(hook, "acknowledge_relay", fail_ack)
     owner_finished = threading.Event()
-    owner_fences, forced_claim = [], []
+    owner_fences, forced_claim, forced_hook_refusals = [], [], []
     original_turn = relay._store.relay_turn
     def refuse_recovered_claim(**kwargs):
         if force_recovered_claim_refusal and len(owner_fences) > 1 and not forced_claim:
@@ -358,9 +359,22 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
     monkeypatch.setattr(relay._store, "relay_turn", refuse_recovered_claim)
 
     def on_owner(request):
-        owner_fences.append(registry.snapshot(target["endpoint_id"]))
+        current = registry.snapshot(target["endpoint_id"])
+        owner_fences.append(current)
+        refusals_before, forced_before = len(run_hook.refusals), len(forced_claim)
         try:
             run_hook(request["params"]["arguments"]["prompt"])
+            if len(forced_claim) > forced_before:
+                assert len(run_hook.refusals) == refusals_before + 1, run_hook.refusals
+                method, path, body = run_hook.refusals[refusals_before]
+                assert (method, path) == ("POST", "/relay/turn")
+                assert {key: body[key] for key in ("runtime", "session_ref", "container_ref")} == {
+                    key: forced_claim[-1][key] for key in ("runtime", "session_ref", "container_ref")
+                }
+                assert current.delivery_id == first["delivery_id"]
+                assert current.recipient_endpoint_id == target["endpoint_id"]
+                assert current.container_ref == body["container_ref"] == SCOPE["container_ref"]
+                forced_hook_refusals.append(refusals_before)
         finally:
             owner_finished.set()
 
@@ -507,7 +521,8 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
         ))
         http.close()
         http = TestClient(app)
-        run_hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
+        run_hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path,
+                            allow_preclaim_refusal=fault != "ack-response")
         if moved and fault == "ack-response":
             assert relay._store is client.app.state.pallium_service._storage
             _observe_relay_busy_acquisition(relay._store, monkeypatch, test_request, tmp_path)
@@ -638,7 +653,7 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
                                for event in events[len(events_before):])
                     return False
                 recover(journey, until=delivered_after_refusal, now=now)
-            assert len(forced_claim) == int(force_recovered_claim_refusal)
+            assert len(forced_hook_refusals) == len(forced_claim) == int(force_recovered_claim_refusal), run_hook.refusals
             assert len(desktop.owners) - len(owners_before) == 1 + len(run_hook.refusals)
             assert len({item.generation for item in owner_fences}) == len(owner_fences)
             for item in owner_fences:
@@ -664,7 +679,9 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
                 "refusal_observed": refused, "later_sweep": later_sweep,
                 "attempts": [{key: repr(value) for key, value in attempt.items()} for attempt in attempts],
                 "boundary_safety_passed": True, "wrapper_restored": True,
-                "native_owners_added": len(added_owners), "final_delivery_ack_checks_passed": True,
+                "native_owners_added": len(desktop.owners) - len(owners_before),
+                "hook_refusals": run_hook.refusals, "controlled_hook_refusal_indices": forced_hook_refusals,
+                "final_delivery_ack_checks_passed": True,
             }, indent=2), encoding="utf-8")
     finally:
         for worker in workers:

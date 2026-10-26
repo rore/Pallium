@@ -1756,7 +1756,7 @@ def test_default_setup_and_http_transport_isolation(monkeypatch):
 
 
 
-def _hook_runner(http, monkeypatch, state, events, tmp_path):
+def _hook_runner(http, monkeypatch, state, events, tmp_path, *, allow_preclaim_refusal=False):
     script = "user_prompt_submit" if state == "idle" else "session_start"
     # Restore the previous alias (including absence) for existing hook state isolation.
     monkeypatch.setitem(sys.modules, "codex_common", sys.modules.get("codex_common"))
@@ -1775,7 +1775,7 @@ def _hook_runner(http, monkeypatch, state, events, tmp_path):
     refusals = []
     def relay(method, path, body, **kwargs):
         response = http.request(method, path, json=body)
-        if response.status_code == 503:
+        if allow_preclaim_refusal and response.status_code == 503:
             assert path == "/relay/turn"
             assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
             assert response.json()["detail"]["retryable"] is True
@@ -1807,6 +1807,44 @@ def _hook_runner(http, monkeypatch, state, events, tmp_path):
         assert exited.value.code == 0
     run.refusals = refusals
     return run
+
+
+@pytest.mark.parametrize("allow_refusal", [False, True])
+def test_hook_runner_preclaim_refusal_requires_explicit_opt_in(
+    http_wake, monkeypatch, tmp_path, allow_refusal,
+):
+    http, relay, _, _, desktop, send, _ = http_wake
+    first = send()
+    events, requests = [], []
+    if allow_refusal:
+        run = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path,
+                           allow_preclaim_refusal=True)
+    else:
+        run = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
+    hook = sys.modules["relay_test_retained_session_start"]
+    body = {"runtime": "codex", "session_ref": TARGET, **SCOPE}
+    before = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"]
+    owners = tuple(desktop.owners)
+
+    def refuse(**kwargs):
+        requests.append(kwargs)
+        raise ImmediateTransactionBusyError("controlled hook refusal", acquisition_stage="setup_deadline")
+
+    with monkeypatch.context() as fault:
+        fault.setattr(relay._store, "relay_turn", refuse)
+        if allow_refusal:
+            assert hook.relay_request("POST", "/relay/turn", body) is None
+        else:
+            with pytest.raises(AssertionError, match="relay_busy"):
+                hook.relay_request("POST", "/relay/turn", body)
+    assert len(requests) == 1 and events == []
+    assert len(run.refusals) == int(allow_refusal)
+    assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"] == before
+    assert tuple(desktop.owners) == owners
+    run()
+    assert [event[0] for event in events] == ["emit", "ack"]
+    result, = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"]
+    assert (result["delivery_id"], result["state"], result["attempts"]) == (first["delivery_id"], "delivered", 1)
 
 
 @pytest.mark.parametrize("state,event", [("idle", "UserPromptSubmit"), ("notLoaded", "SessionStart")])
@@ -2006,7 +2044,8 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
                     })
                 assert backlog.status_code == 200, backlog.text
                 second, = backlog.json()["deliveries"]
-                hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
+                hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path,
+                                    allow_preclaim_refusal=fault == "claim-once")
 
                 def owner(request):
                     recovered_fences.append(registry.snapshot(first["recipient_endpoint_id"]))
