@@ -10,8 +10,9 @@ from tests.test_codex_retained_wake import (
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("foreground_failure", [None, "transport-failed", "deadline"])
 async def test_actual_mcp_idle_recovers_same_epoch_enrollment_without_replay(
-        retained, monkeypatch, tmp_path):
+        retained, monkeypatch, tmp_path, foreground_failure):
     from app import codex_bridge_pipe as bridge
     from tests.test_codex_worker_reconnect import _protocol_server, _actual_status
     from tests.test_codex_mcp_desktop_bridge import _serve_protocol
@@ -21,6 +22,9 @@ async def test_actual_mcp_idle_recovers_same_epoch_enrollment_without_replay(
     registrations, operations = [], []
     recovered = threading.Event()
     healthy_observed = threading.Event()
+    foreground_checked = threading.Event()
+    fault_raised = False
+    recovery_count = 3 if foreground_failure else 2
     monkeypatch.setattr(bridge, "_read_private", lambda *a: json.dumps(manifest).encode())
     native_type = bridge.NativeInventoryClient
 
@@ -31,14 +35,20 @@ async def test_actual_mcp_idle_recovers_same_epoch_enrollment_without_replay(
             self.request = value
 
         def read(self, deadline):
+            nonlocal fault_raised
             value = self.request
             result = service._process(value, service.source, value["sequence"] - 1, deadline)
             if value["verb"] == "register":
                 registrations.append(dict(value))
-                if len(registrations) == 2:
+                if foreground_failure and len(registrations) == 2:
+                    fault_raised = True
+                    raise bridge.ShadowUnavailable(foreground_failure)
+                if len(registrations) == recovery_count:
                     recovered.set()
-            elif len(registrations) == 2 and result["connected"]:
+            elif len(registrations) == recovery_count and result["connected"]:
                 healthy_observed.set()
+            elif fault_raised and result["connected"]:
+                foreground_checked.set()
             return {**result, "version": 1, "epoch": service.epoch,
                     "sequence": value["sequence"]}
 
@@ -61,6 +71,10 @@ async def test_actual_mcp_idle_recovers_same_epoch_enrollment_without_replay(
     async def exercise(session):
         assert not (await _actual_status(session, "first")).isError
         assert len(registrations) == 1 and len(natives) == 1
+        if foreground_failure:
+            assert not (await _actual_status(session, "failed-foreground")).isError
+            assert await asyncio.to_thread(foreground_checked.wait, 1)
+            assert len(registrations) == 2 and len(operations) == 2
         with service._custody_lock:
             original = service.retained_registration
             assert original is not None
@@ -70,14 +84,17 @@ async def test_actual_mcp_idle_recovers_same_epoch_enrollment_without_replay(
             assert service.retained_registration is None and service.custody is None
         assert await asyncio.to_thread(recovered.wait, 1)
         assert await asyncio.to_thread(healthy_observed.wait, 1)
-        assert len(registrations) == 2 and len(operations) == 1
-        assert registrations[1]["continuity"] == continuity
+        assert len(registrations) == recovery_count
+        assert len(operations) == (2 if foreground_failure else 1)
+        assert registrations[-1]["continuity"] == continuity
+        assert registrations[-1]["thread_ref"] == registrations[0]["thread_ref"]
+        assert registrations[-1]["turn_ref"] == "first"
         assert service.epoch == manifest["epoch"]
         assert service.retained_registration["desktop_identity"] == original["desktop_identity"]
         assert service.enrollment_diagnostics()["last_failure_reason"] == "native-tool-failed"
         assert all(not desktop.owners for desktop in natives)
         assert not (await _actual_status(session, "fresh")).isError
-        assert len(operations) == 2
+        assert len(operations) == (3 if foreground_failure else 2)
 
     await _serve_protocol(server, exercise)
 
