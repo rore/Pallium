@@ -58,7 +58,7 @@ Continuing isolated emergency bugfix/PR/green merge authorized. The direct human
 —
 
 **State:**
-Blocked
+Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -215,3 +215,11 @@ Authoritative narrowed disposition: Astra turn01a17a4b-c1cc-7a80-824f-376312a1ed
 ## Connected native recovery correction composition plan
 
 Final owner range and result review remain pending after c249f448. Current six paths are actor Work Record, exact Claude prompt hook and four connected recovery test files. Independent sourceGO at50aede0e covers the seven-line exact-notice guard; canonical UUID and stored-versus-effective state corrections are test-only followups. Incremental test paths BLUE/integration GRAY; whole-change GRAY/Elevated retained. Import only final reviewed range, verify immutable blobs and unchanged controller/native-budget/protected sources, reuse revision-scoped receipts, update PR description and fresh checks, then one normal current-head CI candidate. No local full-suite repeat or live change. Conditional Stop/hook proof cannot close unattended recovery; result and merge gates remain pending.
+
+## Connected native correction result review
+
+Agent technical review: @astra-reviewer turn01a17a59-cba1-72b1-afba-cd47ec3e9e61, FINAL narrow contribution SOURCE/RESULT GO.
+Reviewed revision: 9c6173a83ee6acbc06b116fc65a693437d6cb362; final71cb4f39ad4631f12f174e4b34d42670cfa28771 is record-only.
+Verification adequacy: Imported exact c249f448..9c range as7f72cc88/1172b717/15beb2ea/4419c53e/4c4d4cd5/e339aa8b/724c494f/2b04eb1a/7a7bae83/14202e70, then final record as79147f01. All six imported blobs matched9c before record-only completion; controller/storage/API/protected/deadline/CI files have zero diff from published dc3392ca. Independently parsed boundaries3pass, claude-final4pass, known-fixed2pass and normal-uuid2pass with zero failures/errors/skips; cohorts overlap. Broader affected506case receipt remains502passed/2failed/2existing POSIXsocket platform skips; corrected cases carry focused final-source receipts, not an invented fullgreen. Prior18guard evidence is reused with its source limits. No redundant application suite or installed change.
+
+Fresh composed selector requires full hosted lane; GRAY/no boundary or API change,13includedfiles/1235lines within limits. Initial ownworkflow0; actorcheck correctly blocked solely on absent final structured result review until importing71cb4f39. Before publication, corrected stale actor Reason/Discovery/Material-assumptions prose that still described the earlier test-only phase; scope/baseline/ordered behavior history and all code bytes remain unchanged. PR description now explains both integration fixes, conditional recovery and supported-evidence limits. Run final record checks and one ordinary exact-head CI candidate; release remains unqualified until green required CI and fresh review threads. Installed Hermes witness, unresolved Claude autonomous liveness and dirty-checkout fullsync retain their separate dispositions. This record-only result commit preserves reviewed application/test bytes.
