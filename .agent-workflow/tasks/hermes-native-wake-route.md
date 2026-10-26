@@ -58,7 +58,7 @@ Continuing isolated emergency bugfix/PR/green merge authorized. PR363 profile up
 —
 
 **State:**
-Ready to implement
+Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -94,4 +94,6 @@ Verification adequacy: final affected plugin file214 passed in127.89s (build/her
 Initial hosted run40353532229: Linux3.13 passed, Windows smoke passed; Linux3.12 failed after4151 passes at tests/test_codex_wake_retry_edges.py::test_expired_claim_retry_still_obeys_target_claim_ack_and_custody_guards[acked]. The preparatory claim returned503 relay_busy, late_begin, setup_pragma1334ms, before the actual guard scenario. Original build/pr364-ci312-failed.log is retained; no blind rerun or product root-cause claim. Underlying slow acquisition remains unexplained.
 
 Bounded plan delta: wrap only that initial claim in the exact scoped sqlite_queue.time monotonic counter pattern already used by the adjacent concurrent recovery test. Assert immediate restoration and original delivery/attempt identity. All competing hook claims, ACKs, recovery checks and native deadline/busy tests remain unchanged. No production change or protected test path. Astra plan GO turn01a178f3-aad3-7aa2-a683-37e8142c4d18 endorses setup-only timing control, requiring final review/CI and retaining the unexplained real acquisition evidence. Existing Hermes source GO is retained; no repeated Hermes or broad local suite for this test-only delta.
+
+Agent technical review: astra-reviewer, turn01a178f7-2d3c-7400-94f7-95d9effc52e4: GO for test-only setup delta; recovery/safety assertions remain intact. Reviewed revision: 6aec6b0122ef04eb93dba23323fc62d6f7ca0676. Verification adequacy:7 affected cases passed in4.57s; the full affected edge file30 passed in19.69s, build/hermes-route-ci-{focused,subsystem}.log. Original delayed native acquisition remains unexplained; this does not claim a product latency repair. Fresh full hosted CI is required on the final head.
 
