@@ -200,6 +200,7 @@ def plugin_context(client, monkeypatch):
     host_config.load_config_readonly = lambda: config
     monkeypatch.setitem(sys.modules, "hermes_cli", host)
     monkeypatch.setitem(sys.modules, "hermes_cli.config", host_config)
+    monkeypatch.delitem(sys.modules, "hermes_cli.plugin_session", raising=False)
     path = Path(__file__).resolve().parents[1] / "integrations/hermes/__init__.py"
     spec = importlib.util.spec_from_file_location("hermes_test_plugin", path)
     module = importlib.util.module_from_spec(spec)
@@ -438,6 +439,136 @@ def _admit_plugin_wake(ctx, marker, turn, session="ses_שלום"):
 def _persisted_wake(ctx, session="ses_שלום"):
     return next(value for key, value in ctx.state.values.items()
                 if key.startswith("wake:") and value.get("session_ref") == session)
+
+
+def test_native_wake_routes_are_captured_per_conversation(client, plugin_context, monkeypatch):
+    import contextvars
+
+    module, create, _ = plugin_context
+    current_route = contextvars.ContextVar("native_route", default="")
+    native = ModuleType("hermes_cli.plugin_session")
+    native.session_key = current_route.get
+    monkeypatch.setitem(sys.modules, native.__name__, native)
+    monkeypatch.setattr(module, "POLL_SECONDS", .01)
+    ctx = create()
+    routes = {"conversation_שלום": "opaque-host-route-a", "conversation_世界": "opaque-host-route-b"}
+    for session, route in routes.items():
+        token = current_route.set(route)
+        try:
+            ctx.hooks["pre_llm_call"](session_id=session, turn_id="seed", user_message="seed")
+            ctx.hooks["on_session_end"](session_id=session, turn_id="seed")
+        finally:
+            current_route.reset(token)
+
+    routed = []
+
+    def native_inject(marker, *, role, session_key):
+        if session_key in routes.values():
+            routed.append((marker, role, session_key))
+        return True  # Like the native host, scheduling can succeed before routing.
+
+    monkeypatch.setattr(ctx, "inject_message", native_inject)
+    rows = client.get("/relay/sessions", params={"runtime": "hermes", **SCOPE}).json()
+    for session in reversed(routes):
+        endpoint = next(row["endpoint_id"] for row in rows if row["session_ref"] == session)
+        message = send(client, endpoint, payload="Payload for " + session)
+        _await(lambda: any(route == routes[session] for _, _, route in routed))
+        marker, role, route = next(item for item in routed if item[2] == routes[session])
+        assert role == "user" and route != session
+        token = current_route.set(route)
+        try:
+            request = _admit_plugin_wake(ctx, marker, "wake", session=session)
+            observed = []
+            _execute_request(ctx, request, lambda actual: observed.append(actual),
+                             session_id=session, **HOST_EXECUTION)
+            assert message["payload"] in observed[0]["messages"][0]["content"]
+            assert all(target not in json.dumps(observed) for target in routes.values())
+            delivery = status(client, message)["deliveries"][0]
+            assert delivery["recipient_session_ref"] == session and delivery["state"] == "delivered"
+            ctx.hooks["on_session_end"](session_id=session, turn_id="wake")
+        finally:
+            current_route.reset(token)
+    assert len(routed) == 2 and current_route.get() == ""
+
+
+@pytest.mark.parametrize("failure", ["empty", "invalid", "overlong", "accessor-error",
+                                     "missing-accessor", "nested-dependency"])
+def test_invalid_native_route_retires_old_target_without_claim(
+        client, plugin_context, monkeypatch, failure):
+    module, create, config = plugin_context
+    native = ModuleType("hermes_cli.plugin_session")
+    native.session_key = lambda: "opaque-native-route"
+    monkeypatch.setitem(sys.modules, native.__name__, native)
+    monkeypatch.setattr(module, "POLL_SECONDS", .01)
+    ctx = create()
+    ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="seed", user_message="seed")
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="seed")
+    if failure == "missing-accessor":
+        del native.session_key
+    elif failure in {"accessor-error", "nested-dependency"}:
+        def unavailable():
+            if failure == "nested-dependency":
+                raise ModuleNotFoundError("missing dependency", name="host_dependency")
+            raise RuntimeError("route unavailable")
+        native.session_key = unavailable
+    else:
+        native.session_key = lambda: {"empty": "", "invalid": "bad\nroute", "overlong": "x" * 1025}[failure]
+    assert ctx.hooks["pre_llm_call"](
+        session_id="ses_שלום", turn_id="invalid", user_message="seed") is None
+    endpoint = client.get("/relay/sessions", params={"runtime": "hermes", **SCOPE}).json()[0]["endpoint_id"]
+    progress = threading.Event()
+    reads = []
+
+    def current_config():
+        if threading.current_thread().name == "pallium-hermes-relay":
+            reads.append(True)
+            if len(reads) >= 8:
+                progress.set()
+        return config
+
+    monkeypatch.setattr(sys.modules["hermes_cli.config"], "load_config_readonly", current_config)
+    message = send(client, endpoint)
+    assert progress.wait(2), "poller did not revisit the session after route invalidation"
+    assert not ctx.injections
+    assert status(client, message)["deliveries"][0]["attempts"] == 0
+    assert not any(key.startswith("wake:") for key in ctx.state.values)
+
+
+@pytest.mark.parametrize("new_route", ["opaque-replacement-route", ""])
+def test_native_route_change_preserves_attempted_wake(client, plugin_context, monkeypatch, new_route):
+    module, create, config = plugin_context
+    native = ModuleType("hermes_cli.plugin_session")
+    native.session_key = lambda: "opaque-original-route"
+    monkeypatch.setitem(sys.modules, native.__name__, native)
+    monkeypatch.setattr(module, "POLL_SECONDS", .01)
+    ctx = create()
+    ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="seed", user_message="seed")
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="seed")
+    endpoint = client.get("/relay/sessions", params={"runtime": "hermes", **SCOPE}).json()[0]["endpoint_id"]
+    message = send(client, endpoint)
+    _await(lambda: ctx.injections)
+    before = dict(_persisted_wake(ctx))
+    assert before["state"] == "injection_attempted"
+    assert ctx.injections[0][1]["session_key"] == "opaque-original-route"
+
+    native.session_key = lambda: new_route
+    ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="route-change", user_message="seed")
+    progress = threading.Event()
+    reads = []
+
+    def current_config():
+        if threading.current_thread().name == "pallium-hermes-relay":
+            reads.append(True)
+            if len(reads) >= 8:
+                progress.set()
+        return config
+
+    monkeypatch.setattr(sys.modules["hermes_cli.config"], "load_config_readonly", current_config)
+    assert progress.wait(2), "poller did not revisit the session after the native route changed"
+    assert len(ctx.injections) == 1
+    assert _persisted_wake(ctx) == before
+    delivery = status(client, message)["deliveries"][0]
+    assert delivery["state"] == "pending" and delivery["attempts"] == 0
 
 
 @pytest.mark.parametrize("ambient_profile", ["default", "sibling"])

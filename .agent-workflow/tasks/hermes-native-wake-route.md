@@ -46,7 +46,7 @@ Current-helper invalidity and legacy compatibility -> focused failure matrix and
 Review/delivery -> independent technical review, normal governance checks, required hosted CI and approved local application only. Preserve original pending reply; no manual fallback counts as automatic qualification.
 
 **Plan review:**
-Pending independent non-implementer technical review before code/test edits.
+Agent technical review: astra-reviewer, turn01a178d3-edab-7660-8b44-6a4bc852c4bb: GO with lifecycle conditions. Capture exact public key during validated foreground registration; publish under existing lock with matching session/endpoint. Missing/invalid accessor must invalidate an old in-memory target; refuse absent/mismatched binding before persisting injection_attempted. Exact missing optional module may retain legacy behavior; nested import/accessor failure must not fall back. Preserve attempted-wake fences on route changes. Require two-conversation payload/ACK and valid-to-invalid binding tests. No live change/reset approval implied.
 
 **Approvals:**
 Continuing isolated emergency bugfix/PR/green merge authorized. PR363 profile update approval does not authorize a new runtime result or clearing the failed wake record. Not required at this risk level.
@@ -55,7 +55,7 @@ Continuing isolated emergency bugfix/PR/green merge authorized. PR363 profile up
 —
 
 **State:**
-Blocked
+Implementing
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -65,6 +65,14 @@ Blocked
 ## Evidence
 
 Installed original reply relay-delivery-d5553ca452614c7f97225ce68288acfe remains pending with attempts0; private wake is injection_attempted with no turn_id. Definite gateway not-routed diagnostic explains one failed enqueue, but no general automatic retry of uncertain wakes is authorized.
+
+Implementation captures hermes_cli.plugin_session.session_key() during foreground registration, validates the opaque key, and binds it under the existing lock to the matching session/endpoint record. Invalid or changed accessors retire the old in-memory target. The poller checks the binding before persisting a wake and supplies the exact native key explicitly. Only the exact absent optional module retains legacy callback-ID behavior. Persisted wake state, Relay identity, claim/ACK and uncertain-wake rules are unchanged.
+
+The two-conversation regression failed before production edits (1 failed in5.61s; build/hermes-route-before.log), because its native scheduler deliberately accepts scheduling without routing callback IDs. After the fix, both conversations inject through distinct native routes, admit full payload and ACK with original Relay refs. Six valid-to-invalid accessor cases prevent injection/claim; two route-change cases preserve an existing injection_attempted record unchanged. Legacy-host coverage remains exercised by the existing fixture with the optional module absent.
+
+Focused routing/accessor cases:7 passed in4.47s, build/hermes-route-focused.log. Final affected plugin file:212 passed in150.01s, build/hermes-route-subsystem.log, including the two attempted-wake preservation cases. Related History and role tests:52 passed in28.20s, build/hermes-route-related.log. An earlier sandbox test attempt failed during pytest temporary-directory creation before running either case; isolated elevated execution succeeded. All tests disable the live service URL and use private temporary data. No installed or persistent user files were modified.
+
+Whole-change selector reports the full lane. Under the human's emergency instruction, required hosted full CI supplies broad validation; no redundant broad local suite. Import-linter passed; actual changed-path redline report is GRAY with no boundary/API/schema/security/config or protected-contract changes. Source evidence and native installed qualification remain separate. No new native-host success is claimed.
 
 ## Result review
 

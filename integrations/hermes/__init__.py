@@ -227,6 +227,21 @@ def _host_capabilities(ctx):
     return profile, state
 
 
+def _runtime_wake_route(session_id):
+    try:
+        from hermes_cli.plugin_session import session_key
+    except ModuleNotFoundError as exc:
+        # Older hosts used their callback ID as the injection target.
+        return session_id if exc.name == "hermes_cli.plugin_session" else None
+    except Exception:
+        return None
+    try:
+        route = session_key()
+    except Exception:
+        return None
+    return route if (_text(route, 1024) and route == route.strip() and route.isprintable()) else None
+
+
 def register(ctx):
     profile, state = _host_capabilities(ctx)
     base, container = ctx.get_config("service_url", ""), ctx.get_config("container_ref", "")
@@ -239,6 +254,7 @@ def register(ctx):
     lock, stop = threading.RLock(), threading.Event()
     reply_identity = contextvars.ContextVar("pallium_hermes_reply_identity", default=None)
     sessions, claims, admitted, observed_requests, ended_turns = {}, {}, {}, {}, {}
+    wake_targets = {}
     turn_contexts = {}
     poller = None
     bridge = None
@@ -385,6 +401,13 @@ def register(ctx):
         saved = scope(session_id)
         if expected is not None and saved != expected:
             return None
+        route = _runtime_wake_route(session_id)
+        with lock:
+            previous = wake_targets.get(session_id)
+            if previous and (previous[0] != saved or previous[1] != route):
+                wake_targets.pop(session_id, None)
+        if route is None:
+            return None
         transition = {}
         if saved:
             rows = _json_request(base, "GET", "/relay/sessions", query={
@@ -423,11 +446,16 @@ def register(ctx):
                 return None
             state.set(key("session", session_id), record)
             sessions[session_id] = record
+            wake_targets[session_id] = (dict(record), route)
         return record, relay_snapshot(session)
 
     def poll_session(session_id, record):
         if not profile_ok():
             return
+        with lock:
+            target = wake_targets.get(session_id)
+            if not target or target[0] != record:
+                return
         candidate = _json_request(base, "GET", "/relay/pending-candidate", query={
             "runtime": RUNTIME, "session_ref": session_id, "container_ref": container,
         })
@@ -443,6 +471,7 @@ def register(ctx):
             current_record = scope(session_id)
             old = wake_scope(session_id)
             if (not profile_ok() or not current_record or current_record != record
+                    or wake_targets.get(session_id) != target
                     or (old and (old.get("delivery_id") == candidate["delivery_id"]
                                  or old.get("state") != "complete"))):
                 return
@@ -450,7 +479,7 @@ def register(ctx):
             if old:
                 clear_wake(session_id, old)
         if profile_ok() and not ctx.inject_message(
-                _marker(wake["delivery_id"], nonce), role="user", session_key=session_id):
+                _marker(wake["delivery_id"], nonce), role="user", session_key=target[1]):
             with lock:
                 current = wake_scope(session_id)
                 if (profile_ok() and current and same_wake(current, wake)
