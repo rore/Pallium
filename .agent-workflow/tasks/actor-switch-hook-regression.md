@@ -19,7 +19,7 @@
 **Plan review:** Agent technical review: @astra-reviewer turn01a17a05-42b8-7d21-9acb-9dd5189620e1 proof actualdiff GO at a6048f63 plus supportedappfallback full conditions. Permits optional finite progress mode in existing recover fixture only: default onepass unchanged, walltime+sweep bounds, realentrypoints/settledworkers/perstepassertions, UTC onlycurrentpublished eligibleuncorrelatedpending deadline. Strict503boolean/header mapsNone/noHTTPretry; retain onesuccessfulrelease/rearm, alltypedrefusal authority, oneownerpergeneration/finalpayload/ACK/identity/counts. Actualcorrection/resultreview remains required.
 **Approvals:** Approved by user 2026-10-26 15:48 UTC: "and since i won't be here, i'm approving all of this, and also the agents should not block waiting for my actions". Trusted forwarding source01a171bf-bb98-71d3-ba6f-52b36f5ca022 quotes the preceding15:47UTC overnight priority to fix/merge local Relay and Hermes wake bugs, then resolve seven open PRs, using minimal process. Manager offer manager-shared-acquisition-offer-20261026 accepted; isolated focused corrections/checks/publication/merge through normal gates are covered. No installed environment or frozen PR353 execution is covered. Historical2026-10-08 approval remains in prior history.
 **Exceptions:** None
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Recovery
@@ -197,3 +197,20 @@ The release proof exposed a real observation race: successful original release i
 Neutral temporary-path diagnosis verified: all seven fake-install guard cases passed unchanged; the protected competing-hook case still failed while its tmp cwd was inside the primary Git checkout, then passed unchanged when tmp cwd moved to the Windows temporary directory outside both repositories. Remaining-failure run2passed3.82s (remaining-fixed.{log,xml}); prior failed-only run7passed/2failed7.03s retained callers-fixed.{log,xml}. These were isolated test trees, never actual installed hooks/configuration.
 
 The release proof also now waits for the whole recovery callback to settle and joins its scheduled workers before inspecting the successor. A valid successor may anchor either original or backlog delivery for the same endpoint/container; zero native owners, original release count and all final consumption assertions remain. Final connected qualification is running against this exact correction using a neutral private temporary directory; final-callers.{log,xml} will supersede the failed connected receipt without erasing it.
+
+
+## Retained recovery qualification and handoff
+
+Final source c35a706f62d89f7083cea5016500938564bf9e12 passed all139 connected cases in36.66s with zero failures/errors/skips. This includes all seven focused cases, all three autonomous production-lifespan modes, retained connection recovery, the fault harness and unchanged protected busy-wake contracts. The earlier265-case affected result was before the two narrow follow-ups; it remains prior-source evidence. The final139 requalifies those changes and direct callers. Counts overlap and are not added. Receipts and the exact neutral temporary path are under build/retained-recovery-proof/final-callers.{log,xml} and final-temp.txt.
+
+Configured import-boundary check passed. Fresh exact3c..c35a Redline is BLUE with no checkpoints or boundary violations. Source-integrity.json compares clean Git blobs, accounting for checkout CRLF, and confirms product, storage, controller, shared hook, protected busy contract and dedicated hook deadline files equal3c. The first raw-byte comparison failed because Git stores LF; it was not a product-file edit. The workflow adapter required the qualified interpreter selected through a process-only PYTHON variable; no persistent runtime selection changed.
+
+Sole Relaydev receives base3c7941c64651d1b4910b083f516c9cfec74f31a1 through this record-only commit for composition into PR364. Normal hosted full CI, exact composed blob checks and current governance remain required before release. No standalone push, separate PR, local full-suite retry, production latency cure or live environment change is claimed. The original physical Linux acquisition delay is unresolved. Repeated-release proof establishes autonomous cleanup followed by explicit natural resume; it does not establish autonomous restoration of unavailable retained registration. Manager owns canonical roadmap alignment and broader reliability status.
+
+Retain the managed checkout, branch and ignored evidence under @pal-dev1 until composition/qualification and evidence custody are confirmed. Prior branches and ignored receipts remain recoverable. Archive only when no active owner or follow-up needs this checkout; preserve ignored receipts first.
+
+## Result review
+
+Agent technical review: @astra-reviewer turn01a17a13-7392-77f3-9a93-ddaee9c152f6, Source/result GO for bounded contribution handoff.
+Reviewed revision: c35a706f62d89f7083cea5016500938564bf9e12.
+Verification adequacy: Reviewer inspected4aa0..c35a actual correction and the combined three-path scope, verified final139-case XML has zero failures/errors/skips, and retained earlier265 receipt as prior-source evidence. Complete recovery callback plus worker settlement, exactly two original release refusals then one success, valid prepared successor identity/generation, zero owners, explicit natural-hook prerequisite and final exact payload/ACK/readback/empty invariants are preserved. Protected and installation-root assertions pass unchanged with neutral temporary paths. No further local broad run requested. Composed hosted CI remains required and historical Linux acquisition cause remains unknown. This following record-only commit preserves all reviewed test bytes; user overnight authority covers the isolated contribution, without authorizing live changes.
