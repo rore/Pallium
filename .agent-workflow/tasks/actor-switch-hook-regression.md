@@ -19,7 +19,7 @@
 **Plan review:** Agent technical review: @astra-reviewer, app message from01a07bef-18c8-71b2-89ab-c0cbe91e73ad, bounded PLAN GO for b2d688a809fbed04ce482788d2a55bf8d62dba4a. Read helper and all three caller cases. Require setup-only finite copied common.time, scoped restoration and module/stdlib clock assertions, exact persisted readback without repair, controlled real-lock RED/GREEN, and unchanged native refusal/contended checks. No product latency claim or PR353 expansion; result review remains pending.
 **Approvals:** Approved by user 2026-10-26 15:48 UTC: "and since i won't be here, i'm approving all of this, and also the agents should not block waiting for my actions". Trusted forwarding source01a171bf-bb98-71d3-ba6f-52b36f5ca022 quotes the preceding15:47UTC overnight priority to fix/merge local Relay and Hermes wake bugs, then resolve seven open PRs, using minimal process. Manager offer manager-shared-acquisition-offer-20261026 accepted; isolated focused corrections/checks/publication/merge through normal gates are covered. No installed environment or frozen PR353 execution is covered. Historical2026-10-08 approval remains in prior history.
 **Exceptions:** None
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Recovery
@@ -56,3 +56,11 @@ Overlap: live PR359 concerns Codex nested TOML migration, with no demonstrated s
 
 Branch feat/actor-switch-hook-regression, base39d21623, clean before record write. Current phase: plan review pending; zero tests and zero functional edits in this resumption. Next: independent review, one deterministic controlled RED/GREEN and focused verification under the explicit overnight mandate. No full-loop reruns, native deployment or claim-contract accommodation.
 2026-10-26 current plan accepted by existing independent Astra reviewer; implementation may proceed under the recorded overnight human approval. Review arrived through app fallback after exact Relay review delivery remained pending. No duplicate reviewer or review assignment was created.
+
+### Current implementation and verification
+
+The reviewed helper now uses only a copied common.time and finite count(step=.001) during the real seed write, restores the previous module object and stdlib monotonic before return, and reads exact actor/context from the real persisted file without repairing it. The new regression injects a101ms logical setup gap through a pass-through open wrapper, observes the real lock implementation, and requires acquisition/write success plus restored clocks. Both existing functional test callers and all product code/budgets are unchanged. Named deterministic .NET replacements were used because the earlier session apply_patch1385 failure must not be retried.
+
+Retained controlled RED: the old helper failed its original seed assertion,1 failed in1.09s, with the same pre_attempt_deadline/error=None diagnostic as hosted CI. The correction then passed all35 focused cases in2.32s: new regression, all3 helper caller cases,8 unchanged cross-runtime lock failure-boundary cases and23 unchanged hook deadline controls. The affected registration file passed78 cases in19.85s. Zero skips/errors/failures in either GREEN report. JUnit/logs and source/runtime identity are under build/actor-cache-seed-evidence/{red,green-focused,affected-file}.* and runtime.log.
+
+Tests used the existing CPython3.13.14/pytest8.4.2/SQLAlchemy2.0.48 environment without installation; app/core/storage imports resolved to this isolated checkout. Every run used fresh external temporary profile and pytest state. No primary or installed config/data/service, queue concurrency test or frozen PR353 artifact was modified. Current result establishes deterministic seed preparation; it does not explain physical CI setup delay or prove native installed delivery. Selector/governance and independent result review follow; full hosted CI remains required on the composed candidate before merge.
