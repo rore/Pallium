@@ -3,7 +3,7 @@
 
 **Target:** Pallium Codex setup.
 
-**Scope:** app/cli/setup_codex.py, its existing CLI setup tests, and this Work Record.
+**Scope:** app/cli/setup_codex.py, its existing CLI setup tests, tests/test_cross_container_relay_e2e.py registration-only preparation, and this Work Record.
 
 **Constraints:** Preserve unrelated TOML, extra string-valued Pallium env entries, and supported custom tool entries. Parse the complete candidate before writing; a parse/validation failure must leave the existing file unchanged. Atomicity after a filesystem write failure is outside this task. Do not touch live config, installed files, or services.
 
@@ -38,7 +38,7 @@
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -115,3 +115,14 @@ Verification adequacy: Reviewer inspected the actual header scanner/slice, manag
 ## Publication and qualification handoff
 
 Publish the reviewed continuation to the existing rore/Pallium PR359 branch fix/codex-setup-nested-toml, mark ready for review, retain current-head full CI and resolve actual review findings before authorized merge. Do not create a replacement PR or alter installations. No roadmap item identity was supplied for this standalone setup fix; manager receives delivered revision/remaining scope for canonical queue alignment. Keep the retained checkout and ignored evidence until merge/current qualification and custody are confirmed; old child commits and failed evidence remain recoverable.
+
+
+## Current CI prerequisite preparation correction
+
+At published c7d32a9a5a6468224a0f5f6f4036e730bbfe9360, normal full CI40418560199 Python3.12 passed8153/93skipped/2xfailed443.92s; Windows smoke and governance passed. Python3.13 job121906969778 failed first sender registration in test_rejected_legacy_and_runtime_selectors_have_no_delivery_or_wake_side_effects:503 relay_busy, pre_attempt_deadline2085ms, no recorded acquisition phases;3592passed/21skipped/1xfailed406.32s before fail-fast. Old failed CI remains failed, physical delay cause unknown. Private current-ci-terminal.json retains exact evidence. No rerun or installation action was taken.
+
+Manager app continuation explicitly assigns this owner the bounded registration-only preparation correction and says to preserve all real subjects/native defaults; Relaydev was told not to patch this module/PR in parallel. Source inspection of all six _turn callers and roadmap/features/investigate-cross-repository-relay-coordination.md Required validation finds initial registration is prerequisite, while targeting, actor/container identity, alias ownership, rejection/no-side-effects and reply/backlog lifecycle are the subjects. The contract has no first-attempt registration latency requirement; bounded native admission/refusal coverage remains elsewhere unchanged.
+
+Plan: reuse existing audited relay_admission_clock without changing it. Each of six cross-container tests opts into its semantic parameter; scope only initial HTTP registrations with expected_admissions2,3,3,3,3,2 respectively, and the first lifecycle's later sender container-move registration with a separate expected1 scope. All actual send/claim/ACK/reply/name-conflict/takeover/close/reopen/no-delivery/no-wake assertions and native timing outside scopes remain unchanged. No global/autouse clock, HTTP retry, helper, fixture implementation, timeout, product or protected-test change. Four net PR paths; retain original setup source/results and reuse unchanged reviews. Risk/complexity remain Elevated/Moderate.
+
+Verification: run entire changed cross-container module and existing tests/test_client_fixture.py audit serially with current qualified read-only interpreter and isolated temporary files; inspect actual diff for registration-only scope and restoration. Run fresh whole-change selector/governance/diff checks, existing reviewer actual diff/results review, then normal published-head full CI; no local full-suite repeat. State returns to planning pending bounded existing reviewer plan review (paldev1-pr359-registration-plan-review-20261027); no test edit yet.
