@@ -440,6 +440,65 @@ def _persisted_wake(ctx, session="ses_שלום"):
                 if key.startswith("wake:") and value.get("session_ref") == session)
 
 
+@pytest.mark.parametrize("ambient_profile", ["default", "sibling"])
+def test_poller_keeps_named_profile_after_foreground_context_ends(
+        client, plugin_context, monkeypatch, ambient_profile):
+    import contextvars
+    from copy import deepcopy
+
+    module, create, config = plugin_context
+    profile = contextvars.ContextVar("hermes_profile", default=ambient_profile)
+    other = deepcopy(config)
+    if ambient_profile == "default":
+        other["plugins"]["enabled"].remove("pallium-hermes-relay")
+    else:
+        other["plugins"]["entries"]["pallium-hermes-relay"]["settings"]["container_ref"] = "sibling-scope"
+    changed_read = threading.Event()
+
+    def current_config():
+        if profile.get() != "named-profile":
+            return other
+        if config["plugins"]["entries"]["pallium-hermes-relay"]["settings"]["container_ref"] != SCOPE["container_ref"]:
+            changed_read.set()
+        return config
+
+    monkeypatch.setattr(sys.modules["hermes_cli.config"], "load_config_readonly", current_config)
+    monkeypatch.setattr(module, "POLL_SECONDS", .01)
+    token = profile.set("named-profile")
+    try:
+        ctx = create()
+        ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="seed", user_message="seed")
+        ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="seed")
+    finally:
+        profile.reset(token)
+
+    endpoint = client.get("/relay/sessions", params={"runtime": "hermes", **SCOPE}).json()[0]["endpoint_id"]
+    message = send(client, endpoint, payload="Profile-scoped reply שלום 🌍")
+    _await(lambda: ctx.injections)
+    assert profile.get() == ambient_profile
+    assert len(ctx.injections) == 1
+    marker, target = ctx.injections[0]
+    assert target == {"role": "user", "session_key": "ses_שלום"}
+    assert status(client, message)["deliveries"][0]["attempts"] == 0
+    token = profile.set("named-profile")
+    try:
+        request = _admit_plugin_wake(ctx, marker, "wake")
+        observed = []
+        _execute_request(ctx, request, lambda actual: observed.append(actual), **HOST_EXECUTION)
+        assert message["payload"] in observed[0]["messages"][0]["content"]
+        assert status(client, message)["deliveries"][0]["state"] == "delivered"
+        ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="wake")
+    finally:
+        profile.reset(token)
+
+    config["plugins"]["entries"]["pallium-hermes-relay"]["settings"]["container_ref"] = "changed-scope"
+    later = send(client, endpoint, payload="Must remain fenced")
+    assert changed_read.wait(1), "poller must reread current profile configuration"
+    assert len(ctx.injections) == 1
+    assert status(client, later)["deliveries"][0]["attempts"] == 0
+    assert other["plugins"]["entries"]["pallium-hermes-relay"]["settings"]["container_ref"] != "changed-scope"
+
+
 @pytest.mark.parametrize("host_accepted", [True, False], ids=["scheduled", "refused"])
 def test_host_boundary_keeps_unobserved_delivery_unclaimed(
         client, plugin_context, monkeypatch, host_accepted):

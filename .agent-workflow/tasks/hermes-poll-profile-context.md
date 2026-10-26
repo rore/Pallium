@@ -47,7 +47,7 @@ Delivery -> independent technical review, existing governance checks and require
 Emergency scope -> no redundant broad local suite; required hosted full CI remains merge gate.
 
 **Plan review:**
-Pending independent non-implementer technical review before code/test edits.
+Agent technical review: astra-reviewer, independent non-implementer, turn01a178ab-08c1-7f01-83aa-609fa1fdd811 at2026-10-26T14:44:47Z. GO for copying profile context at poller thread startup while rereading current mutable configuration. Required regression: full delivery, sibling/default isolation and changed-owned-config rejection. No host changes approved by this review.
 
 **Approvals:**
 Isolated bugfix/PR/green merge already authorized. No new Hermes installed/plugin reload approval inferred. Not required at this risk level.
@@ -56,7 +56,7 @@ Isolated bugfix/PR/green merge already authorized. No new Hermes installed/plugi
 —
 
 **State:**
-Blocked
+Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -64,6 +64,10 @@ Blocked
 2026-10-26: Read-only diagnosis confirmed current installed native profile plugin in C:/Users/I347041/AppData/Local/hermes/profiles/pelican; no live files changed. Separate isolated branch feat/hermes-poll-profile-context from main4a546362; previous Codex repair/notes remain preserved on feat/retained-reregister-repair. Exact intended edits are listed in Scope. Manager reports this chat remains sole investigator; current owner receipt requested through Relay. Ordinary implementation authorized by user's continuing emergency repair task.
 
 ## Evidence
+
+Implementation: the existing poller Thread target now uses contextvars.copy_context().run with the already imported standard library. Two caller-surface cases reset foreground scope to default/sibling before sending a candidate, then drive injection, claim, full payload observation and ACK through existing callbacks/read path, and reject a later owned-scope mutation. Both failed before the fix and passed after. No wake fences, claim/ACK logic or host API changed.
+
+Focused isolated verification: tests/test_hermes_relay_plugin.py:203 passed in143.89s; tests/test_hermes_history.py and tests/test_hermes_role_attribution.py:52 passed in26.73s. Baseline/after logs are build/hermes-profile-{before,after}.log; affected-file logs are build/hermes-profile-{focused,related}.log. Live URL disabled; private task PALLIUM_HOME. Whole-change selector reports full lane; human emergency instruction omits redundant broad local suite while required hosted full CI remains a merge gate. Installed plugin is still unchanged.
 
 Read-only Hermes helper experiment: caller_home=Pelican, ordinary poller_home=default root, copied_home=Pelican, thread_inherit_context=0. Profile config reads output only enabled/injection booleans, no secrets. Original reply unclaimed; no wake fence/state present to reset. Runtime and installation untouched.
 
