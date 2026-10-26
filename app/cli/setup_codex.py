@@ -15,6 +15,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import tomllib
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -234,24 +235,27 @@ def _toml_inline_string(value: str) -> str:
     return json.dumps(value)
 
 
-def _mcp_env_toml(port: int) -> str:
+def _mcp_env_toml(port: int, existing: dict[str, str] | None = None) -> str:
     """Render process-wide MCP settings without pinning one project scope.
 
     Standard setup serves Codex tasks across projects. Hooks inject each task's
     trusted container scope into its turn for Relay callers to copy; an
     intentional hookless integration may configure PALLIUM_CONTAINER_REF.
     """
-    values = {
-        "PALLIUM_MCP_TRANSPORT": "stdio",
-        "PALLIUM_BASE_URL": f"http://localhost:{port}",
-        "PALLIUM_AGENT_REF": "codex",
-        "PYTHONPATH": os.pathsep.join(_mcp_pythonpath_entries()),
-    }
+    values = dict(existing or {})
+    values.update(
+        {
+            "PALLIUM_MCP_TRANSPORT": "stdio",
+            "PALLIUM_BASE_URL": f"http://localhost:{port}",
+            "PALLIUM_AGENT_REF": "codex",
+            "PYTHONPATH": os.pathsep.join(_mcp_pythonpath_entries()),
+        }
+    )
     path_value = os.pathsep.join(_mcp_path_entries())
     if path_value:
         values["PATH"] = path_value
     pairs = [
-        f"{key} = {_toml_inline_string(value)}"
+        f"{_toml_key(key)} = {_toml_inline_string(value)}"
         for key, value in values.items()
     ]
     return "{ " + ", ".join(pairs) + " }"
@@ -270,6 +274,112 @@ def _read_toml(path: Path) -> str:
 def _write_toml(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _parse_toml(content: str) -> dict:
+    try:
+        return tomllib.loads(content)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError("Codex config candidate is invalid TOML") from exc
+
+
+def _pallium_server_from_toml(content: str) -> dict:
+    parsed = _parse_toml(content)
+    servers = parsed.get("mcp_servers", {})
+    if not isinstance(servers, dict):
+        raise ValueError("Codex mcp_servers must be a table")
+    server = servers.get("pallium", {})
+    if not isinstance(server, dict):
+        raise ValueError("Codex Pallium MCP configuration must be a table")
+    return server
+
+
+def _toml_key(value: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9_-]+", value):
+        return value
+    return _toml_inline_string(value)
+
+
+def _mcp_tools_toml(existing: dict) -> str:
+    managed = {
+        "pallium_relay_send",
+        "pallium_relay_reply",
+        "pallium_relay_ack",
+        "pallium_relay_receive",
+    }
+    tools = [
+        f'{name} = {{ approval_mode = "approve" }}'
+        for name in (
+            "pallium_relay_send",
+            "pallium_relay_reply",
+            "pallium_relay_ack",
+            "pallium_relay_receive",
+        )
+        if name in managed
+    ]
+    for name, settings in existing.items():
+        if name in managed:
+            continue
+        if (not isinstance(name, str) or not isinstance(settings, dict)
+                or set(settings) != {"approval_mode"}
+                or not isinstance(settings["approval_mode"], str)):
+            raise ValueError("Unsupported custom Pallium MCP tool configuration")
+        tools.append(
+            f"{_toml_key(name)} = {{ approval_mode = "
+            f"{_toml_inline_string(settings['approval_mode'])} }}"
+        )
+    return "{ " + ", ".join(tools) + " }"
+
+
+def _toml_multiline_delimiter(line: str, active: str | None) -> str | None:
+    """Track multiline TOML strings so their contents cannot look like headers."""
+    index = 0
+    while index < len(line):
+        if active is not None:
+            quote = active[0]
+            if quote == '"' and line[index] == "\\":
+                index += 2
+                continue
+            if line[index] == quote:
+                run_end = index
+                while run_end < len(line) and line[run_end] == quote:
+                    run_end += 1
+                if run_end - index >= 3:
+                    # TOML permits one or two quote characters immediately
+                    # before a multiline delimiter; the whole run closes it.
+                    index = run_end
+                    active = None
+                    continue
+                index = run_end
+                continue
+            index += 1
+            continue
+
+        if line[index] == "#":
+            return None
+        if line.startswith(('"""', "'''"), index):
+            active = line[index:index + 3]
+            index += 3
+            continue
+        if line[index] == '"':
+            index += 1
+            while index < len(line):
+                if line[index] == "\\":
+                    index += 2
+                elif line[index] == '"':
+                    index += 1
+                    break
+                else:
+                    index += 1
+            continue
+        if line[index] == "'":
+            closing = line.find("'", index + 1)
+            if closing < 0:
+                return None
+            index = closing + 1
+            continue
+        index += 1
+    return active
 
 
 def _features_section(content: str) -> re.Match[str] | None:
@@ -293,36 +403,62 @@ def _ensure_feature_flag(content: str) -> str:
 
 def _ensure_mcp_server(content: str, port: int = 19836) -> str:
     """Ensure [mcp_servers.pallium] section exists in config.toml with correct port."""
-    if "[mcp_servers.pallium]" in content:
-        content = _remove_mcp_server(content)
+    existing_server = _pallium_server_from_toml(content)
+    existing_env = existing_server.get("env", {})
+    existing_tools = existing_server.get("tools", {})
+    if not isinstance(existing_env, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in existing_env.items()
+    ):
+        raise ValueError("Unsupported custom Pallium MCP environment")
+    if not isinstance(existing_tools, dict):
+        raise ValueError("Unsupported custom Pallium MCP tools")
+    content = _remove_mcp_server(content)
 
     mcp_block = (
         '\n[mcp_servers.pallium]\n'
         f'command = "{_mcp_command()}"\n'
         'args = ["-P", "-m", "app.run", "mcp"]\n'
         'env_vars = ["CODEX_APP_TOOLS_PIPE_PATH"]\n'
-        f'env = {_mcp_env_toml(port)}\n'
+        f'env = {_mcp_env_toml(port, existing=existing_env)}\n'
         'required = true\n'
         'startup_timeout_sec = 10\n'
         'tool_timeout_sec = 30\n'
         'default_tools_approval_mode = "prompt"\n'
-        'tools = { pallium_relay_send = { approval_mode = "approve" }, '
-        'pallium_relay_reply = { approval_mode = "approve" }, '
-        'pallium_relay_ack = { approval_mode = "approve" }, pallium_relay_receive = { approval_mode = "approve" } }\n'
+        f'tools = {_mcp_tools_toml(existing_tools)}\n'
     )
 
     if content and not content.endswith("\n"):
         content += "\n"
     content += mcp_block
+    _parse_toml(content)
     return content
 
 
 def _remove_mcp_server(content: str) -> str:
-    """Remove [mcp_servers.pallium] section from config.toml."""
-    # Match section header + all subsequent lines that don't start a new section
-    pattern = r'\n?\[mcp_servers\.pallium\]\n(?:(?!\n?\[)[^\n]*\n?)*'
-    content = re.sub(pattern, '', content)
-    return content
+    """Remove the Pallium table and every descendant while preserving siblings."""
+    kept: list[str] = []
+    in_pallium_subtree = False
+    multiline_string: str | None = None
+    for line in content.splitlines(keepends=True):
+        stripped = line.strip()
+        if multiline_string is None and stripped.startswith("["):
+            try:
+                header = tomllib.loads(line)
+            except tomllib.TOMLDecodeError:
+                header = {}
+            servers = header.get("mcp_servers", {})
+            is_pallium_table = isinstance(servers, dict) and "pallium" in servers
+            in_pallium_subtree = is_pallium_table
+            if is_pallium_table:
+                if kept and not kept[-1].strip():
+                    kept.pop()
+                multiline_string = _toml_multiline_delimiter(line, multiline_string)
+                continue
+        if not in_pallium_subtree:
+            kept.append(line)
+        multiline_string = _toml_multiline_delimiter(line, multiline_string)
+    return "".join(kept)
 
 
 def _remove_feature_flag(content: str) -> str:
@@ -795,8 +931,15 @@ def install(
     # 1. Feature flag + MCP in config.toml
     config_path = _codex_config_path()
     config_content = _read_toml(config_path)
-    config_content = _ensure_feature_flag(config_content)
-    config_content = _ensure_mcp_server(config_content, port=port)
+    try:
+        config_content = _ensure_feature_flag(config_content)
+        config_content = _ensure_mcp_server(config_content, port=port)
+    except ValueError as exc:
+        print(
+            f"ERROR: Could not safely update Codex MCP configuration: {exc}",
+            file=sys.stderr,
+        )
+        return 2
     _write_toml(config_path, config_content)
     _install_relay_profile()
     print(f"  Configured feature flags and MCP server in {config_path}")
