@@ -755,6 +755,10 @@ def test_expired_claim_clock_rollback_clamps_without_replaying_active_lease(
 def test_expired_claim_retry_still_obeys_target_claim_ack_and_custody_guards(
     http_wake, monkeypatch, change, *, force_initial_refusal=False,
 ):
+    from itertools import count
+    from types import SimpleNamespace
+    from storage import sqlite_queue
+
     http, relay, registry, service, desktop, send, _ = http_wake
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
     _freeze_clock(monkeypatch, now)
@@ -787,10 +791,19 @@ def test_expired_claim_retry_still_obeys_target_claim_ack_and_custody_guards(
         assert attempts[-1].get("result") == uncertain
         assert len(desktop.owners) == 1
         assert registry.snapshot(first["recipient_endpoint_id"]) == uncertain
-    claim = http.post("/relay/turn", json={
-        "runtime": "codex", "session_ref": TARGET, **SCOPE,
-    })
+    # Prepare the expired lease; native acquisition deadlines are tested separately.
+    native_queue_time = sqlite_queue.time
+    with monkeypatch.context() as claim_patch:
+        claim_time = SimpleNamespace(**vars(native_queue_time))
+        claim_time.monotonic = count(step=0.001).__next__
+        claim_patch.setattr(sqlite_queue, "time", claim_time)
+        claim = http.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": TARGET, **SCOPE,
+        })
+    assert sqlite_queue.time is native_queue_time
     assert claim.status_code == 200, claim.text
+    claimed, = claim.json()["deliveries"]
+    assert claimed["delivery_id"] == first["delivery_id"] and claimed["attempts"] == 1
     initial = registry.snapshot(first["recipient_endpoint_id"])
     now[0] += timedelta(seconds=60)
     if change in {"working", "unknown"}:
