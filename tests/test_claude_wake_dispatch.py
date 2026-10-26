@@ -2965,6 +2965,66 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
     assert acknowledged_ids == [claimed["delivery_id"]]
 
 
+@pytest.mark.parametrize("decoration", ["exact", "prefix", "suffix"])
+def test_claude_empty_wake_notice_and_near_match_memory_boundaries(client, monkeypatch, tmp_path, decoration):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.dependencies import build_router
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    notice = "Pallium Relay wake notice: new messages available."
+    text = {"exact": notice, "prefix": "Please explain: " + notice, "suffix": notice + " user note"}[decoration]
+    scope = {"container_ref": PAYLOAD["container_ref"]}
+    app = FastAPI()
+    app.include_router(build_router(client.app.state.pallium_service,
+                                   relay_storage=client.app.state.pallium_service._storage,
+                                   claude_wake_registry=ClaudeWakeRegistry()))
+    with TestClient(app, client=("127.0.0.1", 50000)) as http:
+        hook = _load_claude_hook("user_prompt_submit", monkeypatch)
+        common = sys.modules[hook.relay_turn.__module__]
+        monkeypatch.setattr(common, "STATE_DIR", tmp_path / "hook-state")
+        monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "hook-sessions")
+        monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: scope["container_ref"])
+        monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "local")
+        monkeypatch.setattr(hook, "read_hook_input", lambda: {
+            "session_id": PAYLOAD["session_ref"], "cwd": str(tmp_path), "prompt": text,
+        })
+        relay_calls, memory_calls = [], []
+
+        def register(session, container, **kwargs):
+            response = http.post("/internal/claude-wake/register", json={
+                **PAYLOAD, "session_ref": session, "container_ref": container, "idle": kwargs.get("idle", False),
+            })
+            assert response.status_code == 204
+            return True
+
+        def relay_request(method, path, body, **kwargs):
+            response = http.request(method, path, json=body)
+            assert response.status_code == 200, response.text
+            assert response.json()["deliveries"] == []
+            relay_calls.append((method, path))
+            return response.json()
+
+        def memory_request(method, path, body):
+            memory_calls.append((method, path, body))
+            return {"injectable_blocks": []}
+
+        monkeypatch.setattr(hook, "register_claude_wake", register)
+        monkeypatch.setattr(hook, "relay_request", relay_request)
+        monkeypatch.setattr(hook, "pallium_request", memory_request)
+        monkeypatch.setattr(hook, "acknowledge_relay", lambda *_a, **_k: pytest.fail("Empty notice must not ACK"))
+        for invocation in (1, 2):
+            try:
+                hook.main()
+            except SystemExit as exited:
+                assert exited.code == 0
+            assert len(relay_calls) == (invocation if decoration == "exact" else 1)
+            assert len(memory_calls) == (0 if decoration == "exact" else 1)
+        if decoration != "exact":
+            method, path, body = memory_calls[0]
+            assert (method, path, body["content"], body["query_text"]) == ("POST", "/item-and-query", text, text)
+
+
 def test_cross_container_duplicate_native_claude_endpoints_wake_independently(
     client, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
