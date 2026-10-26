@@ -107,7 +107,7 @@ jobs:
         run: python -c "import mcp; import app.mcp.server"
 
       - name: Run tests
-        run: python -m pytest tests/ ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q --durations=20 --junitxml=test-results/linux-${{ matrix.python-version }}-test-all.xml
+        run: python -m pytest tests/ ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q -n 0 --durations=20 --junitxml=test-results/linux-${{ matrix.python-version }}-test-all.xml
 
       - name: Upload test results
         if: always()

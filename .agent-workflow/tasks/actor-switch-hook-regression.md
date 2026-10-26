@@ -19,7 +19,7 @@
 **Plan review:** Agent technical review: @astra-reviewer, turn01a17943-c6dc-7b23-bae1-4c4c75e13671, bounded technical/architecture PLAN GO at948f149b for Linux full-lane CLI -n0. Preserve all case selection/matrix/markers/fail-fast/JUnit/result and in-test concurrency; verify effective CLI tokens, not formatting. Longer CI and reduced incidental cross-case stress are explicit tradeoffs, not equivalent stress qualification or proven xdist cause. One composed hosted run tests feasibility; preserve original failure and stop on new misses rather than chase green. No timeout increase/framework. Result review pending.
 **Approvals:** Approved by user 2026-10-26 15:48 UTC: "and since i won't be here, i'm approving all of this, and also the agents should not block waiting for my actions". Trusted forwarding source01a171bf-bb98-71d3-ba6f-52b36f5ca022 quotes the preceding15:47UTC overnight priority to fix/merge local Relay and Hermes wake bugs, then resolve seven open PRs, using minimal process. Manager offer manager-shared-acquisition-offer-20261026 accepted; isolated focused corrections/checks/publication/merge through normal gates are covered. No installed environment or frozen PR353 execution is covered. Historical2026-10-08 approval remains in prior history.
 **Exceptions:** None
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Recovery
@@ -64,7 +64,7 @@ The reviewed helper now uses only a copied common.time and finite count(step=.00
 Retained controlled RED: the old helper failed its original seed assertion,1 failed in1.09s, with the same pre_attempt_deadline/error=None diagnostic as hosted CI. The correction then passed all35 focused cases in2.32s: new regression, all3 helper caller cases,8 unchanged cross-runtime lock failure-boundary cases and23 unchanged hook deadline controls. The affected registration file passed78 cases in19.85s. Zero skips/errors/failures in either GREEN report. JUnit/logs and source/runtime identity are under build/actor-cache-seed-evidence/{red,green-focused,affected-file}.* and runtime.log.
 
 Tests used the existing CPython3.13.14/pytest8.4.2/SQLAlchemy2.0.48 environment without installation; app/core/storage imports resolved to this isolated checkout. Every run used fresh external temporary profile and pytest state. No primary or installed config/data/service, queue concurrency test or frozen PR353 artifact was modified. Current result establishes deterministic seed preparation; it does not explain physical CI setup delay or prove native installed delivery. Selector/governance and independent result review follow; full hosted CI remains required on the composed candidate before merge.
-## Result review
+## Cached-actor prerequisite result review
 
 Agent technical review: @astra-reviewer, independent turn01a17922-f84f-76e1-a6c4-dbfaefe511b7, RESULT GO for manager handoff. Exact diff from main39d21623, helper/all3 callers, direct state-reader implementation, source hash and retained RED/GREEN/file/runtime receipts were inspected without reviewer execution or edits.
 Reviewed revision: 911c85f8ca4a4ea1f5a24f3451bdc97a93c6d875.
@@ -83,3 +83,11 @@ Smallest execution change: one Linux pytest CLI gains -n0. This removes incident
 
 Current accepted source head8f7528ab is retained; no CI/test edit yet. Replanning existing High/Moderate record for RED architecture-review boundary. Human overnight authorization remains applicable to isolated correction/normal publication and merge, not installed operations. Existing PR353 frozen execution/runtime/artifacts remain untouched. Next: current independent plan review, deterministic CI contract RED/GREEN, one unchanged E2E, focused workflow contracts, result review and exact composition handoff.
 Current CI plan accepted by independent existing Astra reviewer. Incidental cross-case parallel stress is reduced; explicit in-test stress/concurrency and all observable assertions remain. This is an execution-environment choice, not a claim of equivalent stress qualification or historical latency cure.
+
+### CI execution implementation and local evidence
+
+The only runtime configuration delta is explicit -n0 on the Linux full-lane pytest command. Every application test, pyproject marker/default, Linux312/313 matrix, fail-fast/manual condition, artifact path, Windows/nightly command, in-test thread/process and production deadline remains unchanged. Eight parametrized argument checks parse the actual YAML and shell tokens across four events/two Python versions, require serial workers and the exact complete case-selection/reporting argument set without formatting dependence.
+
+Controlled command RED:8 cases failed normally against the unchanged workflow,0 skips/errors,0.53s, all at missing -n override. After the one-line configuration change, the entire affected workflow file passed23 cases in27.07s,0 skips/errors/failures; one existing record_property/xunit2 warning is retained. The unchanged late-ACK E2E passed once under real clocks/HTTP/native persistence,1 passed in1.96s; its full original payload/durable delivery/no-confirmation assertions completed. This local Windows observation is not evidence of Linux xdist causation or a timing repair. No repeated cache tests, assertion/tolerance changes or product patches were made.
+
+Receipts: build/ci-serial-evidence/{red,workflow-green,unchanged-e2e}.{log,xml}. Accepted cache source still SHA256 BFB93044795461C1B61C19C81E8AAF64CD160C3A78431D0EFDBB8ACD4188DC8E; unchanged original hook test source SHA256 811A2E2005A035C5ADB9394A2B643946BF3A73A0A1DA3514CA0EFE8D7571735D. Whole-change selector still requires full; final composed hosted CI and case census remain Relaydev-owned. Longer execution and reduced incidental cross-case stress are disclosed; no budgets or timeouts increased. Current implementation awaits independent result review and RED checkpoint validation on the real PR.

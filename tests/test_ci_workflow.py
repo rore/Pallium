@@ -60,6 +60,28 @@ def test_required_linux_lane_cannot_skip_mcp_tests() -> None:
     assert "--durations=20" in linux
 
 
+@pytest.mark.parametrize("version", ("3.12", "3.13"))
+@pytest.mark.parametrize("event", ("pull_request", "push", "schedule", "workflow_dispatch"))
+def test_linux_full_suite_is_serial_without_narrowing_selection(version, event) -> None:
+    import yaml
+
+    job = yaml.safe_load(WORKFLOW)["jobs"]["test"]
+    assert job["strategy"]["matrix"]["python-version"] == ["3.12", "3.13"]
+    command, = [step["run"] for step in job["steps"] if step.get("name") == "Run tests"]
+    flag = "${{ github.event_name != 'workflow_dispatch' && '-x' || '' }}"
+    command = command.replace(flag, "" if event == "workflow_dispatch" else "-x")
+    command = command.replace("${{ matrix.python-version }}", version)
+    tokens = shlex.split(command)
+    assert tokens[:4] == ["python", "-m", "pytest", "tests/"]
+    args = tokens[4:]
+    assert "-n" in args and args[args.index("-n") + 1] == "0"
+    expected = {"-n", "0", "-q", "--durations=20",
+                f"--junitxml=test-results/linux-{version}-test-all.xml"}
+    if event != "workflow_dispatch":
+        expected.add("-x")
+    assert set(args) == expected and len(args) == len(expected)
+
+
 def test_windows_smoke_installs_mcp_for_actual_logging_regression() -> None:
     smoke = _job("windows-smoke", "windows-full")
     assert "tests/test_runtime_logging.py" in smoke
