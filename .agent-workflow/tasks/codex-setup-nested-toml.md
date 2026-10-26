@@ -38,7 +38,7 @@
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -155,3 +155,12 @@ Whole-change selector selects full with exactly four paths; current Redline GRAY
 
 
 Pre-publication workflow correctly detected the missing ordered scope-change entry; baseline stayed unchanged. Added equivalent mechanics classification for the registration-only qualification prerequisite, with exact baseline/current scope and actual unchanged-subject proof. No source/test changes or reruns resulted.
+
+
+## Published-head CI blocker and retained continuation
+
+Published76ea39d8c75780b39b3a2bda87b65ef0b723ef3f has normal run40421733869. Windows smoke and governance pass; both Linux jobs fail. Python3.13 job121917633178 fails test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_acks at missing delivery_acked event after fresh exact payload emission; route ACK logged2235ms. Earlier expiry409/pending0/no-emission and fresh emission assertions passed; later deliveredstate read/oracle unreached.3236passed22skipped1xfailed1failure295.07s. This is an actual native ACK subject; do not widen semantic scopes, relax timeout/assertions, or claim latency cure.
+
+Python3.12 job121917633329 errors before test_cleanup_finds_safe_row_after_64_older_unsafe_rows: fixture first service.turn(sender) raises ImmediateTransactionBusyError late_begin;6108passed24skipped2xfailed1error463.80s. Cleanup subject unreached, direct-service fixture has no route phase timing. This separate prerequisite failure does not discharge native ACK failure. Physical causes remain unknown. Private current-native-ack-failure.json and current-ci-terminal-all.json retain exact current-head evidence; no rerun or diagnostic program.
+
+All four original bot threads were fixed, replied and resolved; current setup/source result GO and124 affected passes stand only within their stated scope. Whole-change CI remains unqualified; merge blocked. Sent exact native ACK and both terminal failures to manager and Relaydev for owned prerequisite disposition/engineering assignment. No further source change pending that disposition. This local Work Record-only blocker commit is intentionally not pushed to avoid status-only CI churn; published head remains76ea39d8. Retain checkout/private receipts, no cleanup or installed action.
