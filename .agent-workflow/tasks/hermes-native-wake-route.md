@@ -8,7 +8,7 @@ Hermes wakes target the native host route of the intended conversation instead o
 Pallium Hermes native integration.
 
 **Scope:**
-integrations/hermes/__init__.py runtime route capture and poller target selection; focused tests/test_hermes_relay_plugin.py fixture and routing regressions.
+integrations/hermes/__init__.py runtime route capture and poller target selection; focused tests/test_hermes_relay_plugin.py fixture and routing regressions. Supporting CI correction in tests/test_codex_wake_retry_edges.py controls only preparatory claim acquisition timing, preserving the actual recovery and deadline assertions.
 
 **Constraints:**
 Copy host-provided identity unchanged; never construct native routes from profile/name/session text. Preserve Relay session refs, profile/endpoint/claim/ACK and uncertain-wake fences. No desktop control, forced turn, resend, receive or unapproved state/config/installed edits. Retain legacy callback-ID targeting only when the public route module is genuinely absent.
@@ -21,6 +21,9 @@ Two distinct conversations in one profile use their respective runtime-provided 
 
 **Relationships:**
 {"schema_version":1,"sources":null,"pull_requests":[]}
+
+**Behavior changes:**
+[{"target":"task-context.scope","classification":"coverage-only","before":"integrations/hermes/__init__.py runtime route capture and poller target selection; focused tests/test_hermes_relay_plugin.py fixture and routing regressions.","after":"integrations/hermes/__init__.py runtime route capture and poller target selection; focused tests/test_hermes_relay_plugin.py fixture and routing regressions. Supporting CI correction in tests/test_codex_wake_retry_edges.py controls only preparatory claim acquisition timing, preserving the actual recovery and deadline assertions.","reason":"CI312 refused the initial setup claim before the guard scenario; reuse the adjacent deterministic setup-clock pattern without changing product behavior or tested claim/ACK/recovery obligations."}]
 
 **Risk:**
 Elevated
@@ -55,7 +58,7 @@ Continuing isolated emergency bugfix/PR/green merge authorized. PR363 profile up
 —
 
 **State:**
-Ready for review
+Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -85,4 +88,10 @@ Agent technical review: astra-reviewer, independent non-implementer, turn01a178e
 Reviewed revision: 4fabc47d97c262c7c636de96c2f65a96a8c21e0c.
 
 Verification adequacy: final affected plugin file214 passed in127.89s (build/hermes-route-final-subsystem.log), plus52 related cases and4 focused race-delta checks, cover intended payload/ACK, per-session native routes, invalidation/legacy behavior and conservative uncertain-wake fencing. Required hosted CI remains the merge gate. Native installed routing and original reply receipt remain unverified. The public host scheduling callback must remain a short enqueue operation; no lock is held across a model call. Technical GO is not live environment approval.
+
+## CI setup correction
+
+Initial hosted run40353532229: Linux3.13 passed, Windows smoke passed; Linux3.12 failed after4151 passes at tests/test_codex_wake_retry_edges.py::test_expired_claim_retry_still_obeys_target_claim_ack_and_custody_guards[acked]. The preparatory claim returned503 relay_busy, late_begin, setup_pragma1334ms, before the actual guard scenario. Original build/pr364-ci312-failed.log is retained; no blind rerun or product root-cause claim. Underlying slow acquisition remains unexplained.
+
+Bounded plan delta: wrap only that initial claim in the exact scoped sqlite_queue.time monotonic counter pattern already used by the adjacent concurrent recovery test. Assert immediate restoration and original delivery/attempt identity. All competing hook claims, ACKs, recovery checks and native deadline/busy tests remain unchanged. No production change or protected test path. Astra plan GO turn01a178f3-aad3-7aa2-a683-37e8142c4d18 endorses setup-only timing control, requiring final review/CI and retaining the unexplained real acquisition evidence. Existing Hermes source GO is retained; no repeated Hermes or broad local suite for this test-only delta.
 
