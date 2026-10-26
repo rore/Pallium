@@ -19,7 +19,7 @@
 **Plan review:** Agent technical review: @astra-reviewer turn01a17970-ca7d-77f0-ba07-e6525bb0cb6e DEFER unmatched local probe; recommends removing serial-only policy/test requirement absent separately documented value, retaining selection/reporting checks. Manager turn01a17975-8567-7312-86af-bae61a9a8b15 confirms serial restoration already directed and batching with Relaydev. This is the bounded restoration plan; no diagnostic execution permission inferred.
 **Approvals:** Approved by user 2026-10-26 15:48 UTC: "and since i won't be here, i'm approving all of this, and also the agents should not block waiting for my actions". Trusted forwarding source01a171bf-bb98-71d3-ba6f-52b36f5ca022 quotes the preceding15:47UTC overnight priority to fix/merge local Relay and Hermes wake bugs, then resolve seven open PRs, using minimal process. Manager offer manager-shared-acquisition-offer-20261026 accepted; isolated focused corrections/checks/publication/merge through normal gates are covered. No installed environment or frozen PR353 execution is covered. Historical2026-10-08 approval remains in prior history.
 **Exceptions:** None
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Recovery
@@ -91,7 +91,7 @@ The only runtime configuration delta is explicit -n0 on the Linux full-lane pyte
 Controlled command RED:8 cases failed normally against the unchanged workflow,0 skips/errors,0.53s, all at missing -n override. After the one-line configuration change, the entire affected workflow file passed23 cases in27.07s,0 skips/errors/failures; one existing record_property/xunit2 warning is retained. The unchanged late-ACK E2E passed once under real clocks/HTTP/native persistence,1 passed in1.96s; its full original payload/durable delivery/no-confirmation assertions completed. This local Windows observation is not evidence of Linux xdist causation or a timing repair. No repeated cache tests, assertion/tolerance changes or product patches were made.
 
 Receipts: build/ci-serial-evidence/{red,workflow-green,unchanged-e2e}.{log,xml}. Accepted cache source still SHA256 BFB93044795461C1B61C19C81E8AAF64CD160C3A78431D0EFDBB8ACD4188DC8E; unchanged original hook test source SHA256 811A2E2005A035C5ADB9394A2B643946BF3A73A0A1DA3514CA0EFE8D7571735D. Whole-change selector still requires full; final composed hosted CI and case census remain Relaydev-owned. Longer execution and reduced incidental cross-case stress are disclosed; no budgets or timeouts increased. Current implementation awaits independent result review and RED checkpoint validation on the real PR.
-## Result review
+## Serial candidate result review
 
 Agent technical review: @astra-reviewer, turn01a17949-1e17-77f2-9e9f-f4fb4317abf6, technical and architecture RESULT GO for exact8f7528ab..2b65e4cd CI delta. Reviewed one-n0 workflow change and22-line YAML/expanded-token contract, preserved Linux312/313/four events/reporting, no filters/retries/timeouts/production changes, and unaffected in-test concurrency.
 Reviewed revision: 2b65e4cd46480986bfb5e56f43edb68bc0ecf39a.
@@ -116,3 +116,10 @@ Current supported CI evidence was recovered without rerun from exact artifact126
 Runtime comparison: failed executor Ubuntu24.04.5/Python3.13.16/SQLAlchemy2.1.6/AnyIO4.15.1/Starlette1.10.0/FastAPI0.162.0/httpx2; local Windows3.13.14/SQLAlchemy2.0.48/AnyIO4.12.1/Starlette0.52.1/FastAPI0.135.1/nohttpx2. CI versions fit declared bounds, lock is consistent with min; no unsupported CI version or pin/downgrade fix is shown. Native CI SQLite version and decisive GC/native-call spans are not retained.
 
 Existing Astra turn01a17970 deferred the unmatched local observer as low-value and recommends restoring prior CI policy absent concrete independent value. Manager turn01a17975 confirms serial restoration direction. Restore only optional serial mechanism and serial-only contract expectation; preserve all full-selection/reporting checks and actual product assertions. No new diagnostic, CI dispatch, live action or frozen batch execution is authorized by this source restoration. Preserve the original serial proposal/results as history.
+### Restoration implementation and bounded checks
+
+The prior Linux full-suite command is restored by removing only the optional -n0 override. The8case YAML/token contract remains, renamed to describe complete selection/reporting; only its serial-only assertion and expected worker tokens are removed. Original tests/, both Python versions/four events, fail-fast/manual/report arguments remain exact. All8changed contract cases passed in0.43s with --noconftest; no application fixture/AnyIO backend was used. Other15workflow checks are unchanged and retain their exact supported CI evidence. No product/clock/assertion/claim/timeout change or CI dispatch.
+
+Evidence build/ci-acquisition-causal/restored-selection.{log,xml} and ci5-component-census.json. Prior cache/hook test blobs remain unchanged. Existing matching source CI78/23/1 normal-pass evidence is independent of earlier caveated local application receipts; no full matrix or physical cause is inferred. Current restoration source awaits existing reviewer result assessment before same-owner handoff.
+
+Read-only WSL inventory found Ubuntu-24.04, Ubuntu and dedicated Pallium-Hermes-Qualification-20261021, all STOPPED. No distribution was started or queried internally and no runtime or owner availability inferred. Manager was asked for retained qualification-executor ownership/runtime information. The mismatched local observer remains DEFERRED and was never created or executed.

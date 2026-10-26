@@ -62,7 +62,7 @@ def test_required_linux_lane_cannot_skip_mcp_tests() -> None:
 
 @pytest.mark.parametrize("version", ("3.12", "3.13"))
 @pytest.mark.parametrize("event", ("pull_request", "push", "schedule", "workflow_dispatch"))
-def test_linux_full_suite_is_serial_without_narrowing_selection(version, event) -> None:
+def test_linux_full_suite_preserves_selection_and_reporting(version, event) -> None:
     import yaml
 
     job = yaml.safe_load(WORKFLOW)["jobs"]["test"]
@@ -74,8 +74,7 @@ def test_linux_full_suite_is_serial_without_narrowing_selection(version, event) 
     tokens = shlex.split(command)
     assert tokens[:4] == ["python", "-m", "pytest", "tests/"]
     args = tokens[4:]
-    assert "-n" in args and args[args.index("-n") + 1] == "0"
-    expected = {"-n", "0", "-q", "--durations=20",
+    expected = {"-q", "--durations=20",
                 f"--junitxml=test-results/linux-{version}-test-all.xml"}
     if event != "workflow_dispatch":
         expected.add("-x")
