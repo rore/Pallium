@@ -2122,12 +2122,26 @@ def test_confirmed_switch_does_not_attach_old_identity_to_new_pin(
     assert time.monotonic is original_monotonic
 
 
+def _legacy_scope_clock(common, monkeypatch):
+    from itertools import count
+    import time
+    from types import SimpleNamespace
+
+    # Scope outcomes use logical hook time; the paired native case owns expiry.
+    native_monotonic = time.monotonic
+    scoped_time = SimpleNamespace(**vars(common.time))
+    scoped_time.monotonic = count(step=.001).__next__
+    monkeypatch.setattr(common, "time", scoped_time)
+    assert time.monotonic is native_monotonic
+
+
 @pytest.mark.parametrize("runtime", ["claude-code", "codex"])
 def test_legacy_pin_bootstraps_endpoint_alias_and_queued_delivery(
     client, monkeypatch, tmp_path: Path, runtime: str, *, held_writer: bool = False,
 ):
     relative = "integrations/claude-code/hooks/common.py" if runtime == "claude-code" else "integrations/codex/hooks/common.py"
     common = _load(f"legacy_{runtime}", relative)
+    _legacy_scope_clock(common, monkeypatch)
     monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / f"{runtime}-sessions")
     old = "git:legacy/old"
     new = "git:legacy/new"
@@ -2222,11 +2236,15 @@ def test_legacy_pin_identity_read_does_not_acquire_held_writer(client, monkeypat
 
 @pytest.mark.parametrize("runtime", ["claude-code", "codex"])
 @pytest.mark.parametrize("state", ["closed", "unreachable"])
-def test_legacy_pin_read_preserves_final_inactive_move_refusal(client, monkeypatch, tmp_path, runtime, state):
+def test_legacy_pin_read_preserves_final_inactive_move_refusal(
+    client, monkeypatch, tmp_path, runtime, state, *, preflight="functional",
+):
     from storage.sqlite_schema import RelaySessionRecord
 
     relative = "integrations/claude-code/hooks/common.py" if runtime == "claude-code" else "integrations/codex/hooks/common.py"
     common = _load(f"inactive_legacy_{runtime}", relative)
+    if preflight != "native-delay":
+        _legacy_scope_clock(common, monkeypatch)
     monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "inactive-sessions")
     old, new = "git:legacy/old", "git:legacy/new"
     identity = {"runtime": runtime, "session_ref": "legacy-target", "container_ref": old}
@@ -2252,22 +2270,38 @@ def test_legacy_pin_read_preserves_final_inactive_move_refusal(client, monkeypat
                 assert row["state"] == "closed"
             else:
                 assert row["destination_health"] == "unreachable"
+            if preflight != "functional":
+                import time
+                time.sleep(0.8)  # Cross the unchanged .75-second hook preflight budget.
             return response.json()
         assert response.status_code == 409, response.text
         assert response.json() == {"detail": "Relay transition source is not active"}
         return None  # Existing transport's HTTP-error result; the native CAS refused.
 
     assert common.relay_turn(runtime, "legacy-target", new, request=request) is None
-    assert calls == [("GET", "/relay/sessions", 200), ("POST", "/relay/turn", 409)]
+    expected = [("GET", "/relay/sessions", 200)]
+    if preflight != "native-delay":
+        expected.append(("POST", "/relay/turn", 409))
+    assert calls == expected
     local = json.loads(state_path.read_text(encoding="utf-8"))
     assert local["container_ref"] == old
     assert local["last_confirmed_endpoint_id"] == endpoint
+    assert local["relay_turn_intent"]["destination_container_ref"] == new
     current = client.get("/relay/sessions", params=identity)
     assert current.status_code == 200
     assert current.json()[0]["endpoint_id"] == endpoint
     assert current.json()[0]["scope_generation"] == 0
     destination = client.get("/relay/sessions", params={**identity, "container_ref": new})
     assert destination.status_code == 200 and destination.json() == []
+
+
+@pytest.mark.parametrize("preflight", ["native-delay", "semantic-delay"])
+def test_legacy_pin_delayed_preflight_keeps_native_deadline_and_scope_semantics(
+    client, monkeypatch, tmp_path, preflight,
+):
+    test_legacy_pin_read_preserves_final_inactive_move_refusal(
+        client, monkeypatch, tmp_path, "codex", "closed", preflight=preflight,
+    )
 
 
 @pytest.mark.parametrize("runtime", ["claude-code", "codex"])
@@ -2278,6 +2312,7 @@ def test_legacy_pin_read_preserves_final_inactive_move_refusal(client, monkeypat
 def test_legacy_pin_identity_read_rejects_ambiguous_or_mismatched_response(monkeypatch, tmp_path, runtime, invalid):
     relative = "integrations/claude-code/hooks/common.py" if runtime == "claude-code" else "integrations/codex/hooks/common.py"
     common = _load(f"malformed_legacy_{runtime}", relative)
+    _legacy_scope_clock(common, monkeypatch)
     monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "malformed-sessions")
     common.SESSIONS_DIR.mkdir(parents=True)
     state_path = common.SESSIONS_DIR / "legacy-target.json"
