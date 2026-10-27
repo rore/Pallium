@@ -127,15 +127,21 @@ def test_one_profile_concurrent_projects_and_actors(client, project_plugin, tmp_
     assert _sessions(client, _project("b"), "s0") == []
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("reload", [False, True])
-def test_completed_turn_chain_never_readmits_stale_callbacks(client, project_plugin, tmp_path, monkeypatch, reload):
+def test_completed_turn_chain_never_readmits_stale_callbacks(
+    client, project_plugin, tmp_path, monkeypatch, reload, relay_admission_clock,
+):
     module, ctx, pre, create, _calls, _settings = project_plugin
     roots = {name: _repo(tmp_path, name) for name in ("a", "b", "c")}
+    storage = client.app.state.pallium_service._storage
     for name in roots:
-        assert pre(str(roots[name]), turn=name)
+        with relay_admission_clock(storage, expected_admissions=2):
+            assert pre(str(roots[name]), turn=name)
         ctx.hooks["on_session_end"](session_id="session", turn_id=name)
     owner = create(ctx.state) if reload else ctx
-    assert pre(str(roots["c"]), turn="current", context=owner)
+    with relay_admission_clock(storage, expected_admissions=2):
+        assert pre(str(roots["c"]), turn="current", context=owner)
     before = _sessions(client, _project("c"))
     writes = []
     http = module._json_request
