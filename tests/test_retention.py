@@ -28,6 +28,65 @@ _TEST_RETENTION_POLICY = MemoryRetentionPolicy(
 )
 
 
+def test_retention_source_chunk_allows_competing_http_ingestion(client):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    from sqlalchemy import event
+
+    storage = client.app.state.pallium_service._storage
+    now = datetime(2026, 10, 27, tzinfo=UTC)
+    expired = []
+    for number in range(24):
+        source = _make_source(storage, source_id=f"batch-cleanup-{number}",
+                              occurred_at=now - timedelta(days=90))
+        expired.append(source)
+        storage.create_index_entry(IndexEntry(target_kind="source_item", target_id=source.id,
+            index_type="lexical", text_view="obsolete second view", text_view_name="second"))
+    scan_started, ingest_started, ingest_finished = threading.Event(), threading.Event(), threading.Event()
+    scans = []
+
+    def scan_cost(_conn, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("DELETE FROM LEXICAL_FTS"):
+            scans.append(statement)
+            scan_started.set()
+            assert ingest_started.wait(3)
+            if len(scans) == 2:
+                # Hold the repeated scan, retaining the real foreground acquisition budget.
+                assert ingest_finished.wait(10)
+
+    event.listen(storage._engine, "before_cursor_execute", scan_cost)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            cleanup = pool.submit(storage.run_retention_pass, now=now, batch_size=24,
+                                  retention_policy=_TEST_RETENTION_POLICY)
+            try:
+                assert scan_started.wait(5)
+                ingest_started.set()
+                response = client.post("/item-and-query", json={
+                    "source_type": "chat_message", "source_id": "foreground-during-cleanup",
+                    "content_type": "text/plain", "content": "A current foreground item",
+                    "artifact_kind": "message", "role": "user",
+                    "container_ref": "room:retention-concurrency", "thread_ref": "current",
+                    "visibility": "public",
+                })
+            finally:
+                ingest_started.set()
+                ingest_finished.set()
+                stats = cleanup.result(timeout=10)
+        assert response.status_code == 200, response.text
+        assert client.get(f"/items/{response.json()['source_item_id']}/processing").status_code == 200
+        assert stats.deleted_source_items == 24 and stats.deleted_index_entries == 48
+        assert len(scans) == 1
+        assert storage.search_index_entries(["obsolete"], limit=100).hits == []
+        for source in expired:
+            with pytest.raises(KeyError):
+                storage.get_source_item(source.id)
+    finally:
+        ingest_started.set()
+        ingest_finished.set()
+        event.remove(storage._engine, "before_cursor_execute", scan_cost)
+
+
 def _make_source(
     storage: SQLiteStorageProvider,
     *,
@@ -62,6 +121,92 @@ def _make_source(
         )
     )
     return source_item
+
+
+@pytest.mark.parametrize("number", [0, 1, 50, 51])
+def test_source_chunk_batches_fts_and_preserves_other_targets(test_db_url, number):
+    from sqlalchemy import event
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 10, 27, tzinfo=UTC)
+    scans = []
+    def observe(_conn, _cursor, statement, parameters, _context, _many):
+        if statement.lstrip().upper().startswith("DELETE FROM LEXICAL_FTS"):
+            scans.append((statement, parameters))
+    try:
+        protected = _make_source(storage, source_id="protected-evidence",
+                                 occurred_at=now - timedelta(days=100))
+        _make_memory(storage, memory_type="decision", created_at=now - timedelta(days=1),
+                     source_items=[protected])
+        doomed = []
+        for position in range(number):
+            source = _make_source(storage, source_id=f"obsolete-{position}",
+                                  occurred_at=now - timedelta(days=90))
+            doomed.append(source)
+            storage.create_index_entry(IndexEntry(target_kind="source_item", target_id=source.id,
+                index_type="lexical", text_view="obsolete extra view", text_view_name="second"))
+            storage.create_index_entry(IndexEntry(target_kind="source_item", target_id=source.id,
+                index_type="vector", text_view="vector metadata", text_view_name="vector"))
+        keeper = _make_memory(storage, memory_type="decision", created_at=now, source_items=[])
+        # Target IDs may overlap across kinds; source cleanup must not erase memory search rows.
+        if doomed:
+            storage.create_memory_object(MemoryObject(id=doomed[0].id, type="decision",
+                schema_id="tests.decision", schema_version="v1", payload={"summary": "mixedkind keeper"},
+                lifecycle="active", created_at=now))
+            storage.create_index_entry(IndexEntry(target_kind="memory_object", target_id=doomed[0].id,
+                index_type="lexical", text_view="mixedkind keeper", text_view_name="mixed"))
+        event.listen(storage._engine, "before_cursor_execute", observe)
+        stats = storage.run_retention_pass(now=now, batch_size=max(1, number),
+                                          retention_policy=_TEST_RETENTION_POLICY)
+        assert stats.deleted_source_items == number
+        assert stats.deleted_index_entries == 3 * number
+        assert len(scans) == (number + 49) // 50
+        assert storage.get_source_item(protected.id).content == protected.content
+        assert storage.get_memory_object(keeper.id).lifecycle == "active"
+        assert not storage.search_index_entries(["obsolete"], limit=200).hits
+        if doomed:
+            assert storage.get_memory_object(doomed[0].id).lifecycle == "active"
+            assert doomed[0].id in {h.target_id for h in storage.search_index_entries(["mixedkind"], limit=10).hits}
+        for source in doomed:
+            with pytest.raises(KeyError):
+                storage.get_source_item(source.id)
+        for sql, parameters in scans:
+            with storage._engine.connect() as connection:
+                plan = connection.exec_driver_sql("EXPLAIN QUERY PLAN " + sql, parameters).fetchall()
+            details = [row[3] for row in plan]
+            assert sum("SCAN lexical_fts" in item for item in details) == 1
+            assert not any("CORRELATED" in item for item in details)
+    finally:
+        event.remove(storage._engine, "before_cursor_execute", observe)
+        storage.close()
+
+
+def test_source_chunk_midcascade_failure_restores_all_fts_and_cursor(test_db_url, monkeypatch):
+    from core.retention import RETENTION_MAINTENANCE_KEY
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 10, 27, tzinfo=UTC)
+    try:
+        sources = [_make_source(storage, source_id=f"atomic-source-{n}",
+                    occurred_at=now - timedelta(days=90)) for n in range(3)]
+        storage.claim_retention_lease(worker_id="atomic-cleaner", lease_seconds=60, now=now)
+        original = storage._delete_source_item_cascade_in_session
+        calls = []
+        def fail_middle(session, source_id, **kwargs):
+            calls.append(source_id)
+            if len(calls) == 2:
+                raise RuntimeError("controlled mid-cascade failure")
+            return original(session, source_id, **kwargs)
+        monkeypatch.setattr(storage, "_delete_source_item_cascade_in_session", fail_middle)
+        with pytest.raises(RuntimeError, match="mid-cascade"):
+            storage.run_retention_pass(now=now, batch_size=3, retention_policy=_TEST_RETENTION_POLICY)
+        assert len(calls) == 2
+        for source in sources:
+            assert storage.get_source_item(source.id).content == source.content
+        assert {s.id for s in sources} <= {h.target_id for h in storage.search_index_entries(["atomic"], limit=10).hits}
+        with storage._session_factory() as session:
+            marker = session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY)
+            assert marker.source_scan_cursor_id is None and marker.source_scan_cursor_created_at is None
+    finally:
+        storage.close()
 
 
 def _make_memory(

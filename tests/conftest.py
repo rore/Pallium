@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from itertools import count
+import os
 from pathlib import Path
 import threading
 import time
@@ -27,6 +28,7 @@ def client(test_db_url: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestCl
 
     monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", lambda *_args, **_kwargs: None)
     from storage.vector_index import VectorIndexConfig
+    from storage.sqlite import SQLiteStorageProvider
     storages = []
     original_storage = app_main.build_storage_provider
 
@@ -48,6 +50,9 @@ def client(test_db_url: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestCl
             )
         )
     service = app.state.pallium_service
+    if os.environ.get("GITHUB_ACTIONS") == "true" and isinstance(service._storage, SQLiteStorageProvider):
+        from tests.codex_wake_setup import observe_relay_acquisition_failures
+        observe_relay_acquisition_failures(service._storage, monkeypatch)
     if all(storage is not service._storage for storage in storages):
         storages.append(service._storage)
     http = TestClient(app)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy import bindparam, delete, func, or_, select, text, update
 from sqlalchemy.orm import Session, aliased
 
 from core.contracts import MemoryRetentionPolicy
@@ -456,6 +456,7 @@ class SQLiteRetentionMixin:
                 )).all() if deletable_ids else []
                 fresh = {record.id: record for record in records}
                 stats = prepared_stats
+                eligible_ids = []
                 for source_id in deletable_ids:
                     record = fresh.get(source_id)
                     if (record is None or record.processing_status not in {"completed", "failed", "skipped"}
@@ -465,7 +466,18 @@ class SQLiteRetentionMixin:
                     if self._source_item_is_protected(session, record.id, now=now, durable_types=durable_types, working_types=working_types):
                         stats = self._merge_retention_stats(stats, RetentionRunStats(skipped_protected_source_items=1))
                         continue
-                    stats = self._merge_retention_stats(stats, self._delete_source_item_cascade_in_session(session, record.id, durable_types=durable_types, working_types=working_types, orphan_delete_types=orphan_delete_types))
+                    eligible_ids.append(record.id)
+                if eligible_ids:
+                    # FTS metadata is unindexed: scan once while the index-entry mapping still exists.
+                    session.execute(text(
+                        "DELETE FROM lexical_fts WHERE index_entry_id IN ("
+                        "SELECT id FROM index_entries WHERE target_kind = 'source_item' "
+                        "AND index_type = 'lexical' AND target_id IN :source_ids)"
+                    ).bindparams(bindparam("source_ids", expanding=True)), {"source_ids": eligible_ids})
+                for source_id in eligible_ids:
+                    stats = self._merge_retention_stats(stats, self._delete_source_item_cascade_in_session(
+                        session, source_id, durable_types=durable_types, working_types=working_types,
+                        orphan_delete_types=orphan_delete_types, lexical_rows_deleted=True))
                 if last_scanned_key is not None:
                     maintenance_record.source_scan_cursor_created_at, maintenance_record.source_scan_cursor_id = last_scanned_key
                 elif cursor_time is not None and cursor_id:
@@ -741,14 +753,14 @@ class SQLiteRetentionMixin:
         return False
 
     def _delete_index_entry_in_session(
-        self, session: Session, record: IndexEntryRecord,
+        self, session: Session, record: IndexEntryRecord, *, lexical_rows_deleted: bool = False,
     ) -> None:
         """Delete an index entry and its FTS5 shadow row (if lexical).
 
         ALL lexical index entry deletion MUST go through this helper.
         No code path should call session.delete() on an IndexEntryRecord directly.
         """
-        if record.index_type == "lexical":
+        if record.index_type == "lexical" and not lexical_rows_deleted:
             session.execute(
                 text("DELETE FROM lexical_fts WHERE index_entry_id = :id"),
                 {"id": record.id},
@@ -763,6 +775,7 @@ class SQLiteRetentionMixin:
         durable_types: frozenset[str],
         working_types: frozenset[str],
         orphan_delete_types: frozenset[str],
+        lexical_rows_deleted: bool = False,
     ) -> RetentionRunStats:
         relation_records = session.scalars(
             select(RelationRecord).where(
@@ -789,7 +802,7 @@ class SQLiteRetentionMixin:
         for relation in relation_records:
             session.delete(relation)
         for index_entry in source_index_records:
-            self._delete_index_entry_in_session(session, index_entry)
+            self._delete_index_entry_in_session(session, index_entry, lexical_rows_deleted=lexical_rows_deleted)
         self._sync_source_item_work_refs_in_session(session, source_item_id, None)
         session.delete(source_record)
         stats = RetentionRunStats(
