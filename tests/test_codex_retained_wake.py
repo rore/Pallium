@@ -2,6 +2,7 @@
 from contextlib import asynccontextmanager, contextmanager
 import asyncio
 import json
+import logging
 import os
 from pathlib import Path
 import threading
@@ -26,6 +27,12 @@ from tests.test_agent_relay_hooks import _load
 
 SCOPE = {"container_ref": "git:example.test/retained-東京"}
 TARGET = "target-session"
+
+ARCHIVE_SCHEMA = {"namespace": "codex_app", "name": "list_archived_threads", "inputSchema": {
+    "type": "object", "properties": {
+        "source": {"type": "string", "enum": ["codex", "chatgpt"]},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+        "cursor": {"type": "string"}}, "additionalProperties": False}}
 
 class Peer:
     def __init__(self, w, pid, sid=None, creation=None):
@@ -68,6 +75,13 @@ class Desktop:
             if self.on_state:
                 self.on_state()
             result = {"success": True, "contentItems": [{"type": "inputText", "text": body}]}
+        elif request["params"]["tool"] == "list_archived_threads":
+            arguments = request["params"]["arguments"]
+            assert arguments["source"] == "codex" and arguments["limit"] == 50
+            body = self.archive_pages[arguments.get("cursor")]
+            if callable(body):
+                body = body(deadline)
+            result = {"success": True, "contentItems": [{"type": "inputText", "text": json.dumps(body)}]}
         else:
             if self.on_owner:
                 self.on_owner(request)
@@ -82,7 +96,9 @@ class Desktop:
         return [v for v in self.writes if v.get("params", {}).get("tool") == "send_message_to_thread"]
 
 @pytest.fixture
-def retained(monkeypatch, tmp_path):
+def retained(monkeypatch, tmp_path, request):
+    archive_option = getattr(request, "param", None)
+    archive_enabled = archive_option == "archive" or isinstance(archive_option, dict)
     monkeypatch.setattr(codex_wake, "_scheduled_delivery_ids", set())
     monkeypatch.setattr(codex_wake, "_scheduled_session_generations", {})
     monkeypatch.setattr(codex_wake, "_scheduled_session_delivery_ids", {})
@@ -107,6 +123,12 @@ def retained(monkeypatch, tmp_path):
     natives = []
     def native(*args):
         value = Desktop(*args)
+        if archive_enabled:
+            schema = json.loads(json.dumps(ARCHIVE_SCHEMA))
+            if isinstance(archive_option, dict):
+                schema["inputSchema"] = archive_option
+            value.schemas.append(schema)
+            value.archive_pages = {None: {"threads": [], "nextCursor": None}}
         natives.append(value)
         return value
     monkeypatch.setattr(bridge, "_DesktopIO", native)
@@ -1008,6 +1030,240 @@ def http_wake(client, retained, monkeypatch, tmp_path):
         worker.join(5)
         assert not worker.is_alive()
     http.close()
+
+@pytest.mark.parametrize("retained", ["archive"], indirect=True)
+@pytest.mark.parametrize("log_failure", [False, True])
+def test_archived_unloaded_recipient_has_no_native_submission(http_wake, monkeypatch, caplog, log_failure):
+    http, _, registry, _, desktop, send, _ = http_wake
+    if log_failure:
+        def fail(*args, **kwargs):
+            raise RuntimeError("private-log-sink-failure")
+        monkeypatch.setattr(bridge._log, "warning", fail)
+    else:
+        monkeypatch.setattr(bridge._log, "handlers", [*bridge._log.handlers, caplog.handler])
+        caplog.set_level(logging.INFO, logger=bridge._log.name)
+    desktop.archive_pages = {None: {"threads": [
+        {"id": TARGET, "kind": "codex", "hostId": "local"}], "nextCursor": None}}
+    send()
+    assert not desktop.owners
+    assert not registry.reservations()
+    delivery = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
+    assert delivery["state"] == "pending" and delivery["attempts"] == 0
+    if not log_failure:
+        record = next(record for record in caplog.records if "category=target-archived" in record.getMessage())
+        assert delivery["delivery_id"] in record.getMessage()
+        assert all(secret not in record.getMessage() for secret in (TARGET, "private-payload-東京", SCOPE["container_ref"]))
+
+
+@pytest.mark.parametrize("retained", ["archive"], indirect=True)
+@pytest.mark.parametrize("kind,host", [("codex", "remote"), ("chatgpt", "local"), ("codex", "local")])
+def test_archive_membership_is_exact_and_custody_local(http_wake, kind, host):
+    _, _, _, service, desktop, send, _ = http_wake
+    desktop.archive_pages = {None: {"threads": [
+        {"id": TARGET + "-other", "kind": "codex", "hostId": "local"},
+        {"id": TARGET, "kind": kind, "hostId": host}], "nextCursor": None}}
+    send()
+    assert len(desktop.owners) == (0 if (kind, host) == ("codex", "local") else 1)
+    assert service.custody is desktop
+
+
+@pytest.mark.parametrize("retained", ["archive"], indirect=True)
+@pytest.mark.parametrize("found", [False, True])
+def test_archive_pagination_uses_one_deadline_and_caches_complete_absence(http_wake, found):
+    _, _, _, service, desktop, send, _ = http_wake
+    deadlines = []
+    def page(cursor):
+        def read(deadline):
+            deadlines.append(deadline)
+            return {"threads": [{"id": TARGET if found and cursor is None else "unrelated-東京",
+                                 "kind": "codex", "hostId": "local"}],
+                    "nextCursor": cursor}
+        return read
+    desktop.archive_pages = {None: page("first"), "first": page("second"), "second": page(None)}
+    send()
+    assert len(desktop.owners) == (0 if found else 1) and len(deadlines) == 3
+    assert len(set(deadlines)) == 1
+    assert not service._target_archived("another-session", time.monotonic() + 3)
+    assert len(deadlines) == 3
+
+
+@pytest.mark.parametrize("retained", ["archive"], indirect=True)
+def test_partial_positive_archive_page_is_reused_but_not_a_cached_absence(http_wake):
+    _, _, _, service, desktop, send, _ = http_wake
+    row = {"id": TARGET, "kind": "codex", "hostId": "local"}
+    desktop.archive_pages = {None: {"threads": [row], "nextCursor": "more"}}
+    send()
+    calls = lambda: [v for v in desktop.writes if v.get("params", {}).get("tool") == "list_archived_threads"]
+    assert len(calls()) == 1 and not desktop.owners
+    assert service._target_archived(TARGET, time.monotonic() + 3)
+    assert len(calls()) == 1
+    desktop.archive_pages["more"] = {"threads": [], "nextCursor": None}
+    assert not service._target_archived("another-session", time.monotonic() + 3)
+    assert len(calls()) == 3
+
+
+@pytest.mark.parametrize("retained", ["archive"], indirect=True)
+def test_restored_unloaded_recipient_recovers_after_archive_snapshot_expiry(http_wake, monkeypatch):
+    _, _, _, service, desktop, send, _ = http_wake
+    desktop.archive_pages = {None: {"threads": [
+        {"id": TARGET, "kind": "codex", "hostId": "local"}], "nextCursor": None}}
+    send()
+    observed, ids, complete = service._archive_snapshot
+    assert not desktop.owners
+    desktop.archive_pages = {None: {"threads": [], "nextCursor": None}}
+    # Expire observation time without changing shared native/SQLite clocks.
+    monkeypatch.setattr(service, "_archive_snapshot", (observed - bridge.EXCHANGE_SECONDS, ids, complete))
+    recover(http_wake)
+    assert len(desktop.owners) == 1
+
+
+@pytest.mark.parametrize("retained", ["archive"], indirect=True)
+def test_fresh_idle_state_bypasses_cached_archived_membership(http_wake, monkeypatch):
+    _, _, _, _, desktop, send, _ = http_wake
+    desktop.archive_pages = {None: {"threads": [
+        {"id": TARGET, "kind": "codex", "hostId": "local"}], "nextCursor": None}}
+    send()
+    launches = []
+    monkeypatch.setattr(codex_wake, "_start_launch", lambda *args: launches.append(args) or "started")
+    monkeypatch.setattr(codex_wake, "_finish_launch", lambda *args, **kw: ("accepted", "queued", "row"))
+    desktop.state = "idle"
+    recover(http_wake)
+    assert len(launches) == 1
+    assert len([v for v in desktop.writes if v.get("params", {}).get("tool") == "list_archived_threads"]) == 1
+
+
+@pytest.mark.parametrize("retained", ["archive"], indirect=True)
+@pytest.mark.parametrize("pages", [
+    {None: {"threads": []}},
+    {None: {"threads": [], "nextCursor": "same"}, "same": {"threads": [], "nextCursor": "same"}},
+    {None: {"threads": [{"id": TARGET}], "nextCursor": None}},
+    {None: {"threads": [], "nextCursor": 1}},
+    {None: {"threads": "invalid", "nextCursor": None}},
+    {None: {"threads": [{"id": TARGET, "kind": "codex", "hostId": "local"}] * 51, "nextCursor": None}},
+])
+def test_invalid_or_incomplete_archive_inventory_never_submits_or_caches_absence(http_wake, pages):
+    http, _, _, service, desktop, send, _ = http_wake
+    desktop.archive_pages = pages
+    send()
+    assert not desktop.owners and service._archive_snapshot is None
+    assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]["state"] == "pending"
+
+
+@pytest.mark.parametrize("retained", ["archive"], indirect=True)
+def test_archive_deadline_and_shutdown_preserve_existing_no_submission_fences(http_wake):
+    _, _, _, service, desktop, send, _ = http_wake
+    def fail(deadline):
+        desktop.unresolved = True
+        raise bridge.ShadowUnavailable("deadline")
+    desktop.archive_pages = {None: fail}
+    send()
+    assert not desktop.owners and service.retained_registration is None
+    assert service._archive_snapshot is None
+
+
+def test_unknown_archive_capability_preserves_existing_unloaded_dispatch(http_wake):
+    _, _, _, service, desktop, send, _ = http_wake
+    send()
+    assert service.archive_schema is None and len(desktop.owners) == 1
+
+
+@pytest.mark.parametrize("retained", [
+    {"type": "object", "properties": {"source": {"type": "string", "enum": ["chatgpt"]},
+                                       "limit": {"type": "integer"}}},
+    {"type": "object", "properties": {"source": {"type": "string"},
+                                       "limit": {"type": "integer", "maximum": 49}}},
+    {"type": "object", "properties": {"source": {"type": "string"},
+                                       "limit": {"type": "integer", "enum": [10]}}},
+    {"type": "object", "required": ["hostId"], "properties": ARCHIVE_SCHEMA["inputSchema"]["properties"]},
+    {"type": "object", "properties": {"source": {"type": "string", "pattern": "^chatgpt$"},
+                                       "limit": {"type": "integer"}}},
+    {"type": "object", "properties": {"source": {"type": [{}]}, "limit": {"type": "integer"}}},
+], indirect=True)
+def test_unsupported_archive_schema_is_optional_at_registration_and_dispatch(http_wake):
+    _, _, _, service, desktop, send, _ = http_wake
+    assert service.archive_schema is None
+    send()
+    assert len(desktop.owners) == 1
+    assert not any(v.get("params", {}).get("tool") == "list_archived_threads" for v in desktop.writes)
+
+
+@pytest.mark.parametrize("retained", ["archive"], indirect=True)
+def test_archive_lookup_failure_after_partial_page_does_not_cache_absence(http_wake):
+    _, _, _, service, desktop, send, _ = http_wake
+    def fail(deadline):
+        raise bridge.ShadowUnavailable("native-tool-failed")
+    desktop.archive_pages = {None: {"threads": [], "nextCursor": "next"}, "next": fail}
+    send()
+    assert not desktop.owners and service._archive_snapshot is None
+    assert service.retained_registration is not None
+
+
+@pytest.mark.parametrize("retained", ["archive"], indirect=True)
+def test_drop_clears_archive_capability_and_evidence(http_wake):
+    _, _, _, service, desktop, send, _ = http_wake
+    desktop.archive_pages = {None: {"threads": [
+        {"id": TARGET, "kind": "codex", "hostId": "local"}], "nextCursor": None}}
+    send()
+    assert service._archive_snapshot is not None
+    service._drop(preserve_registration=True)
+    assert service.archive_schema is None and service._archive_snapshot is None
+
+
+@pytest.mark.parametrize("retained", ["archive"], indirect=True)
+def test_archive_response_at_deadline_is_not_used_as_positive_evidence(http_wake, monkeypatch):
+    _, _, _, service, desktop, send, _ = http_wake
+    now = [100.0]
+    monkeypatch.setattr(bridge, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    def late(deadline):
+        now[0] = deadline
+        return {"threads": [{"id": TARGET, "kind": "codex", "hostId": "local"}], "nextCursor": None}
+    desktop.archive_pages = {None: late}
+    send()
+    assert not desktop.owners and service._archive_snapshot is None
+
+
+@pytest.mark.parametrize("retained", ["archive"], indirect=True)
+def test_archive_cursor_must_be_accepted_by_discovered_schema(http_wake):
+    _, _, _, service, desktop, send, _ = http_wake
+    service.archive_schema["properties"]["cursor"] = {"type": "string", "maxLength": 3}
+    desktop.archive_pages = {None: {"threads": [], "nextCursor": "too-long"}}
+    send()
+    assert len(desktop.owners) == 1 and service._archive_snapshot is None
+    assert len([v for v in desktop.writes if v.get("params", {}).get("tool") == "list_archived_threads"]) == 1
+
+
+@pytest.mark.parametrize("retained", ["archive"], indirect=True)
+def test_archive_maximum_page_size_accepts_unicode_membership(http_wake, monkeypatch):
+    _, _, _, service, desktop, _, _ = http_wake
+    target = "session-東京-שלום"
+    desktop.archive_pages = {None: {"threads": [
+        {"id": f"session-{n}", "kind": "codex", "hostId": "local"} for n in range(49)] + [
+        {"id": target, "kind": "codex", "hostId": "local"}], "nextCursor": None}}
+    assert service._target_archived(target, time.monotonic() + bridge.EXCHANGE_SECONDS)
+    assert not service._target_archived("other-session", time.monotonic() + bridge.EXCHANGE_SECONDS)
+
+
+@pytest.mark.parametrize("retained", ["archive"], indirect=True)
+def test_archive_inventory_is_shared_by_distinct_http_deliveries(http_wake, monkeypatch):
+    http, _, _, _, desktop, send, workers = http_wake
+    frozen = SimpleNamespace(**vars(time))
+    frozen.monotonic = lambda: 100.0
+    monkeypatch.setattr(bridge, "time", frozen)
+    desktop.archive_pages = {None: {"threads": [
+        {"id": target, "kind": "codex", "hostId": "local"} for target in (TARGET, "other-target")],
+        "nextCursor": None}}
+    send()
+    assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": "other-target", **SCOPE}).status_code == 200
+    response = http.post("/relay/messages", json={"sender_runtime": "claude-code",
+        "sender_session_ref": "sender", "recipient": "codex:other-target", "message_id": "second-archive-message",
+        "payload": "private-second-payload", **SCOPE})
+    assert response.status_code == 200
+    for worker in workers:
+        worker.join(5)
+        assert not worker.is_alive()
+    assert not desktop.owners
+    assert len([v for v in desktop.writes if v.get("params", {}).get("tool") == "list_archived_threads"]) == 1
+
 
 def recover(journey, *, hook_completed=None, until=None, now=None):
     _, relay, registry, _, _, _, workers = journey

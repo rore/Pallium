@@ -15,8 +15,8 @@ from tests.test_codex_retained_wake import retained as _retained_fixture
 
 
 @pytest.fixture
-def retained(monkeypatch, tmp_path):
-    yield from _retained_fixture.__wrapped__(monkeypatch, tmp_path)
+def retained(monkeypatch, tmp_path, request):
+    yield from _retained_fixture.__wrapped__(monkeypatch, tmp_path, request)
 
 
 CALLER = {"thread_ref": "source-α", "turn_ref": "turn-β"}

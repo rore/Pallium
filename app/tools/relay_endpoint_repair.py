@@ -9,6 +9,7 @@ import math
 import os
 import re
 import sqlite3
+import stat
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,7 @@ _ENDPOINT_KEYS = {"runtime", "session_ref", "container_ref", "title", "alias", "
 _DELIVERY_KEYS = {"delivery_id", "message_id", "recipient_runtime", "recipient_session_ref", "recipient_endpoint_id", "recipient_container_ref", "state", "claim_token_fingerprint", "claimed_at", "lease_expires_at", "delivered_at", "attempts"}
 _MESSAGE_KEYS = {"message_id", "sender_runtime", "sender_session_ref", "sender_endpoint_id", "recipient_selector", "container_ref", "payload_sha256", "payload_length", "redacted", "in_reply_to", "created_at", "expires_at"}
 _ENDPOINT_RE = re.compile(r"^relay-session-[0-9a-f]{32}$")
+_DELIVERY_RE = re.compile(r"^relay-delivery-[0-9a-f]{32}$")
 
 
 def _path(url: str) -> Path:
@@ -160,6 +162,47 @@ def build_manifest(db_url: str, source_ids: list[str], destination_id: str, expe
         conn.close()
 
 
+def build_suppression_manifest(db_url: str, delivery_ids: list[str]) -> dict[str, Any]:
+    """Snapshot only explicitly selected pending deliveries; no endpoint repair."""
+    if (not isinstance(delivery_ids, list) or not 1 <= len(delivery_ids) <= 512
+            or any(type(value) is not str or not _DELIVERY_RE.fullmatch(value) for value in delivery_ids)
+            or len(set(delivery_ids)) != len(delivery_ids)):
+        raise ValueError("supply 1..512 unique exact delivery IDs")
+    path = _path(db_url)
+    conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("BEGIN")
+        placeholders = ",".join("?" for _ in delivery_ids)
+        rows = conn.execute(
+            "SELECT d.id AS delivery_id, d.message_id, d.recipient_runtime, d.recipient_session_ref, "
+            "d.recipient_endpoint_id, d.recipient_container_ref, d.state, d.claim_token, d.claimed_at, "
+            "d.lease_expires_at, d.delivered_at, d.attempts, m.sender_runtime, m.sender_session_ref, "
+            "m.sender_endpoint_id, m.recipient_selector, m.container_ref AS message_container_ref, "
+            "m.payload, m.redacted, m.in_reply_to, m.created_at AS message_created_at, "
+            "m.expires_at AS message_expires_at FROM relay_deliveries d "
+            "JOIN relay_messages m ON m.id=d.message_id WHERE d.id IN (" + placeholders + ") ORDER BY d.id",
+            delivery_ids,
+        ).fetchall()
+        if len(rows) != len(delivery_ids) or any(
+                row["state"] != "pending" or any(row[key] is not None for key in
+                    ("claim_token", "claimed_at", "lease_expires_at", "delivered_at")) for row in rows):
+            raise ValueError("suppression requires every selected delivery to be pending and unclaimed")
+        manifest = {"schema_version": 3, "database_identity": _identity(conn, path),
+                    "source_endpoint_ids": [], "destination_endpoint_id": None,
+                    "expected_scopes": {}, "endpoint_preimage": {},
+                    "dispositions": [{"delivery_id": row["delivery_id"], "disposition": "suppress",
+                                      "preimage": _delivery_preimage(row)} for row in rows]}
+        manifest["reservation_evidence"] = _wake_evidence(manifest)
+        conn.execute("COMMIT")
+        return {"manifest": manifest, "sha256": _digest(manifest)}
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
+
+
 def _load_json(path: Path) -> object:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -249,6 +292,37 @@ def _claude_intents(path: Path) -> tuple[dict[str, Any], set[tuple[str, str, str
     register_keys = {"runtime", "session_ref", "container_ref", "socket_path", "token", "idle", "intent_id"}
     close_keys = {"runtime", "session_ref", "container_ref", "intent_id", "closed"}
     for item in paths:
+        if re.fullmatch(r"[0-9a-f]{64}\.lock", item.name):
+            from core.claude_wake import _release_intent_lock
+
+            before = item.lstat()
+            if not stat.S_ISREG(before.st_mode):
+                raise ValueError("Claude intent lock is not a regular file")
+            with item.open("r+b") as lock:
+                try:
+                    if sys.platform == "win32":
+                        import msvcrt
+                        msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError as exc:
+                    raise ValueError("Claude intent lock is busy or unreadable") from exc
+                try:
+                    current, opened = item.lstat(), os.fstat(lock.fileno())
+                    identity = (opened.st_dev, opened.st_ino)
+                    if (not stat.S_ISREG(current.st_mode) or opened.st_size != 1
+                            or identity != (before.st_dev, before.st_ino)
+                            or identity != (current.st_dev, current.st_ino)):
+                        raise ValueError("Claude intent lock was replaced or is invalid")
+                    lock.seek(0)
+                    raw = lock.read(2)
+                    if raw != b"0":
+                        raise ValueError("Claude intent lock content is invalid")
+                    fingerprints.append({"name": item.name, "sha256": hashlib.sha256(raw).hexdigest()})
+                finally:
+                    _release_intent_lock(lock)
+            continue
         if not item.is_file() or item.suffix != ".json":
             raise ValueError("Claude intent store contains an unsupported entry")
         raw = _load_json(item)
@@ -404,6 +478,7 @@ def parser() -> argparse.ArgumentParser:
     mode.add_argument("--apply", action="store_true")
     p.add_argument("--db-url", required=True); p.add_argument("--home", type=Path, required=True); p.add_argument("--manifest", type=Path, required=True)
     p.add_argument("--source", action="append", default=[]); p.add_argument("--destination"); p.add_argument("--scope", action="append", default=[]); p.add_argument("--dispositions", type=Path); p.add_argument("--acknowledge-digest"); p.add_argument("--claude-wake-dir", type=Path)
+    p.add_argument("--delivery-only", action="store_true")
     return p
 
 
@@ -411,7 +486,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         if args.dry_run:
-            if not args.destination or not args.dispositions:
+            if args.delivery_only and (args.source or args.destination or args.scope):
+                raise ValueError("delivery-only suppression cannot mix endpoint repair arguments")
+            if not args.dispositions or (not args.delivery_only and not args.destination):
                 raise ValueError("--destination and --dispositions are required for --dry-run")
             if args.claude_wake_dir is None:
                 raise ValueError("--claude-wake-dir is required for --dry-run")
@@ -421,10 +498,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             claude_wake_dir = args.claude_wake_dir.resolve()
             with _maintenance_fence(args.home, claude_wake_dir):
                 _validate_repair_database(args.db_url, args.home)
-                envelope = build_manifest(args.db_url, args.source, args.destination, dict(pairs), json.loads(args.dispositions.read_text(encoding="utf-8")))
+                dispositions = json.loads(args.dispositions.read_text(encoding="utf-8"))
+                if args.delivery_only:
+                    if (not isinstance(dispositions, list) or any(
+                            not isinstance(item, dict) or set(item) != {"delivery_id", "disposition"}
+                            or item["disposition"] != "suppress" for item in dispositions)):
+                        raise ValueError("delivery-only dispositions must contain only exact suppress entries")
+                    envelope = build_suppression_manifest(args.db_url, [item["delivery_id"] for item in dispositions])
+                else:
+                    envelope = build_manifest(args.db_url, args.source, args.destination, dict(pairs), dispositions)
             args.manifest.write_text(json.dumps(envelope, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
             print(json.dumps(envelope, ensure_ascii=False, indent=2, sort_keys=True))
         else:
+            if args.delivery_only or args.source or args.destination or args.scope or args.dispositions:
+                raise ValueError("apply accepts only the reviewed manifest and digest")
             print(json.dumps(apply_manifest(args.db_url, args.home, json.loads(args.manifest.read_text(encoding="utf-8")), args.acknowledge_digest or ""), sort_keys=True))
     except (OSError, RuntimeError, TypeError, ValueError, sqlite3.Error, SQLAlchemyError, json.JSONDecodeError, RelayConflictError) as exc:
         print(f"refusing: {exc}", file=sys.stderr); return 2

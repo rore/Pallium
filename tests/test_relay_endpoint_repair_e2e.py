@@ -16,6 +16,7 @@ from sqlalchemy.engine import URL, make_url
 from app.cli.service import _PalliumLock
 from app.dependencies import recover_expired_relay_wakes
 from app.tools.relay_endpoint_repair import _clean_adoption_ids, _digest, _maintenance_fence, _path, _repair_storage, _validate_inputs, _validate_repair_database, build_manifest
+from app.tools.relay_endpoint_repair import build_suppression_manifest
 from core.claude_wake import ClaudeWakeRegistry
 from core.codex_wake import CodexWakeRegistry
 from core.relay import RelayConflictError, RelayService
@@ -67,6 +68,307 @@ def _manifest(storage, dispositions: list[dict[str, str]]) -> dict:
 
 def _apply(storage, manifest: dict, now: datetime):
     return storage.relay_endpoint_repair_apply(manifest, reservation_validator=lambda: _clean_adoption_ids(manifest), now=now)
+
+
+def test_delivery_only_suppression_preserves_endpoints_payload_and_same_message_sibling(client, tmp_path, monkeypatch):
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(timezone.utc)
+    _seed(storage, now)
+    _clean_wake_stores(tmp_path, monkeypatch)
+    with storage._begin_relay_immediate() as db:
+        db.get(RelaySessionRecord, SOURCE_A).session_ref = "independent-source"
+        db.get(RelayDeliveryRecord, DELIVERY_A).recipient_session_ref = "independent-source"
+        db.add(RelaySessionWorkRefRecord(endpoint_id=SOURCE_A, work_ref="task:keep-東京", origin="manual",
+            scope_ref="scope", local_ref="ref", position=0, created_at=now, updated_at=now))
+        db.get(RelaySessionRecord, DESTINATION).session_ref = "sibling-session"
+        db.add(RelayDeliveryRecord(id=DELIVERY_C, message_id=MESSAGE_A, recipient_runtime="codex",
+            recipient_session_ref="sibling-session", recipient_endpoint_id=DESTINATION,
+            recipient_container_ref="git:new", state="pending", attempts=0))
+    envelope = build_suppression_manifest(str(storage._relay_engine.url), [DELIVERY_A])
+    manifest = envelope["manifest"]
+    result = _apply(storage, manifest, now)
+    assert result["suppressed_delivery_ids"] == [DELIVERY_A]
+    assert _apply(storage, manifest, now) == result
+    with storage._begin_relay_immediate() as db:
+        assert db.get(RelayDeliveryRecord, DELIVERY_A).state == "suppressed"
+        assert db.get(RelayDeliveryRecord, DELIVERY_B).state == db.get(RelayDeliveryRecord, DELIVERY_C).state == "pending"
+        assert db.get(RelayMessageRecord, MESSAGE_A).payload == "héllo"
+        assert db.get(RelaySessionRecord, SOURCE_A).session_ref == "independent-source"
+        assert db.execute(select(RelaySessionWorkRefRecord).where(
+            RelaySessionWorkRefRecord.endpoint_id == SOURCE_A)).scalar_one().work_ref == "task:keep-東京"
+        assert len(db.execute(select(RelayEndpointRepairRecord)).scalars().all()) == 1
+    relay = RelayService(storage)
+    assert DELIVERY_A not in {row["delivery_id"] for row in relay.wake_candidates()}
+    assert DELIVERY_C in {row["delivery_id"] for row in relay.wake_candidates()}
+    status = client.get(f"/relay/messages/{MESSAGE_A}", params={"container_ref": "git:sender"}).json()
+    assert {row["delivery_id"]: row["state"] for row in status["deliveries"]} == {
+        DELIVERY_A: "suppressed", DELIVERY_C: "pending"}
+    turn = client.post("/relay/turn", json={"runtime": "codex", "session_ref": "independent-source",
+                                         "container_ref": "git:old-a"})
+    assert turn.status_code == 200 and turn.json()["deliveries"] == []
+
+
+def test_delivery_suppression_accepts_unchanged_released_producer_lock_sidecar(client, tmp_path, monkeypatch):
+    from core.claude_wake import _acquire_intent_lock, _release_intent_lock, _safe_session_file
+
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(timezone.utc)
+    _seed(storage, now, runtime="claude-code")
+    _, claude = _clean_wake_stores(tmp_path, monkeypatch)
+    intent = claude / "intents" / _safe_session_file("claude-code", "same-session", "git:old-a")
+    lock = _acquire_intent_lock(intent)
+    assert lock is not None
+    _release_intent_lock(lock)
+    sidecar = intent.with_suffix(".lock")
+    assert sidecar.read_bytes() == b"0" and not intent.exists()
+    before = {path.name: path.read_bytes() for path in intent.parent.iterdir()}
+    manifest = build_suppression_manifest(str(storage._relay_engine.url), [DELIVERY_A])["manifest"]
+    assert manifest["reservation_evidence"]["deliveries"][0]["status"] == "clean"
+    result = _apply(storage, manifest, now)
+    assert result["suppressed_delivery_ids"] == [DELIVERY_A]
+    assert {path.name: path.read_bytes() for path in intent.parent.iterdir()} == before
+
+
+def test_delivery_suppression_refuses_held_native_producer_lock(client, tmp_path, monkeypatch):
+    from core.claude_wake import _acquire_intent_lock, _release_intent_lock, _safe_session_file
+
+    storage = client.app.state.pallium_service._storage
+    _seed(storage, datetime.now(timezone.utc), runtime="claude-code")
+    _, claude = _clean_wake_stores(tmp_path, monkeypatch)
+    intent = claude / "intents" / _safe_session_file("claude-code", "same-session", "git:old-a")
+    lock = _acquire_intent_lock(intent)
+    assert lock is not None
+    try:
+        with pytest.raises(ValueError, match="busy or unreadable"):
+            build_suppression_manifest(str(storage._relay_engine.url), [DELIVERY_A])
+    finally:
+        _release_intent_lock(lock)
+    assert intent.with_suffix(".lock").read_bytes() == b"0"
+    assert RelayService(storage).wake_candidates(delivery_id=DELIVERY_A)
+
+
+@pytest.mark.parametrize("name,data", [("a" * 64 + ".lock", b""), ("a" * 64 + ".lock", b"1"),
+                                      ("a" * 64 + ".lock", b"00"), ("foreign.lock", b"0")])
+def test_delivery_suppression_refuses_invalid_sidecars_without_changes(client, tmp_path, monkeypatch, name, data):
+    storage = client.app.state.pallium_service._storage
+    _seed(storage, datetime.now(timezone.utc))
+    _, claude = _clean_wake_stores(tmp_path, monkeypatch)
+    (claude / "intents").mkdir()
+    sidecar = claude / "intents" / name
+    sidecar.write_bytes(data)
+    with pytest.raises(ValueError):
+        build_suppression_manifest(str(storage._relay_engine.url), [DELIVERY_A])
+    assert sidecar.read_bytes() == data
+
+
+def test_delivery_suppression_refuses_replaced_or_symlink_sidecar(client, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from app.tools import relay_endpoint_repair as repair
+
+    storage = client.app.state.pallium_service._storage
+    _seed(storage, datetime.now(timezone.utc))
+    _, claude = _clean_wake_stores(tmp_path, monkeypatch)
+    (claude / "intents").mkdir()
+    sidecar = claude / "intents" / ("a" * 64 + ".lock")
+    sidecar.write_bytes(b"0")
+    original = repair.os.fstat
+    def replaced(fd):
+        value = original(fd)
+        return SimpleNamespace(st_dev=value.st_dev, st_ino=value.st_ino + 1, st_size=value.st_size)
+    with monkeypatch.context() as race:
+        race.setattr(repair.os, "fstat", replaced)
+        with pytest.raises(ValueError, match="replaced or is invalid"):
+            build_suppression_manifest(str(storage._relay_engine.url), [DELIVERY_A])
+    sidecar.unlink()
+    real_file = tmp_path / "unchanged-sidecar-target"
+    real_file.write_bytes(b"0")
+    try:
+        sidecar.symlink_to(real_file)
+    except OSError:
+        pytest.skip("platform does not permit test symlink creation")
+    with pytest.raises(ValueError, match="not a regular file"):
+        build_suppression_manifest(str(storage._relay_engine.url), [DELIVERY_A])
+    assert real_file.read_bytes() == b"0"
+
+
+def test_delivery_suppression_sidecar_drift_refuses_apply_and_keeps_entry_bound(client, tmp_path, monkeypatch):
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(timezone.utc)
+    _seed(storage, now)
+    _, claude = _clean_wake_stores(tmp_path, monkeypatch)
+    directory = claude / "intents"
+    directory.mkdir()
+    for index in range(256):
+        (directory / f"{index:064x}.lock").write_bytes(b"0")
+    manifest = build_suppression_manifest(str(storage._relay_engine.url), [DELIVERY_A])["manifest"]
+    assert manifest["reservation_evidence"]["stores"]["claude_intents"]["count"] == 256
+    (directory / ("0" * 64 + ".lock")).write_bytes(b"1")
+    with pytest.raises(ValueError):
+        _apply(storage, manifest, now)
+    assert RelayService(storage).wake_candidates(delivery_id=DELIVERY_A)
+    (directory / ("f" * 64 + ".lock")).write_bytes(b"0")
+    with pytest.raises(ValueError, match="supported bound"):
+        build_suppression_manifest(str(storage._relay_engine.url), [DELIVERY_A])
+
+
+@pytest.mark.parametrize("change", ["claimed", "missing", "payload", "recipient", "attempt-type"])
+def test_delivery_only_suppression_preimage_drift_rolls_back_all_selected(client, tmp_path, monkeypatch, change):
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(timezone.utc)
+    _seed(storage, now)
+    _clean_wake_stores(tmp_path, monkeypatch)
+    manifest = build_suppression_manifest(str(storage._relay_engine.url), [DELIVERY_A, DELIVERY_B])["manifest"]
+    with storage._begin_relay_immediate() as db:
+        row = db.get(RelayDeliveryRecord, DELIVERY_B)
+        if change == "claimed":
+            row.state, row.claim_token, row.claimed_at, row.lease_expires_at = "claimed", "private-token", now, now + timedelta(seconds=60)
+        elif change == "missing":
+            db.delete(row)
+        elif change == "payload":
+            db.get(RelayMessageRecord, MESSAGE_B).payload = "new-payload"
+        elif change == "recipient":
+            row.recipient_container_ref = "scope:changed"
+    if change == "attempt-type":
+        manifest["dispositions"][1]["preimage"]["delivery"]["attempts"] = 2.0
+    with pytest.raises(RelayConflictError):
+        _apply(storage, manifest, now)
+    with storage._relay_session_factory() as db:
+        assert db.get(RelayDeliveryRecord, DELIVERY_A).state == "pending"
+        assert not db.execute(select(RelayEndpointRepairRecord)).scalars().all()
+
+
+@pytest.mark.parametrize("field,value", [
+    ("source_endpoint_ids", [SOURCE_A]), ("destination_endpoint_id", DESTINATION),
+    ("expected_scopes", {SOURCE_A: "git:old-a"}), ("endpoint_preimage", {SOURCE_A: {}}),
+    ("schema_version", True), ("schema_version", "3"),
+])
+def test_delivery_only_manifest_rejects_mixed_endpoint_mode(client, tmp_path, monkeypatch, field, value):
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(timezone.utc)
+    _seed(storage, now)
+    _clean_wake_stores(tmp_path, monkeypatch)
+    manifest = build_suppression_manifest(str(storage._relay_engine.url), [DELIVERY_A])["manifest"]
+    manifest[field] = value
+    with pytest.raises(RelayConflictError):
+        _apply(storage, manifest, now)
+    assert RelayService(storage).wake_candidates(delivery_id=DELIVERY_A)
+
+
+@pytest.mark.parametrize("invalid", [[], [DELIVERY_A, DELIVERY_A], ["not-a-delivery"], [DELIVERY_A] * 513])
+def test_delivery_only_selection_bounds_and_duplicates_are_rejected(client, tmp_path, monkeypatch, invalid):
+    _clean_wake_stores(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="1..512"):
+        build_suppression_manifest(str(client.app.state.pallium_service._storage._relay_engine.url), invalid)
+
+
+@pytest.mark.parametrize("state", ["claimed", "delivered", "suppressed", "missing"])
+def test_delivery_only_manifest_requires_present_pending_unclaimed(client, tmp_path, monkeypatch, state):
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(timezone.utc)
+    _seed(storage, now)
+    _clean_wake_stores(tmp_path, monkeypatch)
+    with storage._begin_relay_immediate() as db:
+        row = db.get(RelayDeliveryRecord, DELIVERY_A)
+        if state == "missing":
+            db.delete(row)
+        else:
+            row.state = state
+    with pytest.raises(ValueError, match="pending and unclaimed"):
+        build_suppression_manifest(str(storage._relay_engine.url), [DELIVERY_A])
+
+
+@pytest.mark.parametrize("change", ["adopt", "duplicate", "claim-token"])
+def test_delivery_only_manifest_rejects_adopt_duplicates_and_claim_evidence(client, tmp_path, monkeypatch, change):
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(timezone.utc)
+    _seed(storage, now)
+    _clean_wake_stores(tmp_path, monkeypatch)
+    manifest = build_suppression_manifest(str(storage._relay_engine.url), [DELIVERY_A])["manifest"]
+    if change == "adopt":
+        manifest["dispositions"][0]["disposition"] = "adopt"
+    elif change == "duplicate":
+        manifest["dispositions"].append(manifest["dispositions"][0])
+    else:
+        manifest["dispositions"][0]["preimage"]["delivery"]["claim_token_fingerprint"] = "a" * 64
+    with pytest.raises(RelayConflictError):
+        _apply(storage, manifest, now)
+    assert RelayService(storage).wake_candidates(delivery_id=DELIVERY_A)
+
+
+def test_delivery_only_ledger_replay_overlap_corruption_and_v2_compatibility(client, tmp_path, monkeypatch):
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(timezone.utc)
+    _seed(storage, now)
+    _clean_wake_stores(tmp_path, monkeypatch)
+    manifest = build_suppression_manifest(str(storage._relay_engine.url), [DELIVERY_A])["manifest"]
+    result = _apply(storage, manifest, now)
+    assert _apply(storage, manifest, now) == result
+    changed = json.loads(json.dumps(manifest))
+    changed["reservation_evidence"]["deliveries"][0]["status"] = "blocked"
+    with pytest.raises(RelayConflictError, match="already dispositioned"):
+        _apply(storage, changed, now)
+    old_mode = _manifest(storage, [{"delivery_id": DELIVERY_B, "disposition": "suppress"}])
+    assert _apply(storage, old_mode, now)["suppressed_delivery_ids"] == [DELIVERY_B]
+    with storage._begin_relay_immediate() as db:
+        db.get(RelayEndpointRepairRecord, result["manifest_digest"]).result_json = "{}"
+    with pytest.raises(RelayConflictError, match="ledger is corrupt"):
+        _apply(storage, manifest, now)
+
+
+@pytest.mark.parametrize("count", [1, 512])
+def test_delivery_only_offline_cli_digest_lock_and_apply_preserve_unrelated_data(tmp_path, monkeypatch, capsys, count):
+    from app.cli import service
+    from app.tools.relay_endpoint_repair import main
+
+    home = tmp_path / "installed-東京"
+    (home / "data").mkdir(parents=True)
+    (home / "run").mkdir()
+    _, claude = _clean_wake_stores(home, monkeypatch)
+    main_url, relay_url = (str(URL.create("sqlite", database=str(home / "data" / name)))
+                           for name in ("pallium.db", "pallium-relay.db"))
+    storage = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    now = datetime.now(timezone.utc)
+    _seed(storage, now)
+    selected_ids = [DELIVERY_A]
+    with storage._begin_relay_immediate() as db:
+        for index in range(1, count):
+            message_id, delivery_id = f"relay-msg-{index + 3:032x}", f"relay-delivery-{index + 3:032x}"
+            db.add(RelayMessageRecord(id=message_id, sender_runtime="claude-code", sender_session_ref="sender",
+                sender_endpoint_id=None, recipient_selector=SOURCE_A, container_ref="git:sender", payload="payload-東京",
+                redacted=False, created_at=now, expires_at=now + timedelta(hours=1)))
+            db.add(RelayDeliveryRecord(id=delivery_id, message_id=message_id, recipient_runtime="codex",
+                recipient_session_ref="same-session", recipient_endpoint_id=SOURCE_A,
+                recipient_container_ref="git:old-a", state="pending", attempts=0))
+            selected_ids.append(delivery_id)
+    storage.close()
+    monkeypatch.setattr(service, "assert_service_stopped", lambda root: None)
+    manifest_path = tmp_path / "suppression.json"
+    dispositions_path = tmp_path / "selected.json"
+    dispositions_path.write_text(json.dumps([{"delivery_id": delivery_id, "disposition": "suppress"}
+                                           for delivery_id in selected_ids]), encoding="utf-8")
+    base = ["--db-url", relay_url, "--home", str(home), "--manifest", str(manifest_path)]
+    dry = [*base, "--dry-run", "--claude-wake-dir", str(claude), "--delivery-only", "--dispositions", str(dispositions_path)]
+    assert main([*dry, "--source", SOURCE_A]) == 2
+    assert not manifest_path.exists()
+    assert main(dry) == 0
+    envelope = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert envelope["manifest"]["schema_version"] == 3
+    assert main([*base, "--apply", "--acknowledge-digest", "0" * 64]) == 2
+    assert main([*base, "--apply", "--acknowledge-digest", envelope["sha256"], "--destination", DESTINATION]) == 2
+    assert main([*base, "--apply", "--acknowledge-digest", envelope["sha256"]]) == 0
+    result = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert result["suppressed_delivery_ids"] == sorted(selected_ids)
+    assert set(result["residual_split"].values()) == {"unchanged"}
+    assert main([*base, "--apply", "--acknowledge-digest", envelope["sha256"]]) == 0
+    storage = SQLiteStorageProvider.open_relay_maintenance(relay_url)
+    try:
+        assert RelayService(storage).wake_candidates(delivery_id=DELIVERY_A) == []
+        assert RelayService(storage).wake_candidates(delivery_id=DELIVERY_B)
+        with storage._relay_session_factory() as db:
+            assert db.get(RelayMessageRecord, MESSAGE_A).payload == "héllo"
+            assert len(db.execute(select(RelayEndpointRepairRecord)).scalars().all()) == 1
+    finally:
+        storage.close()
 
 
 def test_repair_adopts_suppresses_and_replays_before_revalidation(client, tmp_path, monkeypatch):

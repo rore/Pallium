@@ -1116,18 +1116,31 @@ class SQLiteRelayMixin:
     def relay_endpoint_repair_apply(self, manifest: dict[str, Any], *, reservation_validator: Callable[[], set[str]] | None = None, now: datetime | None = None) -> dict[str, Any]:
         """Apply one exact, reviewed repair snapshot under one write transaction."""
         required = {"schema_version", "database_identity", "source_endpoint_ids", "destination_endpoint_id", "expected_scopes", "endpoint_preimage", "reservation_evidence", "dispositions"}
-        if not isinstance(manifest, dict) or set(manifest) != required or manifest.get("schema_version") not in {1, 2}:
+        if (not isinstance(manifest, dict) or set(manifest) != required
+                or type(manifest.get("schema_version")) is not int or manifest["schema_version"] not in {1, 2, 3}):
             raise RelayConflictError("repair manifest schema is invalid")
+        suppression_only = manifest["schema_version"] == 3
         source_ids, destination_id, scopes = manifest["source_endpoint_ids"], manifest["destination_endpoint_id"], manifest["expected_scopes"]
         dispositions = manifest["dispositions"]
-        if (not isinstance(source_ids, list) or not 1 <= len(source_ids) <= 32 or len(set(source_ids)) != len(source_ids) or any(not isinstance(value, str) or not _REPAIR_ENDPOINT_RE.fullmatch(value) for value in source_ids) or not isinstance(destination_id, str) or not _REPAIR_ENDPOINT_RE.fullmatch(destination_id) or destination_id in source_ids or not isinstance(scopes, dict) or set(scopes) != {*source_ids, destination_id} or any(not isinstance(value, str) or not value for value in scopes.values()) or not isinstance(dispositions, list) or not 1 <= len(dispositions) <= 512):
+        if suppression_only:
+            if source_ids != [] or destination_id is not None or scopes != {} or manifest["endpoint_preimage"] != {}:
+                raise RelayConflictError("delivery-only suppression cannot contain endpoint repair")
+        elif (not isinstance(source_ids, list) or not 1 <= len(source_ids) <= 32 or len(set(source_ids)) != len(source_ids) or any(not isinstance(value, str) or not _REPAIR_ENDPOINT_RE.fullmatch(value) for value in source_ids) or not isinstance(destination_id, str) or not _REPAIR_ENDPOINT_RE.fullmatch(destination_id) or destination_id in source_ids or not isinstance(scopes, dict) or set(scopes) != {*source_ids, destination_id} or any(not isinstance(value, str) or not value for value in scopes.values())):
             raise RelayConflictError("repair manifest endpoint or disposition bounds are invalid")
+        if not isinstance(dispositions, list) or not 1 <= len(dispositions) <= 512:
+            raise RelayConflictError("repair manifest disposition bounds are invalid")
         required_disposition = {"delivery_id", "disposition", "preimage"}
         schema_version = manifest["schema_version"]
         required_delivery = {"delivery_id", "message_id", "recipient_runtime", "recipient_session_ref", "recipient_endpoint_id", "recipient_container_ref", "state", "claim_token" if schema_version == 1 else "claim_token_fingerprint", "claimed_at", "lease_expires_at", "delivered_at", "attempts"}
         required_message = {"message_id", "sender_runtime", "sender_session_ref", "sender_endpoint_id", "recipient_selector", "container_ref", "payload_sha256", "payload_length", "redacted", "in_reply_to", "created_at", "expires_at"}
         if any(not isinstance(item, dict) or set(item) != required_disposition or not isinstance(item["delivery_id"], str) or not _REPAIR_DELIVERY_RE.fullmatch(item["delivery_id"]) or item["disposition"] not in {"adopt", "suppress"} or not isinstance(item["preimage"], dict) or set(item["preimage"]) != {"delivery", "message"} or not isinstance(item["preimage"]["delivery"], dict) or set(item["preimage"]["delivery"]) != required_delivery or not isinstance(item["preimage"]["message"], dict) or set(item["preimage"]["message"]) != required_message or item["preimage"]["delivery"].get("delivery_id") != item["delivery_id"] or item["preimage"]["delivery"].get("message_id") != item["preimage"]["message"].get("message_id") for item in dispositions):
             raise RelayConflictError("repair manifest disposition preimage is invalid")
+        if suppression_only and any(
+                item["disposition"] != "suppress" or item["preimage"]["delivery"]["state"] != "pending"
+                or any(item["preimage"]["delivery"][key] is not None for key in
+                       ("claim_token_fingerprint", "claimed_at", "lease_expires_at", "delivered_at"))
+                for item in dispositions):
+            raise RelayConflictError("delivery-only suppression requires pending unclaimed deliveries")
         if any(
             item["preimage"]["delivery"]["state"] not in {"pending", "claimed"}
             or (
@@ -1148,7 +1161,7 @@ class SQLiteRelayMixin:
         if len(set(delivery_ids)) != len(delivery_ids):
             raise RelayConflictError("repair manifest has duplicate delivery IDs")
         endpoint_preimage = manifest["endpoint_preimage"]
-        if not isinstance(endpoint_preimage, dict) or set(endpoint_preimage) != {*source_ids, destination_id}:
+        if not isinstance(endpoint_preimage, dict) or set(endpoint_preimage) != (set() if suppression_only else {*source_ids, destination_id}):
             raise RelayConflictError("repair endpoint preimage is incomplete")
         endpoint_keys = {"runtime", "session_ref", "container_ref", "title", "alias", "state", "first_seen_at", "last_seen_at", "closed_at", "generation", "aliases", "work_refs"}
         if any(not isinstance(value, dict) or set(value) != endpoint_keys or value["state"] not in {"active", "unreachable", "closed"} or type(value["generation"]) is not int or value["generation"] < 0 or not isinstance(value["aliases"], list) or not isinstance(value["work_refs"], list) for value in endpoint_preimage.values()):
@@ -1187,6 +1200,9 @@ class SQLiteRelayMixin:
             raise RelayConflictError("repair reservation evidence runtime is invalid")
         canonical = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(canonical.encode()).hexdigest()
+        residual_split = {"alias_sends": "unchanged" if suppression_only else "destination",
+                          "exact_source_sends_and_replies": "unchanged" if suppression_only else "source",
+                          "occupied_scopes": "unchanged"}
         with self._begin_relay_immediate() as db:
             prior = db.get(RelayEndpointRepairRecord, digest)
             if prior is not None:
@@ -1200,7 +1216,7 @@ class SQLiteRelayMixin:
                         "manifest_digest": digest,
                         "adopted_delivery_ids": expected_adopted,
                         "suppressed_delivery_ids": expected_suppressed,
-                        "residual_split": {"alias_sends": "destination", "exact_source_sends_and_replies": "source", "occupied_scopes": "unchanged"},
+                        "residual_split": residual_split,
                     }:
                         raise ValueError("result mismatch")
                 except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -1215,7 +1231,11 @@ class SQLiteRelayMixin:
                         hashlib.sha256(previous_canonical.encode()).hexdigest() != record.manifest_digest
                         or not isinstance(previous, dict)
                         or set(previous) != required
-                        or previous.get("schema_version") not in {1, 2}
+                        or type(previous.get("schema_version")) is not int
+                        or previous["schema_version"] not in {1, 2, 3}
+                        or (previous["schema_version"] == 3 and (
+                            previous["source_endpoint_ids"] != [] or previous["destination_endpoint_id"] is not None
+                            or previous["expected_scopes"] != {} or previous["endpoint_preimage"] != {}))
                         or not isinstance(previous_dispositions, list)
                         or not 1 <= len(previous_dispositions) <= 512
                         or any(not isinstance(item, dict) or set(item) != required_disposition or not isinstance(item.get("delivery_id"), str) or not _REPAIR_DELIVERY_RE.fullmatch(item["delivery_id"]) for item in previous_dispositions)
@@ -1241,58 +1261,60 @@ class SQLiteRelayMixin:
                 raise RelayConflictError("cannot validate repair database identity") from exc
             if manifest["database_identity"] != actual_identity:
                 raise RelayConflictError("repair database identity drifted")
-            sources = [db.get(RelaySessionRecord, endpoint_id) for endpoint_id in source_ids]
-            destination = db.get(RelaySessionRecord, destination_id)
-            if destination is None or any(source is None for source in sources):
-                raise RelayConflictError("repair endpoint is missing")
+            if not suppression_only:
+                sources = [db.get(RelaySessionRecord, endpoint_id) for endpoint_id in source_ids]
+                destination = db.get(RelaySessionRecord, destination_id)
+                if destination is None or any(source is None for source in sources):
+                    raise RelayConflictError("repair endpoint is missing")
 
-            def endpoint_actual(endpoint: RelaySessionRecord) -> dict[str, Any]:
-                generation = db.get(RelayEndpointGenerationRecord, endpoint.id)
-                aliases = [{"alias": row.alias, "endpoint_id": row.endpoint_id} for row in db.execute(select(RelayAliasRecord).where(RelayAliasRecord.endpoint_id == endpoint.id).order_by(RelayAliasRecord.alias)).scalars()]
-                work_refs = [{"endpoint_id": row.endpoint_id, "work_ref": row.work_ref, "origin": row.origin, "scope_ref": row.scope_ref, "local_ref": row.local_ref, "position": row.position, "created_at": _iso(row.created_at), "updated_at": _iso(row.updated_at)} for row in db.execute(select(RelaySessionWorkRefRecord).where(RelaySessionWorkRefRecord.endpoint_id == endpoint.id).order_by(RelaySessionWorkRefRecord.work_ref, RelaySessionWorkRefRecord.origin)).scalars()]
-                return {"runtime": endpoint.runtime, "session_ref": endpoint.session_ref, "container_ref": endpoint.container_ref, "title": endpoint.title, "alias": endpoint.alias, "state": endpoint.state, "first_seen_at": _iso(endpoint.first_seen_at), "last_seen_at": _iso(endpoint.last_seen_at), "closed_at": _iso(endpoint.closed_at), "generation": 0 if generation is None else generation.generation, "aliases": aliases, "work_refs": work_refs}
+                def endpoint_actual(endpoint: RelaySessionRecord) -> dict[str, Any]:
+                    generation = db.get(RelayEndpointGenerationRecord, endpoint.id)
+                    aliases = [{"alias": row.alias, "endpoint_id": row.endpoint_id} for row in db.execute(select(RelayAliasRecord).where(RelayAliasRecord.endpoint_id == endpoint.id).order_by(RelayAliasRecord.alias)).scalars()]
+                    work_refs = [{"endpoint_id": row.endpoint_id, "work_ref": row.work_ref, "origin": row.origin, "scope_ref": row.scope_ref, "local_ref": row.local_ref, "position": row.position, "created_at": _iso(row.created_at), "updated_at": _iso(row.updated_at)} for row in db.execute(select(RelaySessionWorkRefRecord).where(RelaySessionWorkRefRecord.endpoint_id == endpoint.id).order_by(RelaySessionWorkRefRecord.work_ref, RelaySessionWorkRefRecord.origin)).scalars()]
+                    return {"runtime": endpoint.runtime, "session_ref": endpoint.session_ref, "container_ref": endpoint.container_ref, "title": endpoint.title, "alias": endpoint.alias, "state": endpoint.state, "first_seen_at": _iso(endpoint.first_seen_at), "last_seen_at": _iso(endpoint.last_seen_at), "closed_at": _iso(endpoint.closed_at), "generation": 0 if generation is None else generation.generation, "aliases": aliases, "work_refs": work_refs}
 
-            for source in sources:
-                assert source is not None
-                actual = endpoint_actual(source)
-                if endpoint_preimage[source.id] != actual or scopes[source.id] != source.container_ref or source.alias is not None or actual["aliases"] or actual["work_refs"]:
-                    raise RelayConflictError("source endpoint preimage, alias, work-ref, or scope drifted")
-            destination_actual = endpoint_actual(destination)
-            alias_owner = None if destination.alias is None else db.get(RelayAliasRecord, destination.alias)
-            if destination.alias is not None and (alias_owner is None or alias_owner.endpoint_id != destination.id):
-                raise RelayConflictError("destination alias ownership is inconsistent")
-            expected_aliases = [] if destination.alias is None else [{"alias": destination.alias, "endpoint_id": destination.id}]
-            if destination_actual["aliases"] != expected_aliases:
-                raise RelayConflictError("destination alias ownership is inconsistent")
-            if endpoint_preimage[destination.id] != destination_actual or scopes[destination.id] != destination.container_ref:
-                raise RelayConflictError("destination endpoint preimage or scope drifted")
-            siblings = db.execute(select(RelaySessionRecord).where(RelaySessionRecord.runtime == destination.runtime, RelaySessionRecord.session_ref == destination.session_ref)).scalars().all()
-            if {row.id for row in siblings} != {*source_ids, destination.id}:
-                raise RelayConflictError("same runtime/session endpoint set is incomplete")
-            claimed_rows = db.execute(select(RelayDeliveryRecord).where(RelayDeliveryRecord.recipient_endpoint_id.in_(source_ids), RelayDeliveryRecord.state == "claimed")).scalars().all()
-            if schema_version == 1 and claimed_rows:
-                raise RelayConflictError("a source has claimed work")
-            if schema_version == 2 and any(
-                not claimed.claim_token
-                or claimed.lease_expires_at is None
-                or _now(claimed.lease_expires_at) > current
-                for claimed in claimed_rows
-            ):
-                raise RelayConflictError("a source has active or malformed claimed work")
-            repairable_state = RelayDeliveryRecord.state == "pending"
-            if schema_version == 2:
-                repairable_state = or_(
-                    repairable_state,
-                    and_(
-                        RelayDeliveryRecord.state == "claimed",
-                        RelayDeliveryRecord.lease_expires_at.is_not(None),
-                        RelayDeliveryRecord.lease_expires_at <= current,
-                    ),
-                )
-            live = db.execute(select(RelayDeliveryRecord.id).join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id).where(RelayDeliveryRecord.recipient_endpoint_id.in_(source_ids), repairable_state, RelayMessageRecord.expires_at > current)).scalars().all()
-            if set(live) != set(delivery_ids):
-                raise RelayConflictError("repair manifest does not classify the complete live source inventory")
-            result = {"manifest_digest": digest, "adopted_delivery_ids": [], "suppressed_delivery_ids": [], "residual_split": {"alias_sends": "destination", "exact_source_sends_and_replies": "source", "occupied_scopes": "unchanged"}}
+                for source in sources:
+                    assert source is not None
+                    actual = endpoint_actual(source)
+                    if endpoint_preimage[source.id] != actual or scopes[source.id] != source.container_ref or source.alias is not None or actual["aliases"] or actual["work_refs"]:
+                        raise RelayConflictError("source endpoint preimage, alias, work-ref, or scope drifted")
+                destination_actual = endpoint_actual(destination)
+                alias_owner = None if destination.alias is None else db.get(RelayAliasRecord, destination.alias)
+                if destination.alias is not None and (alias_owner is None or alias_owner.endpoint_id != destination.id):
+                    raise RelayConflictError("destination alias ownership is inconsistent")
+                expected_aliases = [] if destination.alias is None else [{"alias": destination.alias, "endpoint_id": destination.id}]
+                if destination_actual["aliases"] != expected_aliases:
+                    raise RelayConflictError("destination alias ownership is inconsistent")
+                if endpoint_preimage[destination.id] != destination_actual or scopes[destination.id] != destination.container_ref:
+                    raise RelayConflictError("destination endpoint preimage or scope drifted")
+                siblings = db.execute(select(RelaySessionRecord).where(RelaySessionRecord.runtime == destination.runtime, RelaySessionRecord.session_ref == destination.session_ref)).scalars().all()
+                if {row.id for row in siblings} != {*source_ids, destination.id}:
+                    raise RelayConflictError("same runtime/session endpoint set is incomplete")
+                claimed_rows = db.execute(select(RelayDeliveryRecord).where(RelayDeliveryRecord.recipient_endpoint_id.in_(source_ids), RelayDeliveryRecord.state == "claimed")).scalars().all()
+                if schema_version == 1 and claimed_rows:
+                    raise RelayConflictError("a source has claimed work")
+                if schema_version == 2 and any(
+                    not claimed.claim_token
+                    or claimed.lease_expires_at is None
+                    or _now(claimed.lease_expires_at) > current
+                    for claimed in claimed_rows
+                ):
+                    raise RelayConflictError("a source has active or malformed claimed work")
+                repairable_state = RelayDeliveryRecord.state == "pending"
+                if schema_version == 2:
+                    repairable_state = or_(
+                        repairable_state,
+                        and_(
+                            RelayDeliveryRecord.state == "claimed",
+                            RelayDeliveryRecord.lease_expires_at.is_not(None),
+                            RelayDeliveryRecord.lease_expires_at <= current,
+                        ),
+                    )
+                live = db.execute(select(RelayDeliveryRecord.id).join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id).where(RelayDeliveryRecord.recipient_endpoint_id.in_(source_ids), repairable_state, RelayMessageRecord.expires_at > current)).scalars().all()
+                if set(live) != set(delivery_ids):
+                    raise RelayConflictError("repair manifest does not classify the complete live source inventory")
+            result = {"manifest_digest": digest, "adopted_delivery_ids": [], "suppressed_delivery_ids": [], "residual_split": residual_split}
+            validated = []
             for item in dispositions:
                 delivery = db.get(RelayDeliveryRecord, item["delivery_id"])
                 message = None if delivery is None else db.get(RelayMessageRecord, delivery.message_id)
@@ -1310,11 +1332,17 @@ class SQLiteRelayMixin:
                     and claim_expired
                     and item["disposition"] == "suppress"
                 )
-                if actual != item["preimage"] or delivery.recipient_endpoint_id not in source_ids or not repairable or _now(message.expires_at) <= current:
+                if (actual != item["preimage"]
+                        or (suppression_only and json.dumps(actual, sort_keys=True) != json.dumps(item["preimage"], sort_keys=True))
+                        or (not suppression_only and delivery.recipient_endpoint_id not in source_ids)
+                        or not repairable or _now(message.expires_at) <= current):
                     raise RelayConflictError("repair delivery or message preimage drifted")
+                if item["disposition"] == "adopt" and (
+                        evidence_by_id[delivery.id]["status"] != "clean" or delivery.id not in clean_adoption_ids):
+                    raise RelayConflictError("adoption requires clean authoritative reservation evidence")
+                validated.append((item, delivery, actual))
+            for item, delivery, actual in validated:
                 if item["disposition"] == "adopt":
-                    if evidence_by_id[delivery.id]["status"] != "clean" or delivery.id not in clean_adoption_ids:
-                        raise RelayConflictError("adoption requires clean authoritative reservation evidence")
                     delivery.recipient_endpoint_id = destination.id
                     result["adopted_delivery_ids"].append(delivery.id)
                 else:

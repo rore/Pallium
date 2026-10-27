@@ -17,8 +17,8 @@ from tests.test_codex_retained_wake import (
 
 
 @pytest.fixture
-def retained(monkeypatch, tmp_path):
-    yield from retained_fixture.__wrapped__(monkeypatch, tmp_path)
+def retained(monkeypatch, tmp_path, request):
+    yield from retained_fixture.__wrapped__(monkeypatch, tmp_path, request)
 
 
 def _freeze_clock(monkeypatch, now):
