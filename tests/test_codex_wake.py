@@ -4073,8 +4073,9 @@ def test_exclusive_trial_binding_and_spend_survive_restart_and_later_delivery(cl
 
 @pytest.mark.parametrize("changed_before", ["bind", "spend"])
 @pytest.mark.parametrize("change", ["closed", "expired"])
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_exclusive_trial_rejects_stale_endpoint_or_delivery_before_native_action(
-    client, changed_before, change,
+    client, changed_before, change, relay_admission_clock,
 ) -> None:
     storage = client.app.state.pallium_service._storage
     relay = RelayService(storage)
@@ -4096,21 +4097,26 @@ def test_exclusive_trial_rejects_stale_endpoint_or_delivery_before_native_action
         "recipient": endpoint, "payload": "pending trial", **scope,
     })
     assert sent.status_code == 200
+    message_id = sent.json()["message_id"]
     delivery_id = sent.json()["deliveries"][0]["delivery_id"]
     if changed_before == "spend":
         assert relay.bind_codex_trial_delivery(
             endpoint_id=endpoint, trial_id="closed-trial", delivery_id=delivery_id,
         )
     if change == "closed":
-        assert route.post("/relay/sessions/close", json={
-            "runtime": "codex", "session_ref": "target", **scope,
-        }).status_code == 200
+        with relay_admission_clock(storage, expected_admissions=1):
+            closed = route.post("/relay/sessions/close", json={
+                "runtime": "codex", "session_ref": "target", **scope,
+            })
+        assert closed.status_code == 200
     else:
         from storage.sqlite_schema import RelayMessageRecord
-        with storage._begin_relay_immediate() as db:
-            db.get(RelayMessageRecord, sent.json()["message_id"]).expires_at = (
-                datetime.now(timezone.utc) - timedelta(seconds=1)
-            )
+        expired_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        with relay_admission_clock(storage, expected_admissions=1):
+            with storage._begin_relay_immediate() as db:
+                message = db.get(RelayMessageRecord, message_id)
+                assert message is not None
+                message.expires_at = expired_at
     if changed_before == "bind":
         assert not relay.bind_codex_trial_delivery(
             endpoint_id=endpoint, trial_id="closed-trial", delivery_id=delivery_id,
@@ -4119,6 +4125,24 @@ def test_exclusive_trial_rejects_stale_endpoint_or_delivery_before_native_action
         assert not relay.spend_codex_trial(
             endpoint_id=endpoint, trial_id="closed-trial", delivery_id=delivery_id,
         )
+    # Expired-message status materializes expiry, so read it after the trial check.
+    if change == "closed":
+        sessions = route.get("/relay/sessions", params={
+            "runtime": "codex", "session_ref": "target", "include_inactive": True, **scope,
+        })
+        assert sessions.status_code == 200
+        closed_target, = sessions.json()
+        assert closed_target["endpoint_id"] == endpoint
+        assert closed_target["state"] == "closed"
+    else:
+        expired = route.get(f"/relay/messages/{message_id}", params=scope)
+        assert expired.status_code == 200
+        expired_message = expired.json()
+        assert expired_message["message_id"] == message_id
+        assert datetime.fromisoformat(expired_message["expires_at"].replace("Z", "+00:00")) <= datetime.now(timezone.utc)
+        expired_delivery, = expired_message["deliveries"]
+        assert expired_delivery["delivery_id"] == delivery_id
+        assert expired_delivery["state"] == "expired"
 
 
 def test_exclusive_trial_rejects_endpoint_scope_generation_aba_before_action(client) -> None:
