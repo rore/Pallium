@@ -29,13 +29,13 @@
 
 **Verification plan:** Original false oracle -> controlled lost-response E2E RED with real ACK commit and public state. Corrected caller contract -> original native case plus controlled response-loss case and existing strict positive/late-response controls, all with exact state and event assertions. No safety regression -> full affected hook module and source diff proving product/deadline/cleanup/protected paths untouched. Whole change -> selector and workflow/risk checks; Relaydev's current-head composed full lane required before release. No blind failed-run retry, new latency capture or live acceptance.
 
-**Plan review:** Pending existing non-implementer contract/plan review; no test edits.
+**Plan review:** Agent technical review: @astra-reviewer turn01a17ad2-11e7-7c40-83b5-98929398aeef, exact recorded-plan conditional GO; required transport-evidence clarification is adopted below.
 
 **Approvals:** Not required at this risk level; existing user-authorized implementation/review coordination applies. No authority to weaken product requirements is inferred.
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Source and coordination
@@ -47,3 +47,10 @@ Current role freshly confirmed @pal-dev1; mapping has no entry, ordinary opt-out
 Evidence source: Relaydev's retained relay-pool-current checkout, build/pr325-pin-preparation/automatic-linux313-failed.log, read-only. Existing late-response control in tests/test_agent_relay_hooks.py asserts durable delivered state and ack_failed/no confirmation after a deliberately delayed ACK response. Production acknowledge_relay caps its request0.5s and confirms only exact returned delivered state; hook emits before ACK and reports failure truthfully. No source evidence of lost custody or a product fix is inferred.
 
 This corrects the expiry test's assumption that a committed ACK response always arrives; it does not rewrite the accepted product contract. Existing confirmed-response control stays strict. Independent reviewer must assess this classification explicitly before implementation.
+
+
+## Plan review and clarification
+
+Astra reviewed exact WR99aa3ec0 on merged4b5e5d0. Conditional PLAN GO requires naturally unconfirmed ACK to pair the correct committed ACK response/public delivered-attempts1 with the exact hook ACK transport exception or equivalent captured transport boundary. Server response-write error, generic ack_failed or missing event alone cannot select success. Adopted implementation: capture the actual ACK response identity/state/flag; derive the unconfirmed branch only from the helper's exact ACK-path diagnostic with a known transport exception class, excluding malformed JSON/wrong-ID/no-error outcomes. The controlled real-HTTP drop also must produce that actual transport exception, after commit and before response transmission. Server200/publicdelivered1 stay strict in both paths; terminal event must be exactly truthful. Keep normal-response confirmation strict, original node identity, native deadlines, late-ACK controls and joins. No duplicate full suite requested; return immutable patch/focused evidence to reviewer, then Relaydev composition.
+
+This is conformance to the already accepted late-response contract; it does not remove durable delivery, single claim, truthful confirmation or positive-response coverage. Controlled RED/GREEN is required before accepting this interpretation. Named deterministic UTF8 write fallback is used because the earlier machine-local apply_patch1385 failure must not be retried; no repository policy or live installation changes.
