@@ -296,6 +296,7 @@ def test_nullable_legacy_retry_deadline_recovers_and_hook_acks(http_wake, monkey
 def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
     client, http_wake, monkeypatch, tmp_path, capsys, fault, moved, restart, request,
     *, force_backlog_refusal=False, force_retry_refusal=False, force_recovered_claim_refusal=False,
+    initial_claim_fault=None,
 ):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -332,15 +333,20 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
                             allow_preclaim_refusal=fault != "ack-response")
     hook = sys.modules["relay_test_retained_session_start"]
     request, acknowledge = hook.relay_request, hook.acknowledge_relay
+    intended_faults = []
 
     def lose_claim_response(*args, **kwargs):
         response = request(*args, **kwargs)
+        if response is None:
+            return None
         assert response["deliveries"] and "wake_delivery_id" not in args[2]
+        intended_faults.append(tuple(row["delivery_id"] for row in response["deliveries"]))
         raise TimeoutError("isolated claim response loss")
 
     def fail_ack(deliveries, **kwargs):
         if fault == "ack-response":
             acknowledge(deliveries, **kwargs)
+        intended_faults.append(tuple(row["delivery_id"] for row in deliveries))
         raise TimeoutError("isolated ACK failure")
 
     if fault == "claim-response":
@@ -349,9 +355,17 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
         monkeypatch.setattr(hook, "acknowledge_relay", fail_ack)
     owner_finished = threading.Event()
     owner_fences, forced_claim, forced_hook_refusals = [], [], []
+    initial_claim_faults = []
+    initial_fault_settled = False
     original_turn = relay._store.relay_turn
     def refuse_recovered_claim(**kwargs):
-        if force_recovered_claim_refusal and len(owner_fences) > 1 and not forced_claim:
+        if initial_claim_fault is not None and not initial_claim_faults:
+            assert initial_claim_fault in {"busy", "unexpected"}
+            initial_claim_faults.append(dict(kwargs))
+            if initial_claim_fault == "busy":
+                raise ImmediateTransactionBusyError("controlled initial preclaim refusal", acquisition_stage="late_begin")
+            raise ValueError("controlled unexpected initial claim error")
+        if force_recovered_claim_refusal and initial_fault_settled and not forced_claim:
             assert kwargs["runtime"] == "codex" and kwargs["session_ref"] == TARGET
             forced_claim.append(dict(kwargs))
             raise ImmediateTransactionBusyError("controlled recovered preclaim refusal", acquisition_stage="setup_deadline")
@@ -488,6 +502,37 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
                 recover(http_wake)  # Model the omitted production sweep after initial settlement.
                 # Synchronize real hook work before checking worker settlement below.
                 assert owner_finished.wait(5), "first owner hook did not finish"
+                created = response.json()["deliveries"][0]
+
+                def intended_claim_reached():
+                    observed = http.get(f"/relay/messages/{message_id}", params=sender_scope)
+                    assert observed.status_code == 200, observed.text
+                    row, = observed.json()["deliveries"]
+                    assert (row["delivery_id"], row["recipient_endpoint_id"]) == (
+                        created["delivery_id"], target["endpoint_id"],
+                    )
+                    if intended_faults:
+                        assert intended_faults == [(created["delivery_id"],)]
+                        assert (row["state"], row["attempts"]) == (
+                            "delivered" if fault == "ack-response" else "claimed", 1,
+                        )
+                        return True
+                    assert run_hook.refusals, "initial claim did not reach the intended fault or a verified preclaim refusal"
+                    assert (row["state"], row["attempts"]) == ("pending", 0)
+                    assert len(desktop.owners) == len(run_hook.refusals)
+                    for method, path, body in run_hook.refusals:
+                        assert (method, path) == ("POST", "/relay/turn")
+                        assert {key: body[key] for key in ("runtime", "session_ref", "container_ref")} == {
+                            "runtime": "codex", "session_ref": TARGET, "container_ref": SCOPE["container_ref"],
+                        }
+                    assert all(event[0] == "emit" and "[Pallium Relay" not in event[2] for event in events)
+                    fence = registry.snapshot(target["endpoint_id"])
+                    assert fence.delivery_id == created["delivery_id"] and fence.correlated_claim_attempts is None
+                    assert fence.container_ref == SCOPE["container_ref"]
+                    return False
+
+                if not intended_claim_reached():
+                    recover(http_wake, until=intended_claim_reached, now=now)
             for worker in workers:
                 worker.join(2)
                 assert not worker.is_alive()
@@ -500,6 +545,10 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
     observed = http.get("/relay/messages/claim-failure-original", params=sender_scope).json()["deliveries"][0]
     assert observed["state"] == ("delivered" if fault == "ack-response" else "claimed")
     assert observed["attempts"] == 1
+    assert intended_faults == [(first["delivery_id"],)]
+    initial_fault_settled = True
+    initial_owner_count = len(desktop.owners)
+    assert initial_owner_count == 1 + len(run_hook.refusals)
     if fault != "ack-response":
         fence = registry.snapshot(first["recipient_endpoint_id"])
         assert fence is not None and fence.correlated_claim_attempts is None
@@ -526,14 +575,15 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
         if moved and fault == "ack-response":
             assert relay._store is client.app.state.pallium_service._storage
             _observe_relay_busy_acquisition(relay._store, monkeypatch, test_request, tmp_path)
+    recovery_refusals_start = len(run_hook.refusals)
     try:
         send("claim-failure-backlog", "backlog-marker-東京", retry_busy=True)
         journey = (http, relay, registry, service, desktop, None, workers)
         if fault != "ack-response":
-            assert len(desktop.owners) == 1
+            assert len(desktop.owners) == initial_owner_count
             now[0] += timedelta(seconds=RELAY_CLAIM_LEASE_SECONDS - 0.001)
             recover(journey)
-            assert len(desktop.owners) == 1  # Active claim is excluded, even after restart.
+            assert len(desktop.owners) == initial_owner_count  # Active claim excludes every new owner.
             now[0] += timedelta(seconds=0.001)
 
             def authority():
@@ -637,7 +687,7 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
             assert added_owners[0]["params"]["arguments"]["threadId"] == TARGET, attempts
             assert first["delivery_id"] in added_owners[0]["params"]["arguments"]["prompt"], attempts
             assert tuple(events[:len(events_before)]) == events_before, attempts
-            if run_hook.refusals:
+            if run_hook.refusals[recovery_refusals_start:]:
                 original_states = [(row["delivery_id"], row["state"], row["attempts"]) for row in before_deliveries]
                 def delivered_after_refusal():
                     rows = deliveries()
@@ -654,7 +704,7 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
                     return False
                 recover(journey, until=delivered_after_refusal, now=now)
             assert len(forced_hook_refusals) == len(forced_claim) == int(force_recovered_claim_refusal), run_hook.refusals
-            assert len(desktop.owners) - len(owners_before) == 1 + len(run_hook.refusals)
+            assert len(desktop.owners) - len(owners_before) == 1 + len(run_hook.refusals) - recovery_refusals_start
             assert len({item.generation for item in owner_fences}) == len(owner_fences)
             for item in owner_fences:
                 assert item.recipient_endpoint_id == target["endpoint_id"] and item.delivery_id == first["delivery_id"]
@@ -688,6 +738,22 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
             worker.join()
         if restart:
             http.close()
+
+
+@pytest.mark.parametrize("initial_claim_fault", ["busy", "unexpected"])
+def test_unloaded_initial_claim_refusal_requires_qualified_recovery(
+    client, http_wake, monkeypatch, tmp_path, capsys, request, initial_claim_fault,
+):
+    def journey():
+        test_unloaded_hook_claim_failure_recovers_original_and_backlog(
+            client, http_wake, monkeypatch, tmp_path, capsys,
+            "ack-before-commit", False, True, request, initial_claim_fault=initial_claim_fault,
+        )
+    if initial_claim_fault == "unexpected":
+        with pytest.raises(AssertionError, match="initial claim did not reach the intended fault"):
+            journey()
+    else:
+        journey()
 
 
 def test_unloaded_recovered_preclaim_refusal_respects_cooldown_and_recovers_backlog(
