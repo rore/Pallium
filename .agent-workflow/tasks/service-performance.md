@@ -3028,7 +3028,7 @@ Accepted manager-post364-backlog-ownership-20261027 under the existing overnight
 
 **Exceptions:** None
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
