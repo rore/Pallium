@@ -517,6 +517,8 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
                             "delivered" if fault == "ack-response" else "claimed", 1,
                         )
                         return True
+                    if initial_claim_fault is not None:
+                        assert initial_claim_faults, "controlled initial claim fault was not injected"
                     assert run_hook.refusals, "initial claim did not reach the intended fault or a verified preclaim refusal"
                     assert (row["state"], row["attempts"]) == ("pending", 0)
                     assert len(desktop.owners) == len(run_hook.refusals)
@@ -754,6 +756,31 @@ def test_unloaded_initial_claim_refusal_requires_qualified_recovery(
             journey()
     else:
         journey()
+
+
+def test_unloaded_initial_claim_control_rejects_missing_injection(
+    client, http_wake, monkeypatch, tmp_path, capsys, request,
+):
+    original_runner, skipped = _hook_runner, []
+
+    def skip_claim(*args, **kwargs):
+        run = original_runner(*args, **kwargs)
+        hook = sys.modules["relay_test_retained_session_start"]
+
+        def exit_before_claim():
+            skipped.append(True)
+            raise SystemExit(0)
+
+        monkeypatch.setattr(hook, "main", exit_before_claim)
+        return run
+
+    monkeypatch.setattr(sys.modules[__name__], "_hook_runner", skip_claim)
+    with pytest.raises(AssertionError, match="controlled initial claim fault was not injected"):
+        test_unloaded_hook_claim_failure_recovers_original_and_backlog(
+            client, http_wake, monkeypatch, tmp_path, capsys,
+            "ack-before-commit", False, True, request, initial_claim_fault="unexpected",
+        )
+    assert skipped == [True]
 
 
 def test_unloaded_recovered_preclaim_refusal_respects_cooldown_and_recovers_backlog(
