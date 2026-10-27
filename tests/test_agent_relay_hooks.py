@@ -946,6 +946,7 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
     hook_done, late_done = threading.Event(), threading.Event()
     events, handlers, requests, times = [], [], [], {}
     admission_order = []
+    ack_result = {}
 
     class Server(ThreadingHTTPServer):
         daemon_threads = True
@@ -965,14 +966,21 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
                     headers={"content-type": "application/json"})
                 if first:
                     times["status"] = response.status_code
+                if self.path == "/relay/deliveries/ack":
+                    ack_result["status"] = response.status_code
                 try:
                     self.send_response(response.status_code)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(response.content)))
                     self.end_headers()
                     self.wfile.write(response.content)
-                except (ConnectionAbortedError, BrokenPipeError, OSError):
-                    pass
+                except (ConnectionAbortedError, BrokenPipeError, OSError) as exc:
+                    if self.path == "/relay/deliveries/ack":
+                        ack_result["response_error"] = type(exc).__name__
+            except Exception as exc:
+                if self.path == "/relay/deliveries/ack":
+                    ack_result["request_error"] = type(exc).__name__
+                raise
             finally:
                 if first:
                     late_done.set()
@@ -1017,12 +1025,10 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
         with pytest.raises(SystemExit) as fresh:
             hook.main()
         assert fresh.value.code == 0
-        output = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+        fresh_output = capsys.readouterr()
+        output = json.loads(fresh_output.out)["hookSpecificOutput"]["additionalContext"]
         assert output.count(delivery_id) == 1 and "expiry payload — 東京" in output
         assert any(event["stage"] == "payload_emitted" for event in events)
-        assert any(event["stage"] == "delivery_acked" for event in events)
-        delivered = client.get(f"/relay/messages/{message_id}", params=scope).json()["deliveries"][0]
-        assert (delivered["state"], delivered["attempts"]) == ("delivered", 1)
     finally:
         hook_done.set()
         server.shutdown()
@@ -1032,6 +1038,13 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
             handler.join(timeout=3)
             assert not handler.is_alive()
         assert not server_thread.is_alive()
+    delivered = client.get(f"/relay/messages/{message_id}", params=scope).json()["deliveries"][0]
+    diagnostics = {
+        "ack": ack_result, "wake_events": events[:16], "stderr": fresh_output.err[:4000],
+        "delivery": {"state": delivered["state"], "attempts": delivered["attempts"]},
+    }
+    assert any(event["stage"] == "delivery_acked" for event in events), diagnostics
+    assert (delivered["state"], delivered["attempts"]) == ("delivered", 1), diagnostics
 
 
 def test_codex_exact_wake_late_ack_response_keeps_durable_delivery_without_confirmation(
