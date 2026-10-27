@@ -1,6 +1,7 @@
 """Retained wake HTTP/MCP journeys using a local fake Desktop transport."""
 from contextlib import asynccontextmanager, contextmanager
 import asyncio
+import contextvars
 import json
 import os
 from pathlib import Path
@@ -977,7 +978,7 @@ def http_wake(client, retained, monkeypatch, tmp_path):
     assert time.monotonic is native_monotonic
     body = {"sender_runtime": "claude-code", "sender_session_ref": "sender", "recipient": f"codex:{TARGET}",
             "message_id": "retained-journey", "payload": "private-payload-東京", **SCOPE}
-    def send(*, dispatch_completed=None):
+    def send(*, dispatch_completed=None, allow_busy=False):
         deadline = time.monotonic() + 2.0
         response = http.post("/relay/messages", json=body)
         try:
@@ -996,6 +997,15 @@ def http_wake(client, retained, monkeypatch, tmp_path):
                 time.sleep(delay)
                 if time.monotonic() < deadline:
                     response = http.post("/relay/messages", json=body)
+        if allow_busy and response.status_code == 503:
+            try:
+                refusal = response.json()
+            except ValueError:
+                refusal = None
+            assert (refusal == {"detail": {"code": "relay_busy", "retryable": True}}
+                    and refusal["detail"]["retryable"] is True
+                    and response.headers.get("Retry-After") == "1"), f"HTTP {response.status_code}: {response.text}"
+            return None
         assert response.status_code == 200, response.text
         if dispatch_completed is not None:
             assert dispatch_completed.wait(5), "native setup dispatch did not complete"
@@ -1428,10 +1438,27 @@ def test_malformed_descriptor_release_busy_recovers_without_owner_replay(
     assert len(release_warnings) == 1
     assert release_warnings[0].rpartition("acquisition_stage=")[2] in ImmediateTransactionBusyError.ACQUISITION_STAGES
 
-@pytest.mark.parametrize("fault", ["lost", "malformed", "native-error", None])
-def test_write_is_fenced_across_concurrency_recovery_restart(http_wake, fault):
+@pytest.mark.parametrize("fault,refused_sender", [
+    *[pytest.param(fault, False, id=str(fault)) for fault in ("lost", "malformed", "native-error", None)],
+    pytest.param("native-error", True, id="native-error-one-busy"),
+])
+def test_write_is_fenced_across_concurrency_recovery_restart(http_wake, monkeypatch, fault, refused_sender):
     http, relay, registry, service, desktop, send, _ = http_wake
     desktop.response = fault
+    refuse = contextvars.ContextVar("retained_sender_refused", default=False)
+    forced_refusals = []
+    if refused_sender:
+        original_begin = relay._store._begin_relay_immediate
+
+        @contextmanager
+        def begin():
+            if refuse.get():
+                forced_refusals.append(True)
+                raise ImmediateTransactionBusyError("controlled sender refusal", acquisition_stage="local_gate")
+            with original_begin() as db:
+                yield db
+
+        monkeypatch.setattr(relay._store, "_begin_relay_immediate", begin)
     owner_entered, owners = threading.Event(), []
 
     def on_owner(_request):
@@ -1439,13 +1466,16 @@ def test_write_is_fenced_across_concurrency_recovery_restart(http_wake, fault):
         owner_entered.set()
 
     desktop.on_owner = on_owner
-    errors = []
-    def run():
+    errors, outcomes = [], []
+    def run(index):
+        token = refuse.set(refused_sender and index == 2)
         try:
-            send()
+            outcomes.append((index, send(allow_busy=True)))
         except Exception as error:
             errors.append(error)
-    threads = [threading.Thread(target=run) for _ in range(3)]
+        finally:
+            refuse.reset(token)
+    threads = [threading.Thread(target=run, args=(index,)) for index in range(3)]
     try:
         for thread in threads:
             thread.start()
@@ -1462,12 +1492,26 @@ def test_write_is_fenced_across_concurrency_recovery_restart(http_wake, fault):
                 thread.join(5)
         assert all(not thread.is_alive() for thread in threads), "sender did not drain"
     assert errors == []
+    assert len(outcomes) == 3
+    admitted = [delivery for _, delivery in outcomes if delivery is not None]
+    assert admitted, "all concurrent sends were refused"
+    if refused_sender:
+        assert dict(outcomes)[2] is None
+        assert 1 <= len(forced_refusals) <= 2  # The native retry budget may permit only one attempt.
+    response = http.get("/relay/messages/retained-journey", params=SCOPE)
+    assert response.status_code == 200, response.text
+    message = response.json()
+    assert message["message_id"] == "retained-journey"
+    delivery, = message["deliveries"]
+    assert {item["delivery_id"] for item in admitted} == {delivery["delivery_id"]}
+    assert delivery["state"] == "pending" and delivery["attempts"] == 0
     assert len(desktop.owners) == 1
     recover(http_wake)
     assert len(desktop.owners) == 1
     restarted = CodexWakeRegistry(relay_service=relay)
     restarted.retained_service = service
-    assert restarted.reservations()[0].outcome == "uncertain"
+    reservation, = restarted.reservations()
+    assert reservation.outcome == "uncertain" and reservation.delivery_id == delivery["delivery_id"]
     assert codex_wake.schedule_codex_relay_wake({"recipient": f"codex:{TARGET}", "deliveries": [
         {**http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0],
          "recipient_session_ref": TARGET, "recipient_runtime": "codex"}]}, SCOPE,
@@ -1480,7 +1524,8 @@ def test_write_is_fenced_across_concurrency_recovery_restart(http_wake, fault):
     assert owner["params"]["threadId"] == "source-α" and owner["params"]["turnId"] == "turn-β"
     assert set(owner["params"]["arguments"]) == {"threadId", "prompt"}
 
-def test_http_retryable_busy_once_keeps_one_delivery_and_owner(http_wake, monkeypatch):
+@pytest.mark.parametrize("allow_busy", [False, True])
+def test_http_retryable_busy_once_keeps_one_delivery_and_owner(http_wake, monkeypatch, allow_busy):
     http, relay, registry, _, desktop, send, _ = http_wake
     storage = relay._store
     original = storage._begin_relay_immediate
@@ -1496,7 +1541,7 @@ def test_http_retryable_busy_once_keeps_one_delivery_and_owner(http_wake, monkey
             yield db
 
     monkeypatch.setattr(storage, "_begin_relay_immediate", busy_once)
-    delivery = send()
+    delivery = send(allow_busy=allow_busy)
     recover(http_wake)  # The bare router omits production's periodic recovery sweep.
 
     status = http.get("/relay/messages/retained-journey", params=SCOPE)
@@ -1508,7 +1553,8 @@ def test_http_retryable_busy_once_keeps_one_delivery_and_owner(http_wake, monkey
     reservations = registry.reservations()
     assert len(reservations) == 1 and reservations[0].outcome == "uncertain"
 
-def test_http_retryable_busy_exhaustion_stays_closed(http_wake, monkeypatch):
+@pytest.mark.parametrize("allow_busy", [False, True])
+def test_http_retryable_busy_exhaustion_stays_closed(http_wake, monkeypatch, allow_busy):
     http, relay, registry, _, desktop, send, _ = http_wake
     original = relay._store._begin_relay_immediate
     attempts = 0
@@ -1521,15 +1567,19 @@ def test_http_retryable_busy_exhaustion_stays_closed(http_wake, monkeypatch):
         yield  # pragma: no cover
 
     monkeypatch.setattr(relay._store, "_begin_relay_immediate", always_busy)
-    with pytest.raises(AssertionError, match="relay_busy"):
-        send()
+    if allow_busy:
+        assert send(allow_busy=True) is None
+    else:
+        with pytest.raises(AssertionError, match="relay_busy"):
+            send()
 
     assert attempts == 2
     monkeypatch.setattr(relay._store, "_begin_relay_immediate", original)
     assert http.get("/relay/messages/retained-journey", params=SCOPE).status_code == 404
     assert desktop.owners == [] and registry.reservations() == ()
 
-def test_http_nonbusy_error_is_not_retried(http_wake, monkeypatch):
+@pytest.mark.parametrize("allow_busy", [False, True])
+def test_http_nonbusy_error_is_not_retried(http_wake, monkeypatch, allow_busy):
     http, relay, registry, _, desktop, send, _ = http_wake
     attempts = 0
 
@@ -1542,19 +1592,21 @@ def test_http_nonbusy_error_is_not_retried(http_wake, monkeypatch):
 
     monkeypatch.setattr(relay._store, "_begin_relay_immediate", invalid_request)
     with pytest.raises(AssertionError, match="422"):
-        send()
+        send(allow_busy=allow_busy)
 
     assert attempts == 1
     assert desktop.owners == [] and registry.reservations() == ()
 
+@pytest.mark.parametrize("allow_busy", [False, True])
 @pytest.mark.parametrize("body, retry_after", [
     (b"not-json", "1"),
     (b'{"detail":"malformed"}', "1"),
     (b'{"detail":{"code":"other","retryable":true}}', "1"),
     (b'{"detail":{"code":"relay_busy","retryable":false}}', "1"),
+    (b'{"detail":{"code":"relay_busy","retryable":1}}', "1"),
     (b'{"detail":{"code":"relay_busy","retryable":true}}', "3"),
 ])
-def test_http_send_rejects_malformed_or_out_of_budget_busy(http_wake, monkeypatch, body, retry_after):
+def test_http_send_rejects_malformed_or_out_of_budget_busy(http_wake, monkeypatch, body, retry_after, allow_busy):
     _, _, registry, _, desktop, send, _ = http_wake
     requests = []
 
@@ -1564,7 +1616,7 @@ def test_http_send_rejects_malformed_or_out_of_budget_busy(http_wake, monkeypatc
 
     monkeypatch.setattr(http_wake[0], "post", post)
     with pytest.raises(AssertionError, match="503"):
-        send()
+        send(allow_busy=allow_busy)
 
     assert len(requests) == 1
     assert desktop.owners == [] and registry.reservations() == ()
