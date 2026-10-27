@@ -1164,11 +1164,17 @@ def test_hook_timeout_or_http_failure_is_silent(failure: Exception, monkeypatch:
     assert "transport-secret" not in captured.out + captured.err
     assert not caplog.records
 
+@pytest.mark.parametrize("delay_pin_preparation", [False, True], ids=["ordinary", "delayed-pin-lock-opens"])
 def test_prompt_cleanup_retries_real_wake_and_relay_transition(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    delay_pin_preparation: bool,
 ) -> None:
+    from itertools import count
+    import time
+
     hook = _load_claude_hook("user_prompt_submit", monkeypatch)
     common = sys.modules[hook.close_claude_wake.__module__]
+    native_common_time, native_monotonic = common.time, time.monotonic
     session_id = "session-transition"
     old_container, new_container = "git:old/repo", "git:new/repo"
     wake_dir = tmp_path / "wake"
@@ -1176,6 +1182,19 @@ def test_prompt_cleanup_retries_real_wake_and_relay_transition(
     monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", wake_dir / "intents")
     monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "sessions")
     monkeypatch.setattr(common, "PALLIUM_BASE_URL", "http://testserver")
+    import builtins
+    native_open = builtins.open
+    delayed_lock_opens = []
+    pin_lock = common.SESSIONS_DIR / f"{session_id}.lock"
+
+    def open_pin_lock(path, *args, **kwargs):
+        handle = native_open(path, *args, **kwargs)
+        if delay_pin_preparation and Path(path) == pin_lock and len(delayed_lock_opens) < 2:
+            delayed_lock_opens.append(Path(path))
+            time.sleep(0.101)
+        return handle
+
+    monkeypatch.setattr(common, "open", open_pin_lock, raising=False)
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", r"\\.\pipe\claude")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token")
     registry = ClaudeWakeRegistry(state_dir=wake_dir)
@@ -1186,11 +1205,25 @@ def test_prompt_cleanup_retries_real_wake_and_relay_transition(
     ))
     assert common.register_claude_wake(session_id, old_container, idle=True)
     assert common.register_claude_wake(session_id, new_container, idle=False)
-    common.pin_container(session_id, old_container)
+    with monkeypatch.context() as setup:
+        setup_time = SimpleNamespace(**vars(native_common_time))
+        setup_time.monotonic = count(step=.001).__next__
+        setup.setattr(common, "time", setup_time)
+        assert common.pin_container(session_id, old_container)
+    assert common.time is native_common_time
+    assert time.monotonic is native_monotonic
+    assert common.get_pinned_container(session_id) == old_container
     assert http.post("/relay/turn", json={
         "runtime": "claude-code", "session_ref": session_id, "container_ref": old_container,
     }).status_code == 200
-    common.pin_container(session_id, new_container)
+    with monkeypatch.context() as setup:
+        setup_time = SimpleNamespace(**vars(native_common_time))
+        setup_time.monotonic = count(step=.001).__next__
+        setup.setattr(common, "time", setup_time)
+        assert common.pin_container(session_id, new_container)
+    assert common.time is native_common_time
+    assert time.monotonic is native_monotonic
+    assert common.get_pinned_container(session_id) == new_container
     assert common.get_pending_relay_closes(session_id) == [old_container]
 
     def relay(method, path, body, **_):
@@ -1212,6 +1245,9 @@ def test_prompt_cleanup_retries_real_wake_and_relay_transition(
         return close_attempts[0] > 1 and actual_close(*args)
     monkeypatch.setattr(hook, "close_claude_wake", fail_first_wake_close)
     assert {row.container_ref for row in registry._registrations.values()} == {old_container, new_container}
+    assert delayed_lock_opens == ([pin_lock, pin_lock] if delay_pin_preparation else [])
+    assert common.time is native_common_time
+    assert time.monotonic is native_monotonic
 
     with pytest.raises(SystemExit):
         hook.main()
