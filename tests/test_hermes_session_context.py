@@ -181,7 +181,7 @@ def _dependency_directory(python):
     command = [str(python), "-I", "-S", "-B", "-X", "utf8", "-c"]
     if python.parent.name.lower() in {"bin", "scripts"} and (python.parent.parent / "pyvenv.cfg").is_file():
         # -S on Python <=3.13 loses the configured virtual environment prefix.
-        command += ["import sys,sysconfig; print(sysconfig.get_path('purelib', vars={'base':sys.argv[1],'platbase':sys.argv[1]}))",
+        command += ["import sys,sysconfig; print(sysconfig.get_path('purelib', scheme='venv', vars={'base':sys.argv[1],'platbase':sys.argv[1]}))",
                     str(python.parent.parent)]
     else:
         command += ["import sysconfig; print(sysconfig.get_path('purelib'))"]
@@ -192,11 +192,11 @@ def _dependency_directory(python):
 @pytest.mark.parametrize("base", [False, True], ids=["current", "base"])
 def test_dependency_directory_uses_the_interpreters_layout(base):
     import sys
-    import sysconfig
     python = Path(sys._base_executable if base else sys.executable)
-    prefix = sys.base_prefix if base else sys.prefix
-    expected = sysconfig.get_path("purelib", vars={"base": prefix, "platbase": prefix})
-    assert _dependency_directory(python) == Path(expected).resolve()
+    expected = subprocess.run([str(python), "-I", "-B", "-X", "utf8", "-c",
+        "import sysconfig; print(sysconfig.get_path('purelib'))"],
+        check=True, capture_output=True, text=True, encoding="utf-8", timeout=10)
+    assert _dependency_directory(python) == Path(expected.stdout.strip()).resolve()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX interpreter symlink layout")
