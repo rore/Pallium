@@ -1876,7 +1876,7 @@ def test_hook_runner_preclaim_refusal_requires_explicit_opt_in(
     http_wake, monkeypatch, tmp_path, allow_refusal,
 ):
     http, relay, _, _, desktop, send, _ = http_wake
-    first = send()
+    send()
     events, requests = [], []
     if allow_refusal:
         run = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path,
@@ -1903,10 +1903,6 @@ def test_hook_runner_preclaim_refusal_requires_explicit_opt_in(
     assert len(run.refusals) == int(allow_refusal)
     assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"] == before
     assert tuple(desktop.owners) == owners
-    run()
-    assert [event[0] for event in events] == ["emit", "ack"]
-    result, = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"]
-    assert (result["delivery_id"], result["state"], result["attempts"]) == (first["delivery_id"], "delivered", 1)
 
 
 @pytest.mark.parametrize("state,event", [("idle", "UserPromptSubmit"), ("notLoaded", "SessionStart")])

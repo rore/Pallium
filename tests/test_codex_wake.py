@@ -5887,16 +5887,21 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
     with patch("app.codex_wake._popen", return_value=process) as native_write, patch(
         "app.dependencies.schedule_codex_relay_wake", side_effect=schedule,
     ):
-        sent = route.post("/relay/messages", json={
-            "sender_runtime": "claude-code",
-            "sender_session_ref": "sender",
-            "recipient": endpoint_id,
-            "payload": "durable scope movement",
-            **source,
-        }).json()
-        assert len(workers) == 1 and workers[0] is not None
-        workers[0].join(timeout=1)
-        assert not workers[0].is_alive()
+        try:
+            sent = route.post("/relay/messages", json={
+                "sender_runtime": "claude-code",
+                "sender_session_ref": "sender",
+                "recipient": endpoint_id,
+                "payload": "durable scope movement",
+                **source,
+            }).json()
+            assert len(workers) == 1 and workers[0] is not None
+        finally:
+            # Complete owned setup work before restoring its native transport patches.
+            for worker in workers:
+                if worker is not None:
+                    worker.join(timeout=5)
+            assert all(worker is None or not worker.is_alive() for worker in workers)
         native_write.assert_called_once()
 
     delivery = sent["deliveries"][0]
