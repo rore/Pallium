@@ -2,6 +2,12 @@
 
 Current phase: accepted reviewed ACK conformance composition; source release remains blocked on consolidated qualification and the separate Hermes seed issue. No new product latency claim.
 
+## Reviewed ACK contribution composed (2026-10-27)
+
+Accepted pal-dev1 handoff83234f63 (reviewed source9f15f303, base4b5e5d06) into this existing PR325. Four original commits import as9374d4d3/7b45ae88/a61736e6/a56ff0ab without conflict. The test blob is exactly3af85ec6e81fa5cb07b757236f71718ae03fc815; all eight source/evidence hashes in the supplied handoff match. Imported work record is .agent-workflow/tasks/relay-ack-contract.md. Root inspected the full two-path diff and accepted existing conformance/source/result review01a17ade-b382-7d43-826a-100bc572c897; no new requirement, runtime/deadline change or duplicate review/full suite follows.
+
+The original expired/fresh native identity and all strict durable-state gates remain. Server ACK200/exact matching response/publicdelivered-attempts1 are mandatory. Only an independently recorded exact ACK transport exception permits exactly ack_failed without false delivery_acked; normal confirmation stays strict. Added deterministic real-HTTP loss occurs after actual commit and before response transmission. Worker RED1failure, focused7passes and final neutral-profile161normal affected passes are reused only for exact reviewed bytes, not summed or called full composition qualification. Existing79+health2 source correspondence is unchanged. This addresses the observed ACK oracle mismatch, not physical latency, Hermes seed failure or353 acquisition/registration failures. Ordinary current-head full CI and fresh final source/head/review checks remain; all old red results stay failed.
+
 ## Terminal evidence and source classification (2026-10-27)
 
 Run40426431412 is terminalFAILED: Linux3.12 full, Windows smoke and governance passed; Linux3.13 and aggregate failed. Native Linux3.12 XML contains8319cases/0failures/errors/95skipped (including declared xfails), all79required and both exact health identities normally once. Interrupted Linux3.13 contains2860cases/2failures/17skipped, only23of79required normally present, health2present. Artifacts were fetched once and automatic-native-reconciliation.json records exact identities/hashes; these reports cannot be unioned into a passing full selection.
@@ -3054,7 +3060,7 @@ Accepted manager-post364-backlog-ownership-20261027 under the existing overnight
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
