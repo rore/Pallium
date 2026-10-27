@@ -64,6 +64,47 @@ for (const [name, request] of [
   } finally { globalThis.fetch = previous; }
 });
 
+test("Relay HTTP error observation preserves legacy null results and body cleanup", async () => {
+  const previous = globalThis.fetch;
+  let reads = 0;
+  let cancelled = 0;
+  globalThis.fetch = async () => ({ ok: false, status: 409,
+    text: async () => { reads++; return JSON.stringify({ detail: "registration conflict" }); },
+    body: { cancel: async () => { cancelled++; } },
+  });
+  try {
+    const request = (observer) => P.relayRequest("POST", "/relay/opencode/wake", {}, 1000, undefined, observer);
+    assert.equal(await request(), null);
+    assert.equal(reads, 0, "legacy callers do not read error bodies");
+    let observed;
+    assert.equal(await request((status, error) => { observed = { status, error }; }), null);
+    assert.deepEqual(observed, { status: 409, error: { detail: "registration conflict" } });
+    assert.equal(await request(() => { throw new Error("observer failed"); }), null);
+    assert.equal(cancelled, 3);
+  } finally { globalThis.fetch = previous; }
+});
+
+test("Relay error observer excludes bodies that complete after the request deadline", async () => {
+  const previous = globalThis.fetch;
+  let release;
+  let aborted;
+  const expired = new Promise((resolve) => { aborted = resolve; });
+  let observed = 0;
+  globalThis.fetch = async (_, { signal }) => ({ ok: false, status: 409,
+    text: () => new Promise((resolve) => {
+      release = () => resolve(JSON.stringify({ detail: "registration conflict" }));
+      signal.addEventListener("abort", aborted, { once: true });
+    }), body: { cancel: async () => {} },
+  });
+  try {
+    const pending = P.relayRequest("POST", "/relay/opencode/wake", {}, 10, undefined, () => { observed++; });
+    await expired;
+    release();
+    assert.equal(await pending, null);
+    assert.equal(observed, 0);
+  } finally { release?.(); globalThis.fetch = previous; }
+});
+
 test("retirement during an issued receipt prevents later receipts without retracting a commit", async () => {
   const previous = globalThis.fetch;
   const owner = new AbortController();
