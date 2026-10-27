@@ -2343,11 +2343,13 @@ def test_operation_tracking_early_failure_drains_before_storage_close(tmp_path, 
 @pytest.mark.parametrize("cancel_target", ["queued", "started"])
 def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
     client, monkeypatch, cancel_target,
+    *, health_after_summary_exit=None,
 ):
     from app import codex_readiness
 
     app = client.app
     first, full, release = threading.Event(), threading.Event(), threading.Event()
+    first_worker_exited, health_entered = threading.Event(), threading.Event()
     finished, closed = threading.Event(), threading.Event()
     lock = threading.Lock()
     started_count = completed_count = 0
@@ -2357,11 +2359,15 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
         nonlocal started_count, completed_count
         with lock:
             started_count += 1
+            first_call = started_count == 1
             first.set()
             if started_count == 2:
                 full.set()
         try:
-            assert release.wait(10), "summary worker watchdog expired"
+            if health_after_summary_exit and first_call:
+                assert health_entered.wait(5), "dependent health worker did not enter"
+            else:
+                assert release.wait(10), "summary worker watchdog expired"
             assert not closed.is_set(), "summary accessed closed storage"
             return original_read()
         finally:
@@ -2371,6 +2377,15 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
                     finished.set()
 
     monkeypatch.setattr(codex_readiness, "read", held_readiness)
+    if health_after_summary_exit:
+        original_health = app.state.pallium_service.get_queue_health
+
+        def dependent_health():
+            health_entered.set()
+            assert first_worker_exited.wait(5), "first summary worker did not exit"
+            return original_health()
+
+        monkeypatch.setattr(app.state.pallium_service, "get_queue_health", dependent_health)
 
     async def exercise():
         queued = asyncio.Event()
@@ -2379,18 +2394,36 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
         async def observe_dispatch(operation, *args, **kwargs):
             if asyncio.current_task().get_name() == "summary-queued":
                 queued.set()
+            if asyncio.current_task().get_name() == "summary-first":
+                def observe_first_worker():
+                    try:
+                        result = operation()
+                        if health_after_summary_exit == "failed":
+                            raise RuntimeError("controlled first summary failure")
+                        return result
+                    finally:
+                        first_worker_exited.set()
+
+                return await original_dispatch(observe_first_worker, *args, **kwargs)
             return await original_dispatch(operation, *args, **kwargs)
 
         monkeypatch.setattr(anyio.to_thread, "run_sync", observe_dispatch)
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
-            requests = [asyncio.create_task(http.get("/dashboard/api/relay/summary"))]
-            barrier = None
+            requests = [asyncio.create_task(http.get("/dashboard/api/relay/summary"), name="summary-first")]
+            barrier = pair = None
             try:
                 assert await asyncio.to_thread(first.wait, 1)
-                status, queue = await asyncio.wait_for(asyncio.gather(
+                pair = asyncio.gather(
                     http.get("/status"), http.get("/debug/queue/health"),
-                ), 2)
+                )
+                # Prove independence from the held worker, not database speed.
+                done, _ = await asyncio.wait((pair, requests[0]), return_when=asyncio.FIRST_COMPLETED)
+                assert (pair in done and not requests[0].done()
+                        and not first_worker_exited.is_set() and not release.is_set()), (
+                    "diagnostics did not complete while first summary worker was held"
+                )
+                status, queue = pair.result()
                 assert status.status_code == queue.status_code == 200
                 requests.append(asyncio.create_task(http.get("/dashboard/api/relay/summary")))
                 assert await asyncio.to_thread(full.wait, 1)
@@ -2423,11 +2456,56 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
                 app.state.pallium_service._storage.close()
             finally:
                 release.set()
+                if pair is not None:
+                    if not pair.done():
+                        pair.cancel()
+                    await asyncio.gather(pair, return_exceptions=True)
                 await asyncio.gather(*requests, return_exceptions=True)
                 if barrier is not None:
                     await asyncio.wait_for(barrier, 2)
 
     asyncio.run(exercise())
+
+
+def test_summary_health_progress_allows_slow_native_body(client, monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    fired = threading.Event()
+    service = client.app.state.pallium_service
+    original_health = service.get_queue_health
+
+    def finish_delay():
+        fired.set()
+        release.set()
+
+    timer = threading.Timer(2.1, finish_delay)
+
+    def delayed_health():
+        entered.set()
+        timer.start()
+        assert release.wait(5), "controlled health body delay did not finish"
+        return original_health()
+
+    monkeypatch.setattr(service, "get_queue_health", delayed_health)
+    try:
+        test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
+            client, monkeypatch, "started",
+        )
+        assert entered.is_set() and fired.is_set()
+    finally:
+        print("controlled_health_delay", {"entered": entered.is_set(), "fired": fired.is_set()})
+        release.set()
+        timer.cancel()
+        if timer.ident is not None:
+            timer.join(5)
+            assert not timer.is_alive(), "controlled health timer did not drain"
+
+
+@pytest.mark.parametrize("summary_exit", ["returned", "failed"])
+def test_summary_health_dependency_on_worker_exit_is_rejected(client, monkeypatch, summary_exit):
+    with pytest.raises(AssertionError, match="diagnostics did not complete while first summary worker was held"):
+        test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
+            client, monkeypatch, "started", health_after_summary_exit=summary_exit,
+        )
 
 
 def test_standalone_summary_mount_preserves_sqlite_and_unsupported_responses(client):
