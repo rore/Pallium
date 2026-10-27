@@ -28,12 +28,20 @@ that aborted before the handshake completed — ``sock`` is fine, just
 re-schedule) from fatal listener errors (``sock.fileno() == -1`` or
 resource exhaustion). The patch is no-op on non-Windows platforms and is
 idempotent.
+
+The installed CPython accept primitive also creates an auxiliary Task that
+only closes a failed peer on cancellation. Its OSError path reports a second
+unhandled exception and leaves peer cleanup to object lifetime. Replace that
+small primitive with equivalent native setup and future-owned failure cleanup;
+the caller still receives and reports the original accept error.
 """
 
 from __future__ import annotations
 
 import errno
 import logging
+import socket
+import struct
 import sys
 from typing import Any
 
@@ -55,13 +63,41 @@ def apply_patch() -> bool:
     if sys.platform != "win32":
         return False
     try:
-        from asyncio import exceptions, proactor_events, trsock
+        from asyncio import exceptions, proactor_events, trsock, windows_events
     except ImportError:  # pragma: no cover — non-CPython runtime
         return False
 
     base = proactor_events.BaseProactorEventLoop
-    if getattr(base, _PATCH_APPLIED_ATTR, False):
+    if (getattr(base, _PATCH_APPLIED_ATTR, False)
+            and getattr(windows_events.IocpProactor, _PATCH_APPLIED_ATTR, False)):
         return False
+
+    def _accept(self: Any, listener: Any) -> Any:
+        self._register_with_iocp(listener)
+        peer = self._get_accept_socket(listener.family)
+        try:
+            operation = windows_events._overlapped.Overlapped(windows_events.NULL)
+            operation.AcceptEx(listener.fileno(), peer.fileno())
+
+            def accepted(_transferred: Any, _key: Any, completed: Any) -> Any:
+                completed.getresult()
+                peer.setsockopt(socket.SOL_SOCKET, windows_events._overlapped.SO_UPDATE_ACCEPT_CONTEXT,
+                                struct.pack("@P", listener.fileno()))
+                peer.settimeout(listener.gettimeout())
+                return peer, peer.getpeername()
+
+            future = self._register(operation, listener, accepted)
+        except BaseException:
+            peer.close()
+            raise
+
+        def release_failed_peer(completed: Any) -> None:
+            if completed.cancelled() or completed.exception() is not None:
+                peer.close()
+
+        # The caller owns this future's error; an extra awaiting Task reports it twice.
+        future.add_done_callback(release_failed_peer)
+        return future
 
     def _start_serving(  # type: ignore[no-redef]
         self: Any,
@@ -156,7 +192,9 @@ def apply_patch() -> bool:
         self.call_soon(loop)
 
     base._start_serving = _start_serving  # type: ignore[method-assign]
+    windows_events.IocpProactor.accept = _accept  # type: ignore[method-assign]
     setattr(base, _PATCH_APPLIED_ATTR, True)
+    setattr(windows_events.IocpProactor, _PATCH_APPLIED_ATTR, True)
     logger.info(
         "applied ProactorEventLoop accept patch "
         "(transient per-connection OSError no longer closes listener)"
