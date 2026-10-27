@@ -2,6 +2,12 @@
 
 Current implementation slice: existing guarded Hermes seed fixture reuse before unchanged native concurrent-callback subject. Standing coordinator continuation permits this bounded repair; no permission, feature import or generic review loop.
 
+## Hermes seed caller correction results (2026-10-27)
+
+Source65dd0cfd8b1e2344722fd98d7d4d4e2fcd7590b1 changes only the existing concurrent-callback test's fixture parameter and initial _plugin_wake preparation argument. Current main's guarded semantic fixture audits exactly1 prerequisite writer and restores native methods/clocks before helper on_session_end/send and all actual callback/claim/ACK subjects. Source proof verifies all4 original assertions, all remaining function body statements and every other module AST node unchanged. No shared helper or unmerged352 product/controller change. The same original function now has normal pytest[semantic] fixture suffix; its native race obligation is preserved.
+
+Corrected caller passed1normally in2.404s XML/2.40s footer; affected module passed220normally,0failures/errors/skips,156.763s XML/156.80s footer. Reports, exact commands/private state, AST proof and canonical seed-caller.patch/handoff.json are under build/pr325-hermes-seed. Cohorts overlap. Root is the single generic seed-hunk author; a crossed peer handoff produced an uncommitted352 port before correction, now explicitly reconciled to this authoritative hunk, with no duplicate generic review. One narrow actual source/result review is pending; prior7038 failure and unknown physical setup latency remain preserved. This is fixture-prerequisite coverage, not a race/latency cure. No new full CI until consolidated review and ordinary gates pass.
+
 Current phase: accepted reviewed ACK conformance composition; source release remains blocked on consolidated qualification and the separate Hermes seed issue. No new product latency claim.
 
 ## Reviewed ACK contribution composed (2026-10-27)
