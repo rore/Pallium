@@ -41,3 +41,9 @@
 <!-- agent-workflow:end -->
 
 Historical attribution stays uncertain: proving a real test defect does not prove it caused the earlier CI failure or other Relay incidents.
+
+## Causal reproduction
+
+At ece0044dfb7fdd3a8b4916ced89f917afedd12b9, the one forced worker-after-callback case failed at the original release_sweep_completed.wait(5) assertion in8.45s. The preceding controlled ordering, successful native release result and fresh registry.reservations() read all passed: the old reservation was absent while the completion event remained unset. The two intentional refusal warnings were retained; no unrelated failure or cleanup error occurred. This demonstrates the observer race without establishing the original CI ordering. Raw log, JUnit and exact command/source hash are in build/retained-release-observer/red.* and red-command.json/red-result.json.
+
+The correction removes only the callback-dependent completion event and waits on the existing successful-release witness, with the same five-second bound and existing worker joins. Native deadlines, release count, fence/pending/no-owner, actual hook payload/ACK and backlog assertions remain unchanged. No production correction or further A/B probe is justified by this demonstrated test defect.

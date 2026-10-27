@@ -1912,7 +1912,7 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
     monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
     reconcilers, callbacks, recovery_threads, workers, recovered_fences, events, closed = [], [], [], [], [], [], []
     emitted, recovery_completed = threading.Event(), threading.Event()
-    proof_ready, release_faults_cleared, released, release_sweep_completed = (threading.Event() for _ in range(4))
+    proof_ready, release_faults_cleared, released = (threading.Event() for _ in range(3))
     release_waiting, sweep_returned, release_committed = (threading.Event() for _ in range(3))
     twice_refused, claim_failed, early_sweep = (threading.Event() for _ in range(3))
     release_attempts, claim_refusals, failed_at_sweep = [], [], []
@@ -1932,8 +1932,6 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
         try:
             return recover(*args, **kwargs)
         finally:
-            if released.is_set():
-                release_sweep_completed.set()
             if claim_failed.is_set() and len(recovery_threads) > failed_at_sweep[0]:
                 early_sweep.set()
             if emitted.is_set():
@@ -2100,8 +2098,8 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
                     if release_after_sweep:
                         assert release_committed.wait(5), "Late native release did not commit"
                         assert fence not in registry.reservations()
-                        assert not release_sweep_completed.is_set()
-                    assert release_sweep_completed.wait(5), "Periodic release sweep did not settle after refusal cleared"
+                    # The wake worker can release after its recovery callback has returned.
+                    assert released.wait(5), "Periodic release did not settle after refusal cleared"
                     for worker in workers:
                         worker.join(5)
                     assert release_attempts.count((fence,)) == 3
