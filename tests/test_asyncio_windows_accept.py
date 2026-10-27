@@ -22,6 +22,9 @@ socket, asserting:
 from __future__ import annotations
 
 import errno
+import asyncio
+import gc
+import socket
 import sys
 from unittest.mock import MagicMock
 
@@ -161,7 +164,8 @@ def test_transient_oserror_keeps_listener_alive_and_reschedules():
     ), fake._exception_messages
 
 
-def test_resource_exhaustion_closes_listener():
+@pytest.mark.parametrize("fatal_errno", [errno.EMFILE, errno.ENFILE, errno.ENOBUFS, errno.ENOMEM])
+def test_resource_exhaustion_closes_listener(fatal_errno):
     """EMFILE/ENFILE/ENOBUFS/ENOMEM should still tear down (no graceful path)."""
     _install_patch_clean()
     from asyncio import proactor_events
@@ -169,7 +173,7 @@ def test_resource_exhaustion_closes_listener():
     fake = _FakeLoop()
     sock = _FakeSock(fileno_value=42)
 
-    failing = _FakeFuture(exc=OSError(errno.EMFILE, "Too many open files"))
+    failing = _FakeFuture(exc=OSError(fatal_errno, "private resource exhaustion"))
     fake._proactor.queue_future(failing)
 
     proactor_events.BaseProactorEventLoop._start_serving(
@@ -220,3 +224,268 @@ def test_apply_patch_is_idempotent():
     assert apply_patch() is True
     assert apply_patch() is False, "second apply must be a no-op"
     assert getattr(proactor_events.BaseProactorEventLoop, _PATCH_APPLIED_ATTR) is True
+
+
+def test_actual_windows_accept_failure_closes_peer_and_later_http_succeeds():
+    """A failed real AcceptEx completion must release its peer, not its listener."""
+    _install_patch_clean()
+
+    async def journey():
+        loop = asyncio.get_running_loop()
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.setblocking(False)
+        allocated, reports = [], []
+        reported = asyncio.Event()
+        original_register = loop._proactor._register
+        original_socket = loop._proactor._get_accept_socket
+        injected = False
+
+        def track(family):
+            peer = original_socket(family)
+            allocated.append(peer)
+            return peer
+
+        def register(operation, owner, complete):
+            nonlocal injected
+            if owner is listener and not injected:
+                injected = True
+                def abort(*args):
+                    raise OSError(22, "private accept completion abort", None, 64)
+                complete = abort
+            return original_register(operation, owner, complete)
+
+        def handler(_, context):
+            reports.append(context.get("message", ""))
+            if "listener kept alive" in context.get("message", ""):
+                reported.set()
+
+        class HTTP(asyncio.Protocol):
+            def connection_made(self, transport):
+                self.transport = transport
+
+            def data_received(self, data):
+                self.transport.write(b"HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nOK")
+                self.transport.close()
+
+        loop._proactor._register = register
+        loop._proactor._get_accept_socket = track
+        loop.set_exception_handler(handler)
+        first = server = None
+        try:
+            server = await loop.create_server(HTTP, sock=listener)
+            address = listener.getsockname()
+            first = socket.create_connection(address, timeout=1)
+            await asyncio.wait_for(reported.wait(), 3)
+            peer_closed = allocated[0].fileno() == -1
+            reader, writer = await asyncio.wait_for(asyncio.open_connection(*address), 3)
+            writer.write(b"GET / HTTP/1.0\r\n\r\n")
+            await writer.drain()
+            response = await asyncio.wait_for(reader.read(), 3)
+            writer.close()
+            await writer.wait_closed()
+            for _ in range(3):
+                gc.collect()
+                await asyncio.sleep(0)
+            assert injected and response.endswith(b"OK")
+            assert sum("listener kept alive" in value for value in reports) == 1
+            assert peer_closed, "failed accepted peer remained open after its completion"
+            assert not any("Task exception was never retrieved" in value for value in reports)
+        finally:
+            if first:
+                first.close()
+            if server:
+                server.close()
+                await server.wait_closed()
+            else:
+                listener.close()
+            for peer in allocated:
+                peer.close()
+            await asyncio.sleep(0)
+
+    with asyncio.Runner(loop_factory=asyncio.ProactorEventLoop) as runner:
+        runner.run(journey())
+
+
+@pytest.mark.parametrize("failure", ["construct", "accept", "register"])
+def test_native_accept_sync_failure_closes_only_peer_and_preserves_error(monkeypatch, failure):
+    from asyncio import windows_events
+    _install_patch_clean()
+
+    async def journey():
+        loop = asyncio.get_running_loop()
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        allocated = []
+        original_socket = loop._proactor._get_accept_socket
+        marker = OSError(errno.EINVAL, "private synchronous accept failure")
+
+        def track(family):
+            peer = original_socket(family)
+            allocated.append(peer)
+            return peer
+
+        class Operation:
+            def AcceptEx(self, *args):
+                if failure == "accept":
+                    raise marker
+
+        def operation(*args):
+            if failure == "construct":
+                raise marker
+            return Operation()
+
+        def register(*args):
+            raise marker
+
+        try:
+            loop._proactor._get_accept_socket = track
+            with monkeypatch.context() as native:
+                native.setattr(windows_events._overlapped, "Overlapped", operation)
+                native.setattr(loop._proactor, "_register", register)
+                with pytest.raises(OSError) as raised:
+                    loop._proactor.accept(listener)
+            assert raised.value is marker
+            assert len(allocated) == 1 and allocated[0].fileno() == -1
+            assert listener.fileno() != -1
+        finally:
+            loop._proactor._stop_serving(listener)
+            listener.close()
+            for peer in allocated:
+                peer.close()
+
+    with asyncio.Runner(loop_factory=asyncio.ProactorEventLoop) as runner:
+        runner.run(journey())
+
+
+@pytest.mark.parametrize("failure", ["context", "timeout", "peername"])
+def test_native_accept_completion_failure_releases_peer_without_helper_task(monkeypatch, failure):
+    _install_patch_clean()
+
+    async def journey():
+        loop = asyncio.get_running_loop()
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.setblocking(False)
+        marker = OSError(errno.EINVAL, "private accept completion failure")
+        original_socket = loop._proactor._get_accept_socket
+        peers, reports = [], []
+
+        class Peer:
+            def __init__(self, family):
+                self.raw = original_socket(family)
+                self.closes = 0
+                peers.append(self)
+
+            def fileno(self):
+                return self.raw.fileno()
+
+            def setsockopt(self, *args):
+                if failure == "context":
+                    raise marker
+                self.raw.setsockopt(*args)
+
+            def settimeout(self, value):
+                if failure == "timeout":
+                    raise marker
+                self.raw.settimeout(value)
+
+            def getpeername(self):
+                if failure == "peername":
+                    raise marker
+                return self.raw.getpeername()
+
+            def close(self):
+                self.closes += 1
+                self.raw.close()
+
+        loop._proactor._get_accept_socket = Peer
+        loop.set_exception_handler(lambda _, context: reports.append(context.get("message", "")))
+        client = None
+        try:
+            future = loop._proactor.accept(listener)
+            client = socket.create_connection(listener.getsockname(), timeout=1)
+            with pytest.raises(OSError) as raised:
+                await asyncio.wait_for(future, 3)
+            await asyncio.sleep(0)
+            gc.collect()
+            await asyncio.sleep(0)
+            assert raised.value is marker
+            assert peers[0].fileno() == -1 and peers[0].closes == 1
+            assert listener.fileno() != -1
+            assert not reports
+        finally:
+            if client:
+                client.close()
+            loop._proactor._stop_serving(listener)
+            listener.close()
+            for peer in peers:
+                peer.raw.close()
+
+    with asyncio.Runner(loop_factory=asyncio.ProactorEventLoop) as runner:
+        runner.run(journey())
+
+
+@pytest.mark.parametrize("cancel_after_success", [False, True])
+def test_native_accept_cancellation_and_success_keep_socket_ownership(cancel_after_success):
+    _install_patch_clean()
+
+    async def journey():
+        loop = asyncio.get_running_loop()
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.setblocking(False)
+        peers, reports = [], []
+        original_socket = loop._proactor._get_accept_socket
+
+        def track(family):
+            peer = original_socket(family)
+            peers.append(peer)
+            return peer
+
+        loop._proactor._get_accept_socket = track
+        loop.set_exception_handler(lambda _, context: reports.append(context.get("message", "")))
+        client = None
+        try:
+            future = loop._proactor.accept(listener)
+            if cancel_after_success:
+                client = socket.create_connection(listener.getsockname(), timeout=1)
+                peer, address = await asyncio.wait_for(future, 3)
+                assert not future.cancel()
+                await asyncio.sleep(0)
+                assert peer is peers[0] and peer.fileno() != -1
+                assert address == client.getsockname() and peer.gettimeout() == listener.gettimeout()
+                peer.send(b"OK")
+                assert client.recv(2) == b"OK"
+            else:
+                assert future.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await future
+                await asyncio.sleep(0)
+                assert peers[0].fileno() == -1
+            assert listener.fileno() != -1 and not reports
+        finally:
+            if client:
+                client.close()
+            loop._proactor._stop_serving(listener)
+            listener.close()
+            for peer in peers:
+                peer.close()
+            await asyncio.sleep(0)
+
+    with asyncio.Runner(loop_factory=asyncio.ProactorEventLoop) as runner:
+        runner.run(journey())
+
+
+def test_non_windows_apply_does_not_change_existing_runtime_methods(monkeypatch):
+    from asyncio import proactor_events, windows_events
+    from app import asyncio_windows_accept as patch
+    before = (proactor_events.BaseProactorEventLoop._start_serving, windows_events.IocpProactor.accept)
+    with monkeypatch.context() as platform:
+        platform.setattr(patch.sys, "platform", "linux")
+        assert patch.apply_patch() is False
+    assert (proactor_events.BaseProactorEventLoop._start_serving, windows_events.IocpProactor.accept) == before
