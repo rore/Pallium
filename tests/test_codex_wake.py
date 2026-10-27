@@ -4139,7 +4139,10 @@ def test_exclusive_trial_rejects_stale_endpoint_or_delivery_before_native_action
         assert expired.status_code == 200
         expired_message = expired.json()
         assert expired_message["message_id"] == message_id
-        assert datetime.fromisoformat(expired_message["expires_at"].replace("Z", "+00:00")) <= datetime.now(timezone.utc)
+        public_expiry = datetime.fromisoformat(expired_message["expires_at"].replace("Z", "+00:00"))
+        if public_expiry.tzinfo is None:
+            public_expiry = public_expiry.replace(tzinfo=timezone.utc)
+        assert public_expiry == expired_at
         expired_delivery, = expired_message["deliveries"]
         assert expired_delivery["delivery_id"] == delivery_id
         assert expired_delivery["state"] == "expired"
