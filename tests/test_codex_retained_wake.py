@@ -1883,6 +1883,7 @@ def test_selected_transport_actual_hook_emits_then_acks(http_wake, monkeypatch, 
 @pytest.mark.parametrize("fault", ["none", "release-twice", "claim-once"])
 async def test_production_lifespan_automatically_recovers_spent_retained_wake(
     retained, monkeypatch, tmp_path, test_db_url, capsys, fault,
+    *, release_after_sweep=False,
 ):
     from datetime import datetime, timedelta, timezone
 
@@ -1911,7 +1912,8 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
     monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
     reconcilers, callbacks, recovery_threads, workers, recovered_fences, events, closed = [], [], [], [], [], [], []
     emitted, recovery_completed = threading.Event(), threading.Event()
-    proof_ready, release_faults_cleared, released, release_sweep_completed = (threading.Event() for _ in range(4))
+    proof_ready, release_faults_cleared, released = (threading.Event() for _ in range(3))
+    release_waiting, sweep_returned, release_committed = (threading.Event() for _ in range(3))
     twice_refused, claim_failed, early_sweep = (threading.Event() for _ in range(3))
     release_attempts, claim_refusals, failed_at_sweep = [], [], []
     original_desktop = desktop
@@ -1930,14 +1932,21 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
         try:
             return recover(*args, **kwargs)
         finally:
-            if released.is_set():
-                release_sweep_completed.set()
             if claim_failed.is_set() and len(recovery_threads) > failed_at_sweep[0]:
                 early_sweep.set()
             if emitted.is_set():
                 recovery_completed.set()
 
     def start_reconciler(registry, relay, *, claim_recovery=None, trace_callback=None):
+        if release_after_sweep:
+            original_recovery = claim_recovery
+
+            def claim_recovery():
+                result = original_recovery()
+                if release_waiting.is_set():
+                    sweep_returned.set()
+                return result
+
         callbacks.append(claim_recovery)
         reconciler = claude_wake.ClaudeWakeReconciler(
             registry, relay, claim_recovery=claim_recovery, trace_callback=trace_callback,
@@ -1994,6 +2003,24 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
 
         monkeypatch.setattr(registry._relay, "codex_wake_transition", observed_transition)
         monkeypatch.setattr(storage, "relay_turn", observed_turn)
+
+        if release_after_sweep:
+            assert fault == "release-twice"
+            release_generation = registry.release_generation
+
+            def release_after_callback(reservation):
+                if len(release_attempts) == 2:
+                    release_waiting.set()
+                    assert sweep_returned.wait(5), "Recovery callback did not return before release"
+                    result = release_generation(reservation)
+                    assert result
+                    initialized, reservations = registry._relay.codex_wake_snapshot()
+                    assert initialized and reservation not in reservations
+                    release_committed.set()
+                    return result
+                return release_generation(reservation)
+
+            monkeypatch.setattr(registry, "release_generation", release_after_callback)
 
         def close():
             close_storage()
@@ -2068,7 +2095,12 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
                     assert desktop.owners == [] and service.retained_registration is None
                     assert http.get("/relay/messages/production-recovery", params=SCOPE).json()["deliveries"][0] == state
                     release_faults_cleared.set()
-                    assert release_sweep_completed.wait(5), "Periodic release sweep did not settle after refusal cleared"
+                    if release_after_sweep:
+                        assert release_committed.wait(5), "Late native release did not commit"
+                        initialized, reservations = registry._relay.codex_wake_snapshot()
+                        assert initialized and fence not in reservations
+                    # The wake worker can release after its recovery callback has returned.
+                    assert released.wait(5), "Periodic release did not settle after refusal cleared"
                     for worker in workers:
                         worker.join(5)
                     assert release_attempts.count((fence,)) == 3
@@ -2161,6 +2193,16 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
             assert reconcilers and all(not item._thread.is_alive() for item in reconcilers)
             assert service.stop_event.is_set() and service.retained_registration is None
             assert closed == [True]
+
+
+@pytest.mark.asyncio
+async def test_committed_release_after_recovery_callback_is_observed(
+    retained, monkeypatch, tmp_path, test_db_url, capsys,
+):
+    await test_production_lifespan_automatically_recovers_spent_retained_wake(
+        retained, monkeypatch, tmp_path, test_db_url, capsys, "release-twice",
+        release_after_sweep=True,
+    )
 
 
 @pytest.mark.parametrize("first_outcome", ["accepted", "uncertain"])
