@@ -924,7 +924,7 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
 
 
 def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_acks(
-    client, monkeypatch, tmp_path, capsys,
+    client, monkeypatch, tmp_path, capsys, *, drop_ack_response=False,
 ):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import threading
@@ -968,6 +968,11 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
                     times["status"] = response.status_code
                 if self.path == "/relay/deliveries/ack":
                     ack_result["status"] = response.status_code
+                    ack_result["response"] = response.json()
+                    if drop_ack_response:
+                        ack_result["response_dropped"] = True
+                        self.close_connection = True
+                        return
                 try:
                     self.send_response(response.status_code)
                     self.send_header("Content-Type", "application/json")
@@ -1043,8 +1048,36 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
         "ack": ack_result, "wake_events": events[:16], "stderr": fresh_output.err[:4000],
         "delivery": {"state": delivered["state"], "attempts": delivered["attempts"]},
     }
-    assert any(event["stage"] == "delivery_acked" for event in events), diagnostics
     assert (delivered["state"], delivered["attempts"]) == ("delivered", 1), diagnostics
+    assert ack_result.get("status") == 200, diagnostics
+    ack_response = ack_result["response"]
+    assert ack_response["delivery_id"] == delivery_id and ack_response["state"] == "delivered", diagnostics
+    assert type(ack_response["already_delivered"]) is bool, diagnostics
+    transport_failed = any(
+        line.startswith("pallium relay: POST /relay/deliveries/ack failed after ")
+        and line.rsplit(": ", 1)[-1] in {
+            "TimeoutError", "RemoteDisconnected", "ConnectionResetError",
+            "ConnectionAbortedError", "BrokenPipeError", "URLError", "IncompleteRead",
+        }
+        for line in fresh_output.err.splitlines()
+    )
+    if drop_ack_response:
+        assert ack_result.get("response_dropped") is True and transport_failed, diagnostics
+    ack_events = [
+        (event["stage"], event.get("reason")) for event in events
+        if event["stage"] == "delivery_acked"
+        or event["stage"] == "hook_failed" and event.get("reason") == "ack_failed"
+    ]
+    expected_ack_event = ("hook_failed", "ack_failed") if transport_failed else ("delivery_acked", None)
+    assert ack_events == [expected_ack_event], diagnostics
+
+
+def test_expired_exact_hook_recovers_when_committed_ack_response_is_lost(
+    client, monkeypatch, tmp_path, capsys,
+):
+    test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_acks(
+        client, monkeypatch, tmp_path, capsys, drop_ack_response=True,
+    )
 
 
 def test_codex_exact_wake_late_ack_response_keeps_durable_delivery_without_confirmation(

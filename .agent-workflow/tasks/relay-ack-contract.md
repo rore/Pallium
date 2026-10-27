@@ -35,7 +35,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Source and coordination
@@ -54,3 +54,12 @@ This corrects the expiry test's assumption that a committed ACK response always 
 Astra reviewed exact WR99aa3ec0 on merged4b5e5d0. Conditional PLAN GO requires naturally unconfirmed ACK to pair the correct committed ACK response/public delivered-attempts1 with the exact hook ACK transport exception or equivalent captured transport boundary. Server response-write error, generic ack_failed or missing event alone cannot select success. Adopted implementation: capture the actual ACK response identity/state/flag; derive the unconfirmed branch only from the helper's exact ACK-path diagnostic with a known transport exception class, excluding malformed JSON/wrong-ID/no-error outcomes. The controlled real-HTTP drop also must produce that actual transport exception, after commit and before response transmission. Server200/publicdelivered1 stay strict in both paths; terminal event must be exactly truthful. Keep normal-response confirmation strict, original node identity, native deadlines, late-ACK controls and joins. No duplicate full suite requested; return immutable patch/focused evidence to reviewer, then Relaydev composition.
 
 This is conformance to the already accepted late-response contract; it does not remove durable delivery, single claim, truthful confirmation or positive-response coverage. Controlled RED/GREEN is required before accepting this interpretation. Named deterministic UTF8 write fallback is used because the earlier machine-local apply_patch1385 failure must not be retried; no repository policy or live installation changes.
+
+
+## Implementation and verification
+
+One existing test/helper gains an opt-in response-drop control after actual HTTP ACK commit, before any response transmission. One new explicit native E2E invokes it; the original required identity remains unchanged. The durable public delivered/attempts1 check remains strict and now precedes terminal-event classification. The actual server ACK response must be200, match exact delivery/state and have a boolean already_delivered. Only an exact hook ACK-path failure diagnostic with a known transport exception can select unconfirmed ack_failed; malformed JSON, wrong-ID or missing-event alone cannot. Exactly one correct terminal event is required; no server success synthesizes confirmation. Existing separate positive/late-ACK controls remain unchanged. No product/deadline/preparation-clock change.
+
+Controlled response-loss RED on original unconditional assertion:1failed5.39s, red.xml/log. Corrected focused native/controlled-loss/strict-positive/late-ACK group:7passed19.76s, focused.xml/log. Complete affected module:161passed64.18s. Readiness observation uses the process profile, so final qualification reran unchanged source once with a fresh child HOME/USERPROFILE/AppData/temp and runtime credentials removed:161passed71.90s, neutral-affected.xml/log and neutral-environment.json. These cohorts overlap and are not summed; the neutral run is the final affected receipt. No package installation or persistent environment change.
+
+Scope proof confirms65 unchanged existing functions, exactly one new controlled-loss test, original native identity retained, unchanged wait/join/sleep calls and unchanged production/shared fixture/protected paths. Only the contradicted unconditional ACK-event assertion is replaced; independent wire-failure evidence, strict server response/durable state and truthful exclusive outcome assertions are added. Evidence in build/relay-ack-contract. Isolated runtime/current-cwd imports and dependency bounds verified; supplied original CI log copied read-only with SHA256802cc6b23fed1b1dea24be2d74f1006b1ccac266f56d2e8cf4000bebc9cfac74. Physical1967ms delay remains unknown, oldCI stays failed; this is no latency cure. Actual reviewer result and source-compatible Relaydev composition/full qualification remain pending.
