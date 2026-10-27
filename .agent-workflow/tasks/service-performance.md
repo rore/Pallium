@@ -1,5 +1,11 @@
 # Service-wide performance investigation and correction
 
+## Four-variant continuation result and review (2026-10-27)
+
+Agent technical review: @astra-reviewer turn01a17b16-b3ca-78c1-872f-c3a889c5f7c3, narrow actual SOURCE/RESULT GO at6579cae05a75bfaa4f15ad341f0ca5d3675deea5 versusbbb4af27. Only the close POST/expiry-construction transaction uses the existing audited1 prerequisite scope; preliminary bind and final negative bind/spend remain native. Original negative assertions and other module AST are preserved. Public exact-state readbacks occur afterward, preventing expiry materialization from satisfying the predicate prematurely; absent public timezone is interpreted as UTC and exact written instant is asserted.
+
+Verified native focused4normal passes3.369s XML/3.37s footer and eight unchanged native controls6.358s XML/6.36s footer,0failures/errors/skips. Source/head/hash/clean fences and supported neutral profile are recorded under build/pr325-trial-family/qualification-6579cae0. Previous6d9 readback failure stays failed; it is not converted to a pass. Review accepts this bounded construction delta for same325 reopening/publication under current manager authority, not whole-PR merge/live approval or a latency cure. Normal exact-head full CI remains mandatory. Push the new source to the retained closed branch first, then reopen the same PR so ordinary CI validates the corrected head rather than knowingly rerunning b31 unchanged.
+
 Current disposition:325 was verified CLOSED DEFERRED at01:38:57Z without merge. Manager-pr325-concrete-family-continuation-20261027 then explicitly authorizes ONE coherent four-variant state-construction correction; reopen this same PR only after its focused/affected review, then require normal CI. This supersedes the prior stop solely for that slice.
 
 Family qualification iteration: source6d9c6ec6 completed2closed passes/2expired failures,0errors/skips, retained under build/pr325-trial-family/qualification-6d9c6ec6. Both actual expired bind/spend rejection assertions passed; the new later public readback raised TypeError comparing SQLite's offset-naive UTC serialization with an aware timestamp. Controls were not run and no same-source retry occurred. Correct only that new assertion: interpret absent offset as UTC and compare the exact written expired_at value, preserving native subjects and all old assertions. Reading status stays after the negative check because it materializes expiry. This is a new test-assertion implementation correction, not a product/timeout workaround or qualification pass; corrected four-case and control evidence remains required.
@@ -3084,7 +3090,7 @@ Accepted manager-post364-backlog-ownership-20261027 under the existing overnight
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
