@@ -2095,15 +2095,19 @@ def test_failed_wake_refresh_keeps_unclaimed_mail_retryable(client, plugin_conte
     assert status(client, message)["deliveries"][0]["state"] == "delivered"
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("newest_refused", [False, True], ids=["native", "latest-refresh-refused"])
 def test_concurrent_matching_wake_callbacks_refresh_but_claim_once(
-    client, plugin_context, monkeypatch, newest_refused,
+    client, plugin_context, monkeypatch, newest_refused, relay_admission_clock,
 ):
     from concurrent.futures import ThreadPoolExecutor
     from contextlib import contextmanager
 
     module, create, _ = plugin_context
-    ctx, marker, message = _plugin_wake(client, create)
+    ctx, marker, message = _plugin_wake(
+        client, create,
+        preparation=relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=1),
+    )
     http = module._json_request
     barrier, first_entered = threading.Barrier(2), threading.Event()
     callback = contextvars.ContextVar("matching_wake_callback")
