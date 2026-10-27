@@ -41,15 +41,18 @@ def clear_adapter_trace_state():
 
 
 @pytest.fixture
-def relay(tmp_path):
+def relay(tmp_path, relay_admission_clock):
     storage = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'main.db'}")
-    service = RelayService(storage)
-    service.turn(runtime="codex", session_ref="sender", container_ref="git:test")
-    receiver = service.turn(
-        runtime="codex", session_ref="receiver", container_ref="git:test"
-    )
-    yield storage, service, receiver["session"]["endpoint_id"]
-    storage.close()
+    try:
+        service = RelayService(storage)
+        with relay_admission_clock(storage, expected_admissions=2):
+            service.turn(runtime="codex", session_ref="sender", container_ref="git:test")
+            receiver = service.turn(
+                runtime="codex", session_ref="receiver", container_ref="git:test"
+            )
+        yield storage, service, receiver["session"]["endpoint_id"]
+    finally:
+        storage.close()
 
 
 def _message(service, payload="hello", recipient="codex:receiver"):
@@ -84,6 +87,7 @@ def _completion(**overrides):
     return values
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_trace_full_delivery_lifecycle_is_nonmutating_and_payload_free(relay):
     storage, service, _ = relay
     message = _message(service, "שלום 🌍 password=supersecret")
@@ -113,6 +117,7 @@ def test_trace_full_delivery_lifecycle_is_nonmutating_and_payload_free(relay):
     assert "שלום" not in str(trace) and "supersecret" not in str(trace)
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_trace_accepts_delivery_alias_after_exact_message_precedence(relay):
     from core.relay import RelayNotFoundError
 
@@ -158,6 +163,7 @@ def test_trace_accepts_delivery_alias_after_exact_message_precedence(relay):
         )
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_delivery_alias_trace_preserves_claim_ack_and_reply_lifecycle(relay):
     storage, service, _endpoint = relay
     message = service.send(
@@ -216,6 +222,7 @@ def test_delivery_alias_trace_preserves_claim_ack_and_reply_lifecycle(relay):
     assert delivered["delivery_snapshots"][0]["state"] == "delivered"
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_shared_attempt_completion_is_visible_to_every_associated_delivery(relay):
     storage, service, _ = relay
     first = _message(service)
@@ -241,6 +248,7 @@ def test_shared_attempt_completion_is_visible_to_every_associated_delivery(relay
     ]
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_duplicate_conflict_and_completion_before_association(relay):
     storage, service, _ = relay
     message = _message(service)
@@ -276,6 +284,7 @@ def test_duplicate_conflict_and_completion_before_association(relay):
     ] == ["completed", "associated"]
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_trace_validation_redaction_and_nonmutating_expired_read(relay):
     storage, service, _ = relay
     message = service.send(
@@ -322,6 +331,7 @@ def test_trace_validation_redaction_and_nonmutating_expired_read(relay):
         )
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_trace_paging_freezes_later_appends(relay):
     storage, service, _ = relay
     message = _message(service)
@@ -355,6 +365,7 @@ def test_trace_paging_freezes_later_appends(relay):
 
 
 @pytest.mark.parametrize("consumer", ["trace", "cleanup"])
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_busy_correctness_gate_refuses_optional_trace_before_database_admission(
     relay, monkeypatch, consumer,
 ):
@@ -405,6 +416,7 @@ def test_busy_correctness_gate_refuses_optional_trace_before_database_admission(
     assert sessions == [], "optional writer inspected the database while correctness gate was occupied"
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_trace_bound_checks_do_not_reserve_the_correctness_writer(relay):
     import sys
     import traceback
@@ -486,6 +498,7 @@ def test_trace_bound_checks_do_not_reserve_the_correctness_writer(relay):
     assert all(is_transient_error(exc) for exc in trace_errors)
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_trace_per_delivery_and_association_caps_mark_truncation(relay):
     storage, service, _ = relay
     message = _message(service)
@@ -575,6 +588,7 @@ def test_legacy_schema_reopens_and_separate_relay_database_stays_isolated(tmp_pa
     storage.close()
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_claude_scheduler_coalesces_one_attempt_and_forwards_completion(relay, monkeypatch):
     storage, service, endpoint = relay
     service.turn(
@@ -640,6 +654,7 @@ def test_claude_scheduler_coalesces_one_attempt_and_forwards_completion(relay, m
     assert endpoint
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_codex_scheduler_coalesces_without_starting_another_worker(relay, monkeypatch, request):
     _storage, service, _endpoint = relay
     first = _message(service)
@@ -691,6 +706,7 @@ def test_codex_scheduler_coalesces_without_starting_another_worker(relay, monkey
     )
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_worker_start_failure_emits_deferred_without_native_attempt(relay, monkeypatch):
     _storage, service, _endpoint = relay
     message = _message(service)
@@ -874,6 +890,7 @@ def test_mcp_cursor_and_budget_trim_preserve_truthful_continuation():
     )
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_cleanup_marks_every_known_associate_and_discloses_page_gap(relay):
     storage, service, _ = relay
     first = _message(service)
@@ -948,6 +965,7 @@ def test_service_cleanup_retains_old_pending_trace_and_public_recovery_evidence(
     assert receiver["session"]["endpoint_id"] == message["deliveries"][0]["recipient_endpoint_id"]
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_cleanup_retains_claimed_and_shared_pending_attempts(relay):
     storage, service, _ = relay
     now = datetime.now(timezone.utc)
@@ -985,6 +1003,7 @@ def test_cleanup_retains_claimed_and_shared_pending_attempts(relay):
 
 
 @pytest.mark.parametrize("outcome", ["reserved", "accepted", "uncertain"])
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_cleanup_retains_terminal_attempt_until_reservation_released(relay, outcome):
     storage, service, endpoint_id = relay
     assert storage.relay_codex_wake_initialize(reservations=())
@@ -1023,6 +1042,7 @@ def test_cleanup_retains_terminal_attempt_until_reservation_released(relay, outc
 
 
 @pytest.mark.parametrize("broken_reference", ["delivery", "message", "mismatch"])
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_cleanup_retains_whole_attempt_with_broken_association(relay, broken_reference):
     storage, service, _ = relay
     first = _message(service)
@@ -1063,6 +1083,7 @@ def test_cleanup_retains_whole_attempt_with_broken_association(relay, broken_ref
         assert db.query(RelayDeliveryTraceRecord).filter_by(attempt_id=attempt).count() == 2
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_cleanup_at_capacity_skips_unsafe_old_and_evicts_safe_recent(relay, monkeypatch):
     import storage.sqlite_relay as sqlite_relay
     import storage.sqlite_retention as sqlite_retention
@@ -1097,6 +1118,7 @@ def test_cleanup_at_capacity_skips_unsafe_old_and_evicts_safe_recent(relay, monk
     assert service.trace_message(message_id=next_message["message_id"])["truncated"]
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_cleanup_keeps_the_existing_64_row_batch_limit(relay):
     storage, service, _ = relay
     now = datetime.now(timezone.utc)
@@ -1116,6 +1138,7 @@ def test_cleanup_keeps_the_existing_64_row_batch_limit(relay):
     assert storage.relay_cleanup_trace(now=now) == 1
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_cleanup_finds_safe_row_after_64_older_unsafe_rows(relay):
     storage, service, _ = relay
     now = datetime.now(timezone.utc)
@@ -1136,6 +1159,7 @@ def test_cleanup_finds_safe_row_after_64_older_unsafe_rows(relay):
     assert service.trace_message(message_id=safe["message_id"])["pruned"]
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_cleanup_rolls_back_when_new_shared_attempt_commits_after_snapshot(relay):
     storage, service, _ = relay
     first = _message(service)
@@ -1202,6 +1226,7 @@ def test_trace_writer_failure_is_best_effort_and_releases_slot(client):
     )
     assert completed.wait(timeout=2)
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_pruning_never_reuses_a_frozen_sequence(relay):
     storage, service, _ = relay
     message = _message(service)
@@ -1229,6 +1254,7 @@ def test_pruning_never_reuses_a_frozen_sequence(relay):
     assert frozen["events"] == [] and frozen["pruned"] and frozen["gap"]
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_cleanup_frees_space_at_exact_global_capacity(relay, monkeypatch):
     import storage.sqlite_relay as sqlite_relay
     import storage.sqlite_retention as sqlite_retention
@@ -1257,6 +1283,7 @@ def test_cleanup_frees_space_at_exact_global_capacity(relay, monkeypatch):
     ]
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_direct_claude_recovery_emits_persistable_trace(relay, monkeypatch):
     storage, service, _ = relay
     service.turn(
@@ -1352,6 +1379,7 @@ def test_mcp_compacts_long_snapshot_without_losing_the_only_event():
     ("runtime", "session"),
     [("codex", "uncertain-codex"), ("claude-code", "uncertain-claude")],
 )
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_pending_uncertain_trace_gives_safe_ordinary_turn_guidance(
     relay, runtime, session
 ):
@@ -1386,6 +1414,7 @@ def test_pending_uncertain_trace_gives_safe_ordinary_turn_guidance(
     assert "do not resend" in explanation
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_shared_uncertain_completion_does_not_get_codex_prompt_guidance(relay):
     storage, service, _ = relay
     message = _message(service)
@@ -1419,6 +1448,7 @@ def test_shared_uncertain_completion_does_not_get_codex_prompt_guidance(relay):
     assert any(event["shared"] for event in trace["events"])
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_pending_accepted_trace_is_queued_until_a_safe_turn(relay):
     storage, service, _ = relay
     message = _message(service)
@@ -1438,6 +1468,7 @@ def test_pending_accepted_trace_is_queued_until_a_safe_turn(relay):
 
 
 @pytest.mark.parametrize("outcome", [None, "deferred", "failed"])
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_pending_trace_fallbacks_remain_queued(relay, outcome):
     storage, service, _ = relay
     message = _message(service)
@@ -1461,6 +1492,7 @@ def test_pending_trace_fallbacks_remain_queued(relay, outcome):
     assert "pending" in explanation.lower()
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_pending_unreachable_trace_needs_intervention(relay):
     storage, service, _ = relay
     message = _message(service)
@@ -1478,6 +1510,7 @@ def test_pending_unreachable_trace_needs_intervention(relay):
     assert "ordinary turn" in explanation
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_active_claim_trace_is_not_reported_as_queued(relay):
     _storage, service, _ = relay
     message = _message(service)
@@ -1489,6 +1522,7 @@ def test_active_claim_trace_is_not_reported_as_queued(relay):
     assert "ACK has not been recorded" in explanation
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_expired_trace_distinguishes_never_claimed_from_prior_claim(relay):
     storage, service, _ = relay
     created = datetime(2030, 1, 1, tzinfo=timezone.utc)
@@ -1535,6 +1569,7 @@ def test_expired_trace_distinguishes_never_claimed_from_prior_claim(relay):
     assert "not evidence of hook failure" not in expired_after_claim["explanation"]
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_delivered_trace_overrides_old_uncertain_activation(relay):
     storage, service, _ = relay
     message = _message(service)
@@ -1564,6 +1599,7 @@ def test_delivered_trace_overrides_old_uncertain_activation(relay):
     assert "Needs intervention" not in explanation
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_terminal_trace_states_disclose_evidence_gaps(relay):
     storage, service, _ = relay
     delivered = _message(service)
@@ -1603,6 +1639,7 @@ def test_terminal_trace_states_disclose_evidence_gaps(relay):
     assert "Activation evidence is incomplete" in expired_trace["explanation"]
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_pending_uncertain_mixed_runtime_fanout_keeps_generic_guidance(relay):
     storage, service, _ = relay
     message = _message(service)
@@ -1651,6 +1688,7 @@ def test_pending_uncertain_mixed_runtime_fanout_keeps_generic_guidance(relay):
     assert trace["events"][-1]["native_retry_safe"] is False
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_mixed_fanout_trace_counts_three_states(relay):
     storage, service, _ = relay
     message = _message(service)
@@ -1725,6 +1763,7 @@ def test_mixed_fanout_trace_counts_three_states(relay):
     assert "UserPromptSubmit" not in explanation
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_mixed_legacy_current_fanout_is_an_evidence_gap(relay):
     storage, service, _ = relay
     message = _message(service)
@@ -1754,6 +1793,7 @@ def test_mixed_legacy_current_fanout_is_an_evidence_gap(relay):
 
 
 @pytest.mark.parametrize("marker", ["legacy", "truncated", "pruned"])
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_pending_incomplete_trace_evidence_remains_unknown(relay, marker):
     storage, service, _ = relay
     message = _message(service)

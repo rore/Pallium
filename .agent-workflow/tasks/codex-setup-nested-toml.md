@@ -38,7 +38,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -180,3 +180,10 @@ Before edits, existing reviewer to assess this bounded plan and exact placement/
 
 
 Bounded PLAN GO: @astra-reviewer turn01a17aa8-12ea-7803-a22d-51bd8f5910b1 inspected current expired/fresh case and trace fixture. Obtain final durable state after existing handler joins before either strict native ACK/delivered assertion; include fresh stderr and ACK handler status/exception. Never synthesize hook ACK from server success. Preserve existing cleanup joins/alive assertions, no new wait/retry/timeout. Fixture scope exactly2 setup turns,37 consumers only, subjects outside, try/finally storage cleanup. Focused changed node/counterpart plus trace module/audit and actual diff/result review; better evidence is not a reliability fix. No product or live changes.
+
+
+## ACK evidence and trace preparation implementation
+
+Only tests/test_agent_relay_hooks.py and tests/test_relay_delivery_trace.py changed after published76ea39d8 source. Existing expired/fresh test captures fresh stderr, ACK handler status/transport exception, and reads final delivery state after unchanged handler joins before both strict ACK-event/delivered assertions; hook event remains the sole confirmation source. No new wait, timeout, retry, delay or observer program. Existing trace fixture scopes its two initial registrations using expected2 and closes storage via try/finally;37 exact consumers select semantic parameter, all subjects outside.
+
+Focused changed node plus existing late-ACK counterpart, complete trace module and existing fixture audit passed83tests20.99s with0fail/error/skip (ack-trace-affected.xml/log). No full local repeat or attempt to replace failed hosted qualification. AST proof confirms all44 trace test bodies unchanged; exactly37 fixture consumers parametrized; all19 native assertion expressions and every wait/join/sleep call preserved; production/shared fixture/protected paths unchanged versus76ea39d8. Proof retained in ack-trace-scope-proof.json. Prior124 source/setup/cross results and unchanged reviews remain bounded evidence. This correction improves diagnostics and prerequisite setup only; it does not cure/explain native2235ms ACK delay. Existing reviewer actual diff/result review requested before publication.
