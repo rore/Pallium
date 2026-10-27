@@ -1,5 +1,11 @@
 # Retained reconnect readiness retry
 
+## PR368 initial-claim admission investigation (2026-10-27)
+
+Manager assigned the exact c8b1f7cd Python3.12 failure after narrow reviewed retention PR371 publication. Preserved complete job122419465849 log in the original evidence checkout build/retained-ready-retry/pr368-c8b1f7cd-linux312.log: initial hook /relay/turn503, setup_pragma1026ms and late_begin, before ACK-loss injection; observed pending rather than required claimed. Production acquisition source is unchanged from main. Elapsed setup has not been attributed to a native SQLite lock versus scheduling; no historical cause claim. Existing deterministic acquisition tests preserve elapsed-budget refusal, rollback and no replay.
+
+Existing Astra conditional plan guidance: only after exact typed preclaim refusal with pending/attempts0, settled owner, unchanged delivery/endpoint, no payload/ACK and no intended fault, use existing bounded recovery sweeps and validated reservation retry_not_before. Keep real acquisition clocks/budgets and strict claimed/attempts1 plus explicit intended-fault evidence. Separate initial extra-owner/refusal baseline from later recovery deltas; gate recovered-claim fault by explicit phase, not owner count. Add deterministic initial-refusal reproduction and nonqualifying-error control; arbitrary errors remain fatal. No production deadline/source changes or generalized retry helper. Exact patch/result review is required before publication; PR368 remains blocked by actual failed CI.
+
 <!-- agent-workflow:start -->
 **Outcome:** Recover an already authenticated retained Codex connection within its existing recovery budget, and avoid native wake submission to a positively identified archived Codex recipient while allowing restored recipients to become eligible again.
 
