@@ -188,6 +188,11 @@ def build_suppression_manifest(db_url: str, delivery_ids: list[str]) -> dict[str
                 row["state"] != "pending" or any(row[key] is not None for key in
                     ("claim_token", "claimed_at", "lease_expires_at", "delivered_at")) for row in rows):
             raise ValueError("suppression requires every selected delivery to be pending and unclaimed")
+        current = datetime.now(timezone.utc)
+        for row in rows:
+            expiry = datetime.fromisoformat(str(row["message_expires_at"]).replace("Z", "+00:00"))
+            if (expiry.replace(tzinfo=timezone.utc) if expiry.tzinfo is None else expiry) <= current:
+                raise ValueError("suppression requires every selected delivery to have an unexpired message")
         manifest = {"schema_version": 3, "database_identity": _identity(conn, path),
                     "source_endpoint_ids": [], "destination_endpoint_id": None,
                     "expected_scopes": {}, "endpoint_preimage": {},

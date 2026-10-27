@@ -277,6 +277,37 @@ def test_delivery_only_manifest_requires_present_pending_unclaimed(client, tmp_p
         build_suppression_manifest(str(storage._relay_engine.url), [DELIVERY_A])
 
 
+@pytest.mark.parametrize("offset_microseconds", [-1, 0, 1])
+@pytest.mark.parametrize("aware", [False, True])
+def test_delivery_only_dry_run_rejects_expired_pending_messages(client, tmp_path, monkeypatch,
+                                                               offset_microseconds, aware):
+    from app.tools import relay_endpoint_repair as repair
+    storage = client.app.state.pallium_service._storage
+    current = datetime(2030, 1, 2, tzinfo=timezone.utc)
+    _seed(storage, current)
+    _clean_wake_stores(tmp_path, monkeypatch)
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return current if tz is not None else current.replace(tzinfo=None)
+    monkeypatch.setattr(repair, "datetime", Clock)
+    expiry = current + timedelta(microseconds=offset_microseconds)
+    wire = (expiry.astimezone(timezone(timedelta(hours=3))).isoformat() if aware
+            else expiry.replace(tzinfo=None).isoformat())
+    with storage._begin_relay_immediate() as db:
+        db.connection().exec_driver_sql("UPDATE relay_messages SET expires_at=? WHERE id=?", (wire, MESSAGE_A))
+    url = str(storage._relay_engine.url)
+    if offset_microseconds <= 0:
+        with pytest.raises(ValueError, match="unexpired"):
+            build_suppression_manifest(url, [DELIVERY_A])
+    else:
+        envelope = build_suppression_manifest(url, [DELIVERY_A])
+        assert envelope["manifest"]["dispositions"][0]["delivery_id"] == DELIVERY_A
+    with storage._relay_session_factory() as db:
+        assert db.get(RelayDeliveryRecord, DELIVERY_A).state == "pending"
+        assert db.get(RelayMessageRecord, MESSAGE_A).payload == "héllo"
+
+
 @pytest.mark.parametrize("change", ["adopt", "duplicate", "claim-token"])
 def test_delivery_only_manifest_rejects_adopt_duplicates_and_claim_evidence(client, tmp_path, monkeypatch, change):
     storage = client.app.state.pallium_service._storage
