@@ -2200,7 +2200,19 @@ def test_concurrent_matching_wake_callbacks_refresh_but_claim_once(
     if delivery["state"] == "pending":
         assert refusals and outcomes == [None, None] and delivery["attempts"] == 0
         assert acknowledgements == []
-        assert _persisted_wake(ctx)["state"] == ("claim_attempted" if claims else "injection_attempted")
+        assert claims == [], "a fenced claim refusal is not a completed recoverable refresh"
+        assert _persisted_wake(ctx)["state"] == "injection_attempted"
+        monkeypatch.setattr(module, "_json_request", http)
+        if newest_refused:
+            monkeypatch.setattr(storage, "_begin_relay_immediate", original_begin)
+        recovered = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)
+        assert recovered is not None
+        emitted = []
+        _execute_request(ctx, {"messages": [{"role": "user", "content": marker + "\n" + recovered["context"]}]},
+                         lambda actual: emitted.append(actual))
+        assert len(emitted) == 1 and message["payload"] in module._current_user_text(emitted[0])
+        recovered_delivery = status(client, message)["deliveries"][0]
+        assert recovered_delivery["state"] == "delivered" and recovered_delivery["attempts"] == 1
         return
     assert len(claims) == 1
     assert sum(outcome is not None for outcome in outcomes) == 1

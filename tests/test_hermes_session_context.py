@@ -178,16 +178,34 @@ print("public session context qualification passed")
 
 
 def _dependency_directory(python):
-    probe = subprocess.run([str(python), "-I", "-S", "-B", "-X", "utf8", "-c",
-        "import sys,sysconfig; print(sysconfig.get_path('purelib', vars={'base':sys.argv[1],'platbase':sys.argv[1]}))",
-        str(python.parent.parent)], check=True, capture_output=True, text=True, encoding="utf-8", timeout=10)
+    command = [str(python), "-I", "-S", "-B", "-X", "utf8", "-c"]
+    if python.parent.name.lower() in {"bin", "scripts"} and (python.parent.parent / "pyvenv.cfg").is_file():
+        # -S on Python <=3.13 loses the configured virtual environment prefix.
+        command += ["import sys,sysconfig; print(sysconfig.get_path('purelib', vars={'base':sys.argv[1],'platbase':sys.argv[1]}))",
+                    str(python.parent.parent)]
+    else:
+        command += ["import sysconfig; print(sysconfig.get_path('purelib'))"]
+    probe = subprocess.run(command, check=True, capture_output=True, text=True, encoding="utf-8", timeout=10)
     return Path(probe.stdout.strip()).resolve()
 
 
-def test_dependency_directory_uses_the_interpreters_layout():
+@pytest.mark.parametrize("base", [False, True], ids=["current", "base"])
+def test_dependency_directory_uses_the_interpreters_layout(base):
     import sys
     import sysconfig
-    assert _dependency_directory(Path(sys.executable)) == Path(sysconfig.get_path("purelib")).resolve()
+    python = Path(sys._base_executable if base else sys.executable)
+    prefix = sys.base_prefix if base else sys.prefix
+    expected = sysconfig.get_path("purelib", vars={"base": prefix, "platbase": prefix})
+    assert _dependency_directory(python) == Path(expected).resolve()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX interpreter symlink layout")
+def test_dependency_directory_does_not_guess_venv_from_bin_symlink(tmp_path):
+    import sys
+    python = tmp_path / "bin" / "python"
+    python.parent.mkdir()
+    python.symlink_to(Path(sys._base_executable))
+    assert _dependency_directory(python) == _dependency_directory(Path(sys._base_executable))
 
 
 def test_real_public_session_context_isolation():
@@ -236,6 +254,8 @@ def test_public_context_probe_keeps_configured_venv_symlink(tmp_path, monkeypatc
     python = tmp_path / "venv" / "bin" / "python"
     python.parent.mkdir(parents=True)
     python.symlink_to(Path(sys.executable))
+    (python.parent.parent / "pyvenv.cfg").write_text(
+        f"home = {Path(sys._base_executable).parent}\n", encoding="utf-8")
     packages = python.parent.parent / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
     packages.mkdir(parents=True)
     monkeypatch.setenv("PALLIUM_HERMES_CWD_SOURCE", str(source))
