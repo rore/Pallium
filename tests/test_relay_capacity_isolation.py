@@ -2430,6 +2430,39 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
     asyncio.run(exercise())
 
 
+def test_summary_health_progress_allows_slow_native_body(client, monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    fired = threading.Event()
+    service = client.app.state.pallium_service
+    original_health = service.get_queue_health
+
+    def finish_delay():
+        fired.set()
+        release.set()
+
+    timer = threading.Timer(2.1, finish_delay)
+
+    def delayed_health():
+        entered.set()
+        timer.start()
+        assert release.wait(5), "controlled health body delay did not finish"
+        return original_health()
+
+    monkeypatch.setattr(service, "get_queue_health", delayed_health)
+    try:
+        test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
+            client, monkeypatch, "started",
+        )
+        assert entered.is_set() and fired.is_set()
+    finally:
+        print("controlled_health_delay", {"entered": entered.is_set(), "fired": fired.is_set()})
+        release.set()
+        timer.cancel()
+        if timer.ident is not None:
+            timer.join(5)
+            assert not timer.is_alive(), "controlled health timer did not drain"
+
+
 def test_standalone_summary_mount_preserves_sqlite_and_unsupported_responses(client):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
