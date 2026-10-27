@@ -104,7 +104,9 @@ jobs:
         run: pip install -e ".[dev,vector,mcp]"
 
       - name: Verify MCP test dependency
-        run: python -c "import mcp; import app.mcp.server"
+        run: |
+          python -c "import mcp; import app.mcp.server"
+          python -c "import platform, sqlite3, sqlalchemy; print('Runtime versions:', platform.python_version(), 'SQLite', sqlite3.sqlite_version, 'SQLAlchemy', sqlalchemy.__version__)"
 
       - name: Run tests
         run: python -m pytest tests/ ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q --durations=20 --junitxml=test-results/linux-${{ matrix.python-version }}-test-all.xml

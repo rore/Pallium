@@ -29,6 +29,120 @@ def _make_sa_operational_error(message: str) -> SAOperationalError:
 # ── Unit tests for _with_retry ──────────────────────────────────────────
 
 
+@pytest.mark.parametrize("failure", ["entry", "body", "exit", "other", None])
+def test_ci_acquisition_diagnostic_preserves_context_and_privacy(monkeypatch, capsys, failure):
+    from contextlib import contextmanager
+    import json
+    import sqlite3
+    from tests.codex_wake_setup import observe_relay_acquisition_failures
+
+    calls, session = [], object()
+    native = sqlite3.OperationalError("private SQL/path/payload")
+    native.sqlite_errorcode, native.sqlite_errorname = sqlite3.SQLITE_BUSY, "SQLITE_BUSY"
+    error = ImmediateTransactionBusyError("private SQL/path/payload", acquisition_stage="late_begin",
+        acquisition_phase_ms={"setup_pragma": 701, "private SQL/path/payload": 3, "session_factory": True})
+    error.__cause__ = SAOperationalError("private SQL/path/payload", {}, native)
+
+    @contextmanager
+    def original():
+        calls.append("enter")
+        try:
+            if failure in {"entry", "other"}:
+                raise error if failure == "entry" else ValueError("private SQL/path/payload")
+            yield session
+            if failure == "exit":
+                raise error
+        finally:
+            calls.append("cleanup")
+
+    provider = SimpleNamespace(_begin_relay_immediate=original)
+    observe_relay_acquisition_failures(provider, monkeypatch)
+    try:
+        with provider._begin_relay_immediate() as actual:
+            assert actual is session
+            calls.append("body")
+            if failure == "body":
+                raise error
+    except (ImmediateTransactionBusyError, ValueError) as actual:
+        assert failure is not None
+        assert actual is error if failure != "other" else type(actual) is ValueError
+    else:
+        assert failure is None
+    assert calls == (["enter", "cleanup"] if failure in {"entry", "other"} else ["enter", "body", "cleanup"])
+    emitted = capsys.readouterr().err
+    if failure == "entry":
+        assert "private" not in emitted
+        metadata = json.loads(emitted.removeprefix("relay acquisition failure: "))
+        assert metadata["stage"] == "late_begin" and metadata["wall_phase_ms"] == {"setup_pragma": 701}
+        assert metadata["native_sqlite_errors"] == [{"code": 5, "name": "SQLITE_BUSY"}]
+        assert metadata["acquisition_and_cleanup_wall_ns"] >= 0
+    else:
+        assert emitted == ""
+
+
+@pytest.mark.parametrize("broken", ["cpu", "wall", "sink", "serialization", "cap"])
+def test_ci_acquisition_diagnostic_cannot_replace_refusal(monkeypatch, capsys, broken):
+    from contextlib import contextmanager
+    import builtins
+    import json
+    from tests.codex_wake_setup import observe_relay_acquisition_failures
+
+    calls = []
+    error = ImmediateTransactionBusyError("original", acquisition_stage="setup_deadline")
+    @contextmanager
+    def refuse():
+        calls.append("enter")
+        raise error
+        yield
+    provider = SimpleNamespace(_begin_relay_immediate=refuse)
+    observe_relay_acquisition_failures(provider, monkeypatch)
+    failures = []
+    def fail(*_args, **_kwargs):
+        failures.append(True)
+        raise RuntimeError("diagnostic failure")
+    with monkeypatch.context() as optional:
+        if broken == "cpu":
+            optional.setattr(time, "thread_time_ns", fail)
+        elif broken == "wall":
+            optional.setattr(time, "perf_counter_ns", fail)
+        elif broken == "sink":
+            optional.setattr(builtins, "print", fail)
+        elif broken == "serialization":
+            optional.setattr(json, "dumps", fail)
+        for _ in range(6):
+            with pytest.raises(ImmediateTransactionBusyError) as observed:
+                with provider._begin_relay_immediate():
+                    pytest.fail("refused acquisition yielded")
+            assert observed.value is error
+    assert calls == ["enter"] * 6
+    emitted = capsys.readouterr().err.splitlines()
+    assert len(emitted) == (0 if broken in {"sink", "serialization"} else 4)
+    if broken in {"sink", "serialization"}:
+        assert len(failures) == 4
+    if broken in {"cpu", "wall"}:
+        field = "thread_cpu" if broken == "cpu" else "wall"
+        assert all(json.loads(line.removeprefix("relay acquisition failure: "))[
+            f"acquisition_and_cleanup_{field}_ns"] is None for line in emitted)
+
+
+@pytest.mark.parametrize("ci", ["true", "false"])
+def test_ci_acquisition_diagnostic_preserves_http_refusal(monkeypatch, capsys, request, ci):
+    from contextlib import contextmanager
+    monkeypatch.setenv("GITHUB_ACTIONS", ci)
+    client = request.getfixturevalue("client")
+    @contextmanager
+    def refuse(*_args, **_kwargs):
+        raise ImmediateTransactionBusyError("controlled refusal", acquisition_stage="setup_deadline")
+        yield
+    monkeypatch.setattr(client.app.state.pallium_service._storage, "_begin_immediate_for", refuse)
+    response = client.post("/relay/turn", json={"runtime": "codex", "session_ref": "diagnostic-target",
+        "container_ref": "git:example.test/diagnostic"})
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+    assert response.headers["Retry-After"] == "1"
+    assert ("relay acquisition failure: " in capsys.readouterr().err) == (ci == "true")
+
+
 class TestWithRetryUnit:
     @pytest.fixture
     def storage(self, tmp_path):
