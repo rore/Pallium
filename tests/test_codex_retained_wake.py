@@ -1942,11 +1942,10 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
             original_recovery = claim_recovery
 
             def claim_recovery():
-                try:
-                    return original_recovery()
-                finally:
-                    if release_waiting.is_set():
-                        sweep_returned.set()
+                result = original_recovery()
+                if release_waiting.is_set():
+                    sweep_returned.set()
+                return result
 
         callbacks.append(claim_recovery)
         reconciler = claude_wake.ClaudeWakeReconciler(
@@ -2015,7 +2014,8 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
                     assert sweep_returned.wait(5), "Recovery callback did not return before release"
                     result = release_generation(reservation)
                     assert result
-                    assert reservation not in registry.reservations()
+                    initialized, reservations = registry._relay.codex_wake_snapshot()
+                    assert initialized and reservation not in reservations
                     release_committed.set()
                     return result
                 return release_generation(reservation)
@@ -2097,7 +2097,8 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
                     release_faults_cleared.set()
                     if release_after_sweep:
                         assert release_committed.wait(5), "Late native release did not commit"
-                        assert fence not in registry.reservations()
+                        initialized, reservations = registry._relay.codex_wake_snapshot()
+                        assert initialized and fence not in reservations
                     # The wake worker can release after its recovery callback has returned.
                     assert released.wait(5), "Periodic release did not settle after refusal cleared"
                     for worker in workers:

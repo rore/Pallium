@@ -59,3 +59,11 @@ Agent technical review: @astra-reviewer turn01a17c30-13cc-7c80-a100-e4fdb42cd57a
 Reviewed revision: 2547ccf33bdc4ba218d28ddf6c1a5333e44f9774; test SHA256d5592e505918fc9d314c767d67549026a59f4b95eb74ab54cd49d4be1a72b3b1; later record-only commits preserve it.
 
 Verification adequacy: sufficient for the demonstrated test-observer correction: committed release and fresh absent old fence precede the failing old observer, corrected forced order passes with unchanged5s bound, and all five selected lifecycle/native controls pass. Only the incorrect observer assertion of74 original assertions changed; unrelated module nodes are identical. No extra reviewer run or chain, full/hosted campaign, production reliability claim, historical CI attribution or live action follows. Normal release qualification remains separate from this finite diagnostic assignment.
+
+## PR review remediation
+
+Published PR #365 at83c2cb41e6c6a37a001cf37bb0b9f69da9a7ff3d. Normal required CI40466346732 passed both Linux full lanes and Windows smoke; hosted governance40466346595 passed. This is release qualification, separate from the finite diagnostic check above.
+
+CodeRabbit identified two minor gaps in the added regression's proof: the barrier signaled after exceptional callback exit, and registry.reservations() can mask a failed refresh as empty. Require normal callback return before signaling; read the native codex_wake_snapshot directly and assert initialized authority plus absence at both new proof sites. No observer correction, deadline, existing lifecycle assertion or production behavior changes.
+
+The six affected lifecycle cases pass6/6 in7.08s in the same supported private environment, source SHA256e784bd9d4157c5a5cb74f238b665b3ed51a4027f101dd2a13e661a14474859b4. Original receipts remain separate. Existing independent review covers the causal correction; the small stricter-proof delta will be reviewed by that same reviewer before merge. New-head required CI remains mandatory, with no optional campaign or duplicate full local run.
