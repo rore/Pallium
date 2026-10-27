@@ -311,6 +311,96 @@ async function callerFixture(options = {}) {
   };
 }
 
+for (const failure of ["503", "timeout"]) {
+  test(`transient poll ${failure} does not reenroll an established owner`, { timeout: 12000 }, async () => {
+    let fail = true;
+    let timedOut;
+    const timeoutObserved = new Promise((resolve) => { timedOut = resolve; });
+    const f = await callerFixture({ fetch: async (route, body, init) => {
+      if (route !== "/relay/opencode/wake" || body.operation !== "poll" || !fail) return;
+      if (failure === "503") return { ok: false, status: 503, text: async () => JSON.stringify({ detail: { code: "relay_busy" } }), body: { cancel: async () => {} } };
+      return new Promise((_, reject) => init.signal.addEventListener("abort", () => {
+        timedOut();
+        reject(new Error("request deadline"));
+      }, { once: true }));
+    } });
+    try {
+      assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, 1, "startup still enrolls");
+      await f.tick();
+      if (failure === "timeout") { await timeoutObserved; await pause(); }
+      assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, 1, "a transient failure cannot require an enrollment write");
+      fail = false;
+      await f.tick();
+      assert.equal(f.calls.filter((c) => c.body.operation === "poll").length, 2, "ordinary polling resumes independently");
+      assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, 1);
+    } finally { await f.close(); }
+  });
+}
+
+for (const [name, status, raw, reenroll] of [
+  ["missing or expired registration", 409, JSON.stringify({ detail: "OpenCode registration is missing or stale" }), true],
+  ["closed or moved scope", 409, JSON.stringify({ detail: "OpenCode endpoint is closed or its scope changed" }), false],
+  ["missing endpoint", 404, JSON.stringify({ detail: "relay entity not found in the requested scope" }), false],
+  ["unrelated conflict", 409, JSON.stringify({ detail: "other conflict" }), false],
+  ["truncated registration error", 409, '{"detail":"OpenCode registration is missing or stale"', false],
+  ["unreadable registration error", 409, null, false],
+]) {
+  test(`poll recovery distinguishes ${name}`, async () => {
+    const f = await callerFixture({ fetch: async (route, body) => {
+      if (route === "/relay/opencode/wake" && body.operation === "poll") return {
+        ok: false, status, text: async () => { if (raw === null) throw new Error("body failed"); return raw; },
+        body: { cancel: async () => {} },
+      };
+    } });
+    try {
+      await f.tick();
+      const enrollments = f.calls.filter((c) => c.body.operation === "enroll");
+      assert.equal(enrollments.length, reenroll ? 2 : 1);
+      for (const call of enrollments) {
+        assert.equal(call.body.endpoint_id, endpointID);
+        assert.equal(call.body.scope_generation, 0);
+        assert.equal(call.body.native_location, location);
+        assert.equal(call.body.owner_id, enrollments[0].body.owner_id);
+      }
+      assert.equal(f.native.prompt.length, 0);
+    } finally { await f.close(); }
+  });
+}
+
+test("registration recovery cannot replace a competing native owner", async () => {
+  let enrollments = 0;
+  const f = await callerFixture({ fetch: async (route, body) => {
+    if (route !== "/relay/opencode/wake") return;
+    const detail = body.operation === "poll" ? "OpenCode registration is missing or stale"
+      : body.operation === "enroll" && ++enrollments > 1 ? "OpenCode endpoint already has a live native owner" : null;
+    if (detail) return { ok: false, status: 409, text: async () => JSON.stringify({ detail }), body: { cancel: async () => {} } };
+  } });
+  try {
+    await f.tick();
+    assert.equal(enrollments, 2);
+    assert.equal(f.native.prompt.length, 0);
+    assert.equal(f.calls.filter((c) => c.body.operation === "context" || c.body.operation === "admitted").length, 0);
+  } finally { await f.close(); }
+});
+
+test("retirement during a registration error body forbids reenrollment", async () => {
+  const bodyRead = barrier();
+  const f = await callerFixture({ fetch: async (route, body) => {
+    if (route === "/relay/opencode/wake" && body.operation === "poll") return {
+      ok: false, status: 409, body: { cancel: async () => {} },
+      text: async () => { await bodyRead.wait(); return JSON.stringify({ detail: "OpenCode registration is missing or stale" }); },
+    };
+  } });
+  try {
+    await f.tick();
+    await bodyRead.entered;
+    await f.close();
+    bodyRead.release();
+    await pause();
+    assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, 1);
+  } finally { bodyRead.release(); await f.close(); }
+});
+
 test("lost native admission reply retries the same ID after durable readback", async () => {
   const f = await callerFixture({ wake: snapshot(), prompt: async () => { throw new Error("reply lost"); },
     wait: async (history) => { history.push({ type: "idle", id: "msg_terminal123" }); } });
