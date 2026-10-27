@@ -1,5 +1,11 @@
 # Service-wide performance investigation and correction
 
+## Consolidated candidate has a new failed prerequisite (2026-10-27)
+
+Publishedb31ddf51bc8771f0bb49fe7b46f50c959349d26f normalCI40432795954 Linux3.12 job121954340759 failed test_exclusive_trial_rejects_stale_endpoint_or_delivery_before_native_action[closed-spend]. Initial endpoint turns, enrollment, send and preliminary bind succeeded; target close returned503 instead200 (setup_deadline, setup_pragma1427ms) before the actual spend-rejection assertion. Footer1failed/3021passed/16skipped/1xfailed272.62s; full raw saved once under build/pr325-ack-composition. Current caller is unchanged main source; shared writer acquisition is touched by325, so neither physical cause nor whole-suite independence is established. Existing ACK/seed preparation corrections do not cure this native acquisition class.
+
+No retry, fixture patch, diagnostic or merge follows automatically. Manager is reassessing a bounded source-led continuation versus truthful deferral before another piecemeal/full-run cycle; terminal native reports are being collected once by the existing cheap worker. All original and current failures remain failed, Windows/native scoped evidence retains its limits, and no green waiver/live rollout is implied. Public candidate remainsb31ddf51; this record-only successor is retained locally without triggering unchanged-source CI.
+
 Current candidate combines reviewed ACK conformance and guarded Hermes seed preparation, with unchanged application guards and native race/custody oracles. Ordinary exact-head full CI remains required before merge.
 
 ## Result review
@@ -3074,7 +3080,7 @@ Accepted manager-post364-backlog-ownership-20261027 under the existing overnight
 
 **Exceptions:** None
 
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
