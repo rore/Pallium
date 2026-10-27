@@ -145,7 +145,7 @@ Seven audited registration-only scopes use counts2,3,3,3,3,2 plus moved-sender1;
 Current source/test diff submitted for existing reviewer result review; fresh selector/Redline/workflow and normal published-head full CI remain before authorized merge. Retain isolated checkout/evidence until complete and custody agreed.
 
 
-## Result review
+## Previous consolidated setup result review
 
 Agent technical review: @astra-reviewer turn01a17a96-3886-7982-b554-91111571259c, consolidated SOURCE/RESULT GO.
 Reviewed revision: b75dfb41 versus c7d32a9a; earlier original/preservation reviews apply only to unchanged material.
@@ -187,3 +187,12 @@ Bounded PLAN GO: @astra-reviewer turn01a17aa8-12ea-7803-a22d-51bd8f5910b1 inspec
 Only tests/test_agent_relay_hooks.py and tests/test_relay_delivery_trace.py changed after published76ea39d8 source. Existing expired/fresh test captures fresh stderr, ACK handler status/transport exception, and reads final delivery state after unchanged handler joins before both strict ACK-event/delivered assertions; hook event remains the sole confirmation source. No new wait, timeout, retry, delay or observer program. Existing trace fixture scopes its two initial registrations using expected2 and closes storage via try/finally;37 exact consumers select semantic parameter, all subjects outside.
 
 Focused changed node plus existing late-ACK counterpart, complete trace module and existing fixture audit passed83tests20.99s with0fail/error/skip (ack-trace-affected.xml/log). No full local repeat or attempt to replace failed hosted qualification. AST proof confirms all44 trace test bodies unchanged; exactly37 fixture consumers parametrized; all19 native assertion expressions and every wait/join/sleep call preserved; production/shared fixture/protected paths unchanged versus76ea39d8. Proof retained in ack-trace-scope-proof.json. Prior124 source/setup/cross results and unchanged reviews remain bounded evidence. This correction improves diagnostics and prerequisite setup only; it does not cure/explain native2235ms ACK delay. Existing reviewer actual diff/result review requested before publication.
+
+
+## Result review
+
+Agent technical review: @astra-reviewer turn01a17aac-0a91-7bb0-925b-59470f88afc9, bounded test-only SOURCE/RESULT GO.
+Reviewed revision:86d759d9d10313b07b2bb63f97849b6396ee0c8f versus76ea39d8; earlier source/setup reviews reused only unchanged material.
+Verification adequacy: Actual two-test-file diff inspected, strict native delivery_acked and delivered/attempts1 assertions remain; ACK HTTP result/fresh stderr/final durable state now available after unchanged handler cleanup. Trace fixture limits semantic clock to2 prerequisite turns and closes on failure;37 exact consumers retain native subjects. Independently parsed83tests0fail/error/skip20.99s; no repeat tests requested. This improves diagnostics and setup qualification, not ACK latency reliability. Current-head hosted full CI, governance and review-thread gates remain before merge. No production/live/timeout changes.
+
+Whole-change selector selects full for six intended paths. Redline remains GRAY advisory1, no boundary/API/schema/security findings,5classifiedfiles579lines; no protected contract edit. Following changes are record-only; reviewed source/test bytes remain unchanged. Publish one ordinary update and await current-head full CI without rerunning old failures or claiming cause/cure.
