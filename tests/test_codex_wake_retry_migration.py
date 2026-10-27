@@ -10,8 +10,9 @@ from tests.test_codex_wake_sqlite import _registry, _reserve, _send
 
 
 @pytest.mark.parametrize("isolated_relay", [False, True], ids=["shared", "isolated"])
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_retry_cooldown_column_migrates_existing_reservations(
-    tmp_path, isolated_relay,
+    tmp_path, isolated_relay, relay_admission_clock,
 ):
     main_db = tmp_path / "main.db"
     relay_db = tmp_path / "relay.db" if isolated_relay else main_db
@@ -19,7 +20,13 @@ def test_retry_cooldown_column_migrates_existing_reservations(
     storage = SQLiteStorageProvider(*urls)
     relay = RelayService(storage)
     registry = _registry(relay, tmp_path / "legacy")
-    assert registry.initialize(old_owner_drained=True)
+    from storage import sqlite_queue
+    native_begin = storage._begin_relay_immediate
+    native_clock = sqlite_queue.time
+    with relay_admission_clock(storage, expected_admissions=1):
+        assert registry.initialize(old_owner_drained=True)
+    assert storage._begin_relay_immediate == native_begin
+    assert sqlite_queue.time is native_clock
 
     expected = {}
     for target, outcome in (("accepted", "accepted"), ("uncertain", "uncertain")):
