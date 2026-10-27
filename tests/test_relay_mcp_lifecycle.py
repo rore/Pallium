@@ -323,12 +323,14 @@ def test_same_scope_turn_recovers_unreachable_endpoint_with_fenced_identity(clie
     })
     assert closed.status_code == 409
 
-def test_scope_transition_destination_conflicts_never_mutate_either_session(client: TestClient) -> None:
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_scope_transition_destination_conflicts_never_mutate_either_session(client: TestClient, relay_admission_clock) -> None:
     old = {"container_ref": "git:example.test/conflict-old"}
     occupied = {"container_ref": "git:example.test/conflict-destination"}
     session = "same-runtime-session"
-    source = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **old}).json()["session"]
-    destination = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **occupied}).json()["session"]
+    with relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=2):
+        source = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **old}).json()["session"]
+        destination = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **occupied}).json()["session"]
     transition = {
         "runtime": "codex", "session_ref": session, **occupied,
         "previous_container_ref": old["container_ref"],
