@@ -45,7 +45,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -840,3 +840,7 @@ Full on frozen7bdbdb65 terminated PASS:8662P54skip2xfail in721.08s, pr352-audite
 Concurrent focused initial23:17P6F24.75s, build/pr352-concurrent-contract-focused.xml. Allfive native/mixed concurrency cells and retry/exhaustion/nonbusy controls passed. Six invalid-response opt-in controls correctly rejected but failed existing match503 because the new assertion message omitted status. Existing reviewer independently identified the same mismatch. Include actual HTTP status in that new assertion message; retain original regex/error assertions and recheck only the six affected opt-in cells. No native budget, refusal acceptance, product or subject-fence change.
 
 Recorded-failure correction passed8 cases (4 deselected) in6.33s, pr352-refusal-controls-corrected.xml; selection includes allsix previously failed opt-in cases plus two overlapping controls. No invalid refusal was accepted. Full7bdb XML confirms allfour original concurrent cells passed before the later correction. Proceed one affected retained-wake file on corrected current source, then current-head publication/required CI; do not present old full as later-source full evidence.
+
+Final concurrent affected-file verification exact5e9cfdf2439be20bfefc8237f3b46fed1b36f271:247P0F/E/skip99.99s, build/pr352-concurrent-contract-subsystem.xml SHA256c30924e643580d1f69a611ece6bccb417476f3fde671318c23c241af524f6dae. Existing clean reviewer accepted exact5e9 after actual diff/status-message correction and focused receipts; no review tests repeated. Current-main contract correction preserves every actual safety/fence obligation and the native retry budget; it does not diagnose or cure admission latency. Fresh whole-change selector is full67paths. Full7bdb8662P54S2X remains exact earlier-source evidence; later-source helper/subject coverage is this247-case subsystem and focused controls, with all-other-source unchanged. New current-head normal CI must establish the final whole-change platform result before merge; do not infer it from earlier full. Fresh final Redline SCHEMA_CHANGE has boundaryViolations[] and Agent Workflow advisory1 solely existing unsatisfied architecture/API/persistence checkpoint labels. No protected contract, workflow, runtime, live environment or source dependency change in these three corrections.
+
+State Ready for review records the completed reviewed source corrections and local verification. Current PR df97 remains historical terminal red until normal publication of this coherent successor; no merge readiness or exception is claimed. Publish once without force, obtain exact current-head CI/result disposition, resolve any new actual findings, and merge only when actual gates pass. Source fixes/checks/publication/qualified merge remain within standing manager/user scope; no new approval request. Preserve all failed and corrected receipts and retain worktree until PR disposition/evidence preservation. Canonical roadmap item remains active and its wider state is manager-owned.
