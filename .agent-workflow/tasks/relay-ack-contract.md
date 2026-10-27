@@ -15,11 +15,11 @@
 **Relationships:**
 {"schema_version":1,"sources":null,"pull_requests":[]}
 
-**Risk:** Elevated
+**Risk:** High
 
 **Complexity:** Moderate
 
-**Reason:** Test-only correction at a durable-custody/confirmation boundary could falsely qualify unsafe behavior if the oracle is loosened. Existing accepted ambiguity behavior must remain distinct from confirmation; no runtime code changes.
+**Reason:** The composed PR325 has a High aggregate persistence-risk floor from storage/sqlite_relay.py; this imported record inherits that whole-PR classification. Original independent component assessment follows. Test-only correction at a durable-custody/confirmation boundary could falsely qualify unsafe behavior if the oracle is loosened. Existing accepted ambiguity behavior must remain distinct from confirmation; no runtime code changes.
 
 **Discovery:** Merged #359 added decisive outcome evidence. #325 head7038eff30fb40716f90b3f0c312e758bbd42af5c CI40426431412/job121933295626 records ACK server200, response BrokenPipeError, public delivered/attempts1 and no hook ACK event, with1967ms operation. The strict unconditional confirmation assertion conflicts with existing late-ACK E2E and acknowledge_relay's confirmed-response-only return contract. Physical latency remains unknown; previous runs stay failed.
 
@@ -31,7 +31,7 @@
 
 **Plan review:** Agent technical review: @astra-reviewer turn01a17ad2-11e7-7c40-83b5-98929398aeef, exact recorded-plan conditional GO; required transport-evidence clarification is adopted below.
 
-**Approvals:** Not required at this risk level; existing user-authorized implementation/review coordination applies. No authority to weaken product requirements is inferred.
+**Approvals:** Approved by user 2026-10-26 15:48 UTC: standing advance source/review/PR/green-merge authorization for the assigned reliability round, exact transcript: "and since i won't be here, i'm approving all of this, and also the agents should not block waiting for my actions". Direct-human source forwarded by coordinator01a171bf-bb98-71d3-ba6f-52b36f5ca022 and adopted in parent service-performance record; this is advance authorization, not personal inspection of a future diff. Independent technical source/result review remains separate and actually completed. No authority to weaken product requirements or change live installations is inferred.
 
 **Exceptions:** —
 
@@ -74,3 +74,8 @@ Verification adequacy: Reviewed actual two-path diff, confirmed-response-only he
 ## Composition gate and retained handoff
 
 Whole-change selector requires full qualification for exactly test+WR paths; this is pending on Relaydev's agreed composed source, not waived by161 affected passes. Fresh boundary adapter passed; Redline BLUE0, no API/boundary/contract finding. An initial reporter invocation correctly refused absent fresh-checkout boundary evidence; generated the required adapter report then classification passed without policy changes. Following edits are record-only; exact reviewed test bytes remain unchanged. No new PR or publication. Keep this managed source/evidence checkout until reviewed composition custody is confirmed; do not archive before then. Final exact revision/range and evidence sent to Relaydev and manager; saved transport alone is not composition acceptance.
+
+
+## Whole-PR risk inheritance on composition
+
+Root imported the exact reviewed test blob3af85ec6 into325 without modification. Whole-change governance applies the aggregate High storage risk to every changed Work Record, so this record now inherits High from parent service-performance; the original standalone test-only assessment was Elevated. Existing standing advance human authority and independent technical reviews are reused explicitly, without claiming future personal inspection or requesting duplicate approval. No code, oracle, boundary policy, source evidence or original baseline changed. The plan-first advisory refers to earlier parent-PR code; this contribution records99aa before its own source9f15 and parent61acce2a before import.
