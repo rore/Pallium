@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import importlib.util
+import contextvars
+from io import BytesIO
 import json
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
@@ -11,6 +13,7 @@ import sys
 import threading
 import time
 from types import ModuleType, SimpleNamespace
+from urllib.error import HTTPError
 
 import pytest
 from fastapi import FastAPI
@@ -18,6 +21,7 @@ from fastapi.testclient import TestClient
 
 from api.routes import create_router
 from core.relay import RelayService
+from core.errors import ImmediateTransactionBusyError
 
 
 SCOPE = {"container_ref": "git:example.test/team/relay"}
@@ -2091,34 +2095,115 @@ def test_failed_wake_refresh_keeps_unclaimed_mail_retryable(client, plugin_conte
     assert status(client, message)["deliveries"][0]["state"] == "delivered"
 
 
-def test_concurrent_matching_wake_callbacks_refresh_but_claim_once(client, plugin_context, monkeypatch):
+@pytest.mark.parametrize("newest_refused", [False, True], ids=["native", "latest-refresh-refused"])
+def test_concurrent_matching_wake_callbacks_refresh_but_claim_once(
+    client, plugin_context, monkeypatch, newest_refused,
+):
     from concurrent.futures import ThreadPoolExecutor
+    from contextlib import contextmanager
 
     module, create, _ = plugin_context
     ctx, marker, message = _plugin_wake(client, create)
     http = module._json_request
-    barrier = threading.Barrier(2)
-    registrations, claims = [], []
+    barrier, first_entered = threading.Barrier(2), threading.Event()
+    callback = contextvars.ContextVar("matching_wake_callback")
+    refuse = contextvars.ContextVar("refused_wake_refresh", default=False)
+    registrations, claims, responses, refusals, invalid, acknowledgements = [], [], [], [], [], []
+    forced = []
+    if newest_refused:
+        storage = client.app.state.pallium_service._storage
+        original_begin = storage._begin_relay_immediate
+
+        @contextmanager
+        def begin():
+            if refuse.get():
+                forced.append(1)
+                raise ImmediateTransactionBusyError("controlled latest refresh refusal", acquisition_stage="local_gate")
+            with original_begin() as db:
+                yield db
+
+        monkeypatch.setattr(storage, "_begin_relay_immediate", begin)
 
     def simultaneous_refresh(base, method, path, **kwargs):
         if method == "POST" and path == "/relay/turn":
-            if kwargs["body"].get("register_session") is False:
+            index = callback.get()
+            claim = kwargs["body"].get("register_session") is False
+            if claim:
                 claims.append(kwargs["body"])
             else:
                 registrations.append(kwargs["body"])
+                first_entered.set()
                 barrier.wait(timeout=3)
-        return http(base, method, path, **kwargs)
+            token = refuse.set(newest_refused and index == 1 and not claim)
+            try:
+                response = client.request(method, path, json=kwargs.get("body"), params=kwargs.get("query"))
+            except Exception as error:
+                invalid.append(error)
+                raise
+            finally:
+                refuse.reset(token)
+            try:
+                data = response.json()
+            except ValueError as error:
+                invalid.append(error)
+                raise
+            responses.append((index, claim, response.status_code))
+            if response.status_code != 200:
+                error = HTTPError(str(response.url), response.status_code, "fixture HTTP failure",
+                                  response.headers, BytesIO(response.content))
+                if (response.status_code == 503
+                        and data == {"detail": {"code": "relay_busy", "retryable": True}}
+                        and data["detail"]["retryable"] is True
+                        and response.headers.get("Retry-After") == "1"):
+                    refusals.append(error)
+                else:
+                    invalid.append(error)
+                raise error
+            return data
+        if method == "POST" and path in {"/relay/deliveries/ack", "/relay/replies"}:
+            acknowledgements.append(path)
+        try:
+            return http(base, method, path, **kwargs)
+        except Exception as error:
+            invalid.append(error)
+            raise
+
+    def run(index):
+        token = callback.set(index)
+        try:
+            return ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)
+        except HTTPError as error:
+            if not any(error is refusal for refusal in refusals):
+                raise
+            return None  # Classify the verified claim refusal outside the adapter.
+        finally:
+            callback.reset(token)
 
     monkeypatch.setattr(module, "_json_request", simultaneous_refresh)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(ctx.hooks["pre_llm_call"], session_id="ses_שלום", turn_id="wake", user_message=marker)
-                   for _ in range(2)]
-        outcomes = [future.result(timeout=5) for future in futures]
-    assert len(registrations) == 2 and len(claims) == 1
+        first = pool.submit(run, 0)
+        assert first_entered.wait(3), "older refresh did not reach its HTTP boundary"
+        second = pool.submit(run, 1)
+        outcomes = [future.result(timeout=5) for future in (first, second)]
+    # Refresh catches exceptions, so observer errors must be checked outside callbacks.
+    assert invalid == []
+    assert len(registrations) == 2 and len(claims) <= 1
+    delivery = status(client, message)["deliveries"][0]
+    if newest_refused:
+        assert {index: status for index, claim, status in responses if not claim} == {0: 200, 1: 503}
+        assert forced == [1] and claims == [] and outcomes == [None, None]
+        assert delivery["state"] == "pending" and delivery["attempts"] == 0
+    if delivery["state"] == "pending":
+        assert refusals and outcomes == [None, None] and delivery["attempts"] == 0
+        assert acknowledgements == []
+        assert _persisted_wake(ctx)["state"] == ("claim_attempted" if claims else "injection_attempted")
+        return
+    assert len(claims) == 1
     assert sum(outcome is not None for outcome in outcomes) == 1
-    assert status(client, message)["deliveries"][0]["attempts"] == 1
+    assert delivery["state"] == "claimed" and delivery["attempts"] == 1
     context = next(outcome["context"] for outcome in outcomes if outcome is not None)
     _observe_request(ctx, {"messages": [{"role": "user", "content": marker + "\n" + context}]})
+    assert invalid == []
     assert status(client, message)["deliveries"][0]["state"] == "delivered"
 
 
