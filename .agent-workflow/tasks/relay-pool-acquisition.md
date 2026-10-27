@@ -1,5 +1,15 @@
 # Relay connection-pool availability
 
+Current owner: @relaydev; isolated checkout C:/Users/I347041/.codex/worktrees/relay-pool-composition/Pallium, branch feat/relay-pool-composition, existing PR353. Original ownership/evidence below is retained as history.
+
+## Result review
+
+Agent technical review: @astra-reviewer turn01a17ac1-dc9d-7993-8b62-850360f2846e, bounded composition/actual-result GO for normal same-PR publication/current-head full CI.
+
+Reviewed revision: f1ee9476472e8da4957b55ffdfad02e1431c5141; pool production/test source corresponds exactly to reviewed eb599 and tested66ef, with six incoming359 paths exactly matching main4b5e5d06 and no conflicting merge edits.
+
+Verification adequacy: Independently parsed native HTTP13PASS13.674s, affected478PASS0failures/errors/skips197.507s and exact slow constructor1PASS3.976s. Both queued/started capacity-drain identities are present; HTTP overlaps affected. Runtime bounds/import origins and exact command/private-home metadata verified. These scoped results are reusable through exact source correspondence, not a passing full f1 suite. Import boundaries pass; fresh RedlineGRAY/advisory1 has no checkpoint or boundary violation. Whole-change selector requires current full CI; final governance/review/head/base gates remain. No new local full or optional matrix requested. All historical failures, frozen353 restrictions and unexplained cold/native latency remain open. No merge or installed operation is implied by this technical review.
+
 ## Current affected verification (2026-10-27)
 
 The affected eight-file storage/pool/MCP/capacity cohort at66ef0176 passed478normally with0failures/errors/skips and1slow deselection,197.59s. The existing exact constructor-serialization slow case then passed separately,1normal pass in3.98s. The13HTTP cases are included in the affected cohort and are not additive. Exact native XML/logs/commands are under build/pr353-current-source; all use the previously verified supported read-only interpreter and fresh neutral private HOME/TEMP, with inherited integration/credential scope stripped. No old frozen recipe, optional matrix, global configuration or live installation changed. Actual-result review, whole-change selected validation and current-head CI remain required; earlier failed suites remain failed and cold-connection latency stays unexplained.
@@ -50,7 +60,7 @@ Constructor concurrency and failed full-run disposition -> Run the existing exac
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Publication-only delegated disposition
