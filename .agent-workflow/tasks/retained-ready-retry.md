@@ -1,5 +1,11 @@
 # Retained reconnect readiness retry
 
+## Installed merged-schema gap: authorized one-file repair
+
+Read-only reconciliation found installed api/routes.py matches main951 while api/schemas.py still matches anchor4a546362. Bytecode-disabled isolated model checks reproduce rejection of {session:null,deliveries:[],has_more:false,remaining_count:0}; merged main accepts it. The exact merged PR366/033f6f03 full-file delta is only nullable-but-required RelayTurnResponse.session, its missing-session/empty-metadata validator, and OpenCode's explicit nonnullable session override. No installed schema additions exist beyond the verified anchor preimage. Manager prioritized the demonstrated functional gap under standing human code-red authorization, before deferred PR368 test corrections. Existing Astra SOURCE/CALLER COMPATIBILITY GO covers the exact merged delta and HTTP/OpenCode callers, with installed full-file preimage verification retained by this owner.
+
+Apply only api/schemas.py from033f6f033333a63b2f2fef10892bc7b8719a022f: expected installed preimage SHA2566c9d16852cbc4bdcbaee2eed5a01224c95de79a1bc2d765d73fbbc3dc903ab78, candidate68cea78f081697c3c0e66a976368b064467eb40d86597ee3334df0d3673e5c45. Private helper build/apply-missing-session-schema.py prepares code backup/ACL/candidate/receipt, verifies all nine other caller/hotfix hashes, stops/activates only with installed scripts/restart-service.ps1 and restores guarded code-only on failure. No DB/configuration/integration/message-state writes or host application control. Installed isolated checks cover accepted null-empty, rejected nonempty metadata, required session field and OpenCode nonnull behavior; health/status/queue/summary and ordinary counters are read separately. Synthetic validation is not delivery acceptance; if no new ordinary delivery occurs, leave that evidence unavailable. This is a functional correction, not a revision-label sync.
+
 ## Failure-only CI setup diagnostic (2026-10-27)
 
 ### Corrected ordinary CI outcome: release validation passed, cause not established
