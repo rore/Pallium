@@ -40,6 +40,12 @@ shape.
 | `POST /relay/deliveries/ack` | Acknowledge automatic hook delivery. |
 | `POST /relay/deliveries/mcp-ack` | Acknowledge MCP recovery delivery. |
 
+A turn with `register_session: false` does not create a missing session or
+resolve that identity in another container. If no session exists in the requested
+scope, it returns 200 with `session: null`, empty `deliveries`, `has_more: false`
+and `remaining_count: 0`. A delivery-bearing turn still requires a session, and
+`POST /relay/opencode/wake` retains its non-null session response.
+
 ### Optional derived memory
 
 - `POST /query` and `POST /query/debug` retrieve memory. When the active default

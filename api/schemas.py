@@ -1139,13 +1139,19 @@ class RelayDeliveryResponse(BaseModel):
 
 
 class RelayTurnResponse(BaseModel):
-    session: RelaySessionResponse
+    session: RelaySessionResponse | None
     deliveries: list[RelayDeliveryResponse]
     has_more: bool
     remaining_count: int = Field(ge=0)
     structural_work_refs_status: Literal["unchanged", "complete", "unavailable"] = "unchanged"
     structural_work_refs_error: str | None = None
     work_refs: list[RelayWorkRefResponse] | None = None
+
+    @model_validator(mode="after")
+    def validate_missing_session(self):
+        if self.session is None and (self.deliveries or self.has_more or self.remaining_count):
+            raise ValueError("missing Relay session requires an empty result")
+        return self
 
 
 class RelayOpenCodeWakeSnapshot(BaseModel):
@@ -1160,6 +1166,7 @@ class RelayOpenCodeWakeSnapshot(BaseModel):
 
 
 class RelayOpenCodeWakeResponse(RelayTurnResponse):
+    session: RelaySessionResponse
     wake: RelayOpenCodeWakeSnapshot | None
     restored: bool
 
