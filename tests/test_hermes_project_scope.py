@@ -256,15 +256,18 @@ def test_actor_aba_invalidates_old_turn_without_changing_relay_scope(
         assert reloaded_incarnation == middle_incarnation
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("target", ["session", "turn"])
 @pytest.mark.parametrize("incarnation", [None, {}, "", " " * 32, "x" * 33, "漢" * 32])
 def test_missing_or_malformed_automatic_incarnation_refuses_callbacks(
-    client, project_plugin, tmp_path, monkeypatch, target, incarnation,
+    client, project_plugin, tmp_path, monkeypatch, target, incarnation, relay_admission_clock,
 ):
     module, ctx, pre, _create, calls, _settings = project_plugin
     root = _repo(tmp_path, "bad-incarnation-" + target)
-    assert pre(str(root), turn="a", message="history marker café",
-               history=[{"role": "user", "content": "history marker café"}])
+    # One CWD registration also refreshes its structural work references, even an empty list.
+    with relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=2):
+        assert pre(str(root), turn="a", message="history marker café",
+                   history=[{"role": "user", "content": "history marker café"}])
     state_key = next(key for key in ctx.state.values if key.startswith(target + ":"))
     if incarnation is None:
         ctx.state.values[state_key].pop("authority_incarnation")

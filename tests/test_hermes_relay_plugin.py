@@ -2263,10 +2263,16 @@ def test_request_stage_idempotence_precedes_tokens_inside_payload(client, plugin
     assert status(client, message)["deliveries"][0]["attempts"] == 1
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("stage", ["later-llm-request", "pre-api"])
-def test_later_host_stages_can_remove_expanded_context_without_ack(client, plugin_context, stage):
+def test_later_host_stages_can_remove_expanded_context_without_ack(
+    client, plugin_context, stage, relay_admission_clock,
+):
     _, create, _ = plugin_context
-    ctx, marker, message = _plugin_wake(client, create)
+    ctx, marker, message = _plugin_wake(
+        client, create,
+        preparation=relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=1),
+    )
     token = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
     original = {"messages": [{"role": "user", "content": marker + "\n" + token}]}
     expanded = _request_stage(ctx, original)
