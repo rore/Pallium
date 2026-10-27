@@ -45,7 +45,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -857,3 +857,4 @@ Implemented only the reviewed matching-wake test-oracle split and test-local con
 Explicit concurrent-refresh oracle correction: BEFORE any pair of matching callbacks was required to produce exactly one claim/context regardless of native refresh refusal. AFTER no verified refusal retains every original exact1claim/context/attempt1 and observeACK-delivered assertion; exact typed precommit refusal additionally permits only pending0 with bothNone/noACK and preserved local injection/claim-attempt fence. A claimed1 public row still requires exactly one real claim and returned context, followed by original ACK/delivered assertions even if the other callback refused. Controlled latest-refused/older200 requires exact zero claims/bothNone/pending0. This aligns the test with current-main bounded busy and newest-registration safety; no product latency promise or Task Context/protected contract changes. Unknown errors cannot trigger the refusal branch.
 
 Focused native/controlled cells passed2/0skip in2.87s, build/pr352-refresh-contract-focused.xml. Existing nonimplementer /root/pr352_composition_review inspected actual105-line local test controller and found no actionable source findings; proportionate realHTTP provenance, no swallowed invalid errors, ContextVar reset and scoped patch. No reviewer tests rerun. The ordinary native cell preserves success-or-exact-refusal contract; do not infer which path solely from a pass. The separate strict native admission/host-bound reply and all other plugin cases remain in the affected-file run, started once next. No new full local run or CI replay has followed; actual source correction will receive ordinary current-head CI after affected verification.
+Final refresh delta review: existing clean nonimplementer accepted exact316b64f3e8ae2ae62f65f3cc93d722d420f2191d with focused2P2.87s and affected plugin224P0F/E/skip167.41s, build/pr352-refresh-contract-subsystem.xml SHA2565b90a0ec3e253eeaadac61fe36bb21e53b683f5ea960521c5a5088e5b81f5f0c. The affected file includes separate strict positive native claim/context/ACK journeys. No tests rerun by reviewer. No failure-exception/clock/retry/deadline/product change; native availability cause remains unqualified. Current oldhead40426756118 is retained terminalRED (Linux312 one concurrentrefresh subject,313/Windows/govPASS). Publish this actual reviewed correction once and require fresh exact-head ordinary CI/result before merge; no current success inferred from prior full7b or old red/source correspondence. State Ready for review marks completed delta/local evidence; no aggregate merge readiness claim.
