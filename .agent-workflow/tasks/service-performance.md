@@ -1,14 +1,20 @@
 # Service-wide performance investigation and correction
 
-Current implementation slice: existing guarded Hermes seed fixture reuse before unchanged native concurrent-callback subject. Standing coordinator continuation permits this bounded repair; no permission, feature import or generic review loop.
+Current candidate combines reviewed ACK conformance and guarded Hermes seed preparation, with unchanged application guards and native race/custody oracles. Ordinary exact-head full CI remains required before merge.
+
+## Result review
+
+Agent technical review: @astra-reviewer component reviews01a17a8e-19b1-77d2-b7fe-63928303ebc1 (application/persistence),01a17abc-d38d-7b20-87bd-6e4ff0b6233c (pin),01a17ade-b382-7d43-826a-100bc572c897 (ACK),01a17af4-fab5-7ca0-8fd1-1f45f3a15d15 (seed), reused only through documented exact source correspondence.
+Reviewed revision: Application2d6b0cb6/ca6dd280, pin40dfbd4e, ACK9f15f303/test blob3af85ec6, seed65dd0cfd. Current composition76948ad9 differs after the last test source only in records; final metadata successor preserves those bytes.
+Verification adequacy: Independent reviews cover their named components; root checked the actual composition/imported blob and all supplied evidence hashes. Native79+health2 source correspondence, scoped613/87/161/220 receipts and exact corrected seed1 receipt are retained with their overlaps and limits. No separate new combined review or passing full composition is fabricated. Whole-PR ordinary checks and exact-head CI remain release gates, no duplicate local full or optional matrix. Historical7038 and every earlier failed report stay failed. This is correction of accepted test prerequisites/ACK confirmation, not native-latency or overall reliability completion. No new live authorization.
 
 ## Hermes seed caller correction results (2026-10-27)
 
 Source65dd0cfd8b1e2344722fd98d7d4d4e2fcd7590b1 changes only the existing concurrent-callback test's fixture parameter and initial _plugin_wake preparation argument. Current main's guarded semantic fixture audits exactly1 prerequisite writer and restores native methods/clocks before helper on_session_end/send and all actual callback/claim/ACK subjects. Source proof verifies all4 original assertions, all remaining function body statements and every other module AST node unchanged. No shared helper or unmerged352 product/controller change. The same original function now has normal pytest[semantic] fixture suffix; its native race obligation is preserved.
 
-Corrected caller passed1normally in2.404s XML/2.40s footer; affected module passed220normally,0failures/errors/skips,156.763s XML/156.80s footer. Reports, exact commands/private state, AST proof and canonical seed-caller.patch/handoff.json are under build/pr325-hermes-seed. Cohorts overlap. Root is the single generic seed-hunk author; a crossed peer handoff produced an uncommitted352 port before correction, now explicitly reconciled to this authoritative hunk, with no duplicate generic review. One narrow actual source/result review is pending; prior7038 failure and unknown physical setup latency remain preserved. This is fixture-prerequisite coverage, not a race/latency cure. No new full CI until consolidated review and ordinary gates pass.
+Corrected caller passed1normally in2.404s XML/2.40s footer; affected module passed220normally,0failures/errors/skips,156.763s XML/156.80s footer. Reports, exact commands/private state, AST proof and canonical seed-caller.patch/handoff.json are under build/pr325-hermes-seed. Cohorts overlap. Root is the single generic seed-hunk author; a crossed peer handoff produced an uncommitted352 port before correction, now explicitly reconciled to this authoritative hunk, with no duplicate generic review. Narrow actual SOURCE/RESULT GO is @astra-reviewer turn01a17af4-fab5-7ca0-8fd1-1f45f3a15d15 at exact65dd0cfd; prior7038 failure and unknown physical setup latency remain preserved. This is fixture-prerequisite coverage, not a race/latency cure. No new full CI until consolidated review and ordinary gates pass.
 
-Current phase: accepted reviewed ACK conformance composition; source release remains blocked on consolidated qualification and the separate Hermes seed issue. No new product latency claim.
+Current phase: both known test-boundary corrections are composed and reviewed; release awaits ordinary current-head qualification. No physical setup/ACK latency cure is claimed.
 
 ## Reviewed ACK contribution composed (2026-10-27)
 
@@ -3068,7 +3074,7 @@ Accepted manager-post364-backlog-ownership-20261027 under the existing overnight
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
