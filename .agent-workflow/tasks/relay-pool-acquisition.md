@@ -1,5 +1,9 @@
 # Relay connection-pool availability
 
+## Current affected verification (2026-10-27)
+
+The affected eight-file storage/pool/MCP/capacity cohort at66ef0176 passed478normally with0failures/errors/skips and1slow deselection,197.59s. The existing exact constructor-serialization slow case then passed separately,1normal pass in3.98s. The13HTTP cases are included in the affected cohort and are not additive. Exact native XML/logs/commands are under build/pr353-current-source; all use the previously verified supported read-only interpreter and fresh neutral private HOME/TEMP, with inherited integration/credential scope stripped. No old frozen recipe, optional matrix, global configuration or live installation changed. Actual-result review, whole-change selected validation and current-head CI remain required; earlier failed suites remain failed and cold-connection latency stays unexplained.
+
 Owner: @pal-dev1. Branch: feat/relay-pool-acquisition. Checkout: C:/Dev/rore/Pallium/build/relay-pool-acquisition-20261023. Base: verified current main 2768022ebf8b302d09a9955da38f3fc5d61504a4.
 
 
