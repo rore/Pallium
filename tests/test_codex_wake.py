@@ -5464,6 +5464,8 @@ def test_expired_atomic_reply_keeps_exact_codex_activation_reservation(
     assert isolated_codex_registry.reserved(endpoint_id)
 
 def _public_ack_route(client, runtime: str):
+    from tests.conftest import relay_admission_clock
+
     scope = {"container_ref": f"git:example.test/public-ack-{runtime}"}
     source_runtime = "claude-code" if runtime == "codex" else "codex"
     claude_registry = ClaudeWakeRegistry()
@@ -5482,13 +5484,16 @@ def _public_ack_route(client, runtime: str):
         relay_service=RelayService(client.app.state.pallium_service._storage),
     ))
     claim_route = TestClient(claim_app)
-    assert route.post("/relay/turn", json={
-        "runtime": source_runtime, "session_ref": "sender", **scope,
-    }).status_code == 200
-    target = route.post("/relay/turn", json={
-        "runtime": runtime, "session_ref": "target", **scope,
-    })
-    assert target.status_code == 200
+    with pytest.MonkeyPatch.context() as preparation:
+        admission = relay_admission_clock.__wrapped__(SimpleNamespace(param="semantic"), preparation)
+        with admission(client.app.state.pallium_service._storage, expected_admissions=2):
+            assert route.post("/relay/turn", json={
+                "runtime": source_runtime, "session_ref": "sender", **scope,
+            }).status_code == 200
+            target = route.post("/relay/turn", json={
+                "runtime": runtime, "session_ref": "target", **scope,
+            })
+            assert target.status_code == 200
     endpoint_id = target.json()["session"]["endpoint_id"]
     if runtime == "claude-code":
         assert claude_registry.register(
@@ -5498,6 +5503,66 @@ def _public_ack_route(client, runtime: str):
         )
     registry = codex_registry if runtime == "codex" else claude_registry
     return route, claim_route, scope, source_runtime, endpoint_id, registry
+
+
+@pytest.mark.parametrize("runtime", ("codex", "claude-code"))
+def test_public_ack_preparation_restores_native_subject_policy(client, monkeypatch, runtime):
+    from core.errors import ImmediateTransactionBusyError
+    from storage import sqlite_queue
+
+    storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
+    requests = []
+    original_request = TestClient.request
+
+    def request(self, method, url, **kwargs):
+        if method.upper() == "POST":
+            requests.append((str(url), sqlite_queue.time is native_time,
+                             storage._begin_relay_immediate == native_begin))
+        return original_request(self, method, url, **kwargs)
+
+    monkeypatch.setattr(TestClient, "request", request)
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", lambda *_a, **_k: None)
+    monkeypatch.setattr("app.dependencies.schedule_claude_relay_wake", lambda *_a, **_k: None)
+    route, claim_route, scope, source_runtime, endpoint_id, _ = _public_ack_route(client, runtime)
+    assert requests == [("/relay/turn", False, False)] * 2
+    assert sqlite_queue.time is native_time and storage._begin_relay_immediate == native_begin
+
+    sent = route.post("/relay/messages", json={
+        "sender_runtime": source_runtime, "sender_session_ref": "sender",
+        "recipient": endpoint_id, "payload": "native ACK policy", **scope,
+    })
+    assert sent.status_code == 200, sent.text
+    claimed = claim_route.post("/relay/turn", json={
+        "runtime": runtime, "session_ref": "target", **scope,
+    })
+    assert claimed.status_code == 200, claimed.text
+    delivery, = claimed.json()["deliveries"]
+    ack = route.post("/relay/deliveries/ack", json={
+        "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"], **scope,
+    })
+    assert ack.status_code == 200, ack.text
+    assert requests[2:] == [(path, True, True) for path in (
+        "/relay/messages", "/relay/turn", "/relay/deliveries/ack",
+    )]
+    _assert_public_ack_readback(
+        route, scope, sent.json()["message_id"], delivery["delivery_id"], endpoint_id, runtime,
+    )
+
+    refusals = []
+
+    def refused():
+        assert sqlite_queue.time is native_time
+        refusals.append(True)
+        raise ImmediateTransactionBusyError("controlled native refusal", acquisition_stage="local_gate")
+
+    monkeypatch.setattr(storage, "_begin_relay_immediate", refused)
+    blocked = route.post("/relay/turn", json={
+        "runtime": runtime, "session_ref": "target", **scope,
+    })
+    assert blocked.status_code == 503
+    assert blocked.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+    assert refusals == [True]
 
 
 def _assert_public_ack_readback(route, scope, message_id, delivery_id, endpoint_id, runtime):
