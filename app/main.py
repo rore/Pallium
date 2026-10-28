@@ -234,7 +234,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                     cleanup_stack.callback(provider.close)
             cleanup_stack.callback(service.close)
     relay_limiter = anyio.CapacityLimiter(4)
-    codex_admission_limiter = anyio.CapacityLimiter(3)
+    wake_admission_limiter = anyio.CapacityLimiter(3)
     diagnostic_limiter = anyio.CapacityLimiter(2)
     operations = threading.Condition()
     active_operations = 0
@@ -273,7 +273,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                         operations.notify_all()
 
         try:
-            # Registry waiters must leave a worker available for durable operations.
+            # Wake work must leave a worker available for durable operations.
             # Count work before either gate so cancellation and shutdown also see it.
             if admission_limiter is not None:
                 await admission_limiter.acquire_on_behalf_of(borrower)
@@ -294,8 +294,8 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     async def run_relay_operation(operation):
         return await run_operation(operation, relay_limiter)
 
-    async def run_codex_relay_operation(operation):
-        return await run_operation(operation, relay_limiter, codex_admission_limiter)
+    async def run_wake_relay_operation(operation):
+        return await run_operation(operation, relay_limiter, wake_admission_limiter)
 
     async def run_diagnostic_operation(operation):
         return await run_operation(operation, diagnostic_limiter)
@@ -804,7 +804,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             claude_wake_registry=claude_wake_registry,
             codex_wake_registry=codex_wake_registry,
             relay_runner=run_relay_operation,
-            relay_codex_runner=run_codex_relay_operation,
+            relay_wake_runner=run_wake_relay_operation,
             diagnostic_runner=run_diagnostic_operation,
         ))
         if mcp_available and mcp_app is not None:

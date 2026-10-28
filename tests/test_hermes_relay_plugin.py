@@ -160,7 +160,7 @@ def test_hermes_callbacks_do_not_use_codex_executor(client):
     app = FastAPI()
     app.include_router(create_router(
         service, relay_service=RelayService(service._storage),
-        relay_runner=general, relay_codex_runner=codex,
+        relay_runner=general, relay_wake_runner=codex,
         relay_ack_callback=lambda result, scope: callbacks.append(result),
     ))
     with TestClient(app) as isolated:

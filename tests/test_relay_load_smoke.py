@@ -242,7 +242,7 @@ finally:
                     span["await_finished"] = time.perf_counter()
             return measured
 
-        for key, lane in (("relay_runner", "ordinary"), ("relay_codex_runner", "codex")):
+        for key, lane in (("relay_runner", "ordinary"), ("relay_wake_runner", "codex")):
             kwargs[key] = measure_runner(kwargs[key], lane)
         return original_router(service, **kwargs)
 

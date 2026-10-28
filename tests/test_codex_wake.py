@@ -3595,7 +3595,7 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
         client.app.state.pallium_service,
         relay_service=relay,
         relay_turn_callback=delayed_callback,
-        relay_codex_runner=runner,
+        relay_wake_runner=runner,
     ))
     route = TestClient(app)
     delivery_id = "relay-delivery-" + "b" * 32
@@ -3770,7 +3770,7 @@ def test_relay_turn_logs_failure_before_worker_entry(client, caplog, failure):
         raise HTTPException(409, detail="Relay claim request expired")
 
     app = FastAPI()
-    app.include_router(create_router(client.app.state.pallium_service, relay_codex_runner=refused))
+    app.include_router(create_router(client.app.state.pallium_service, relay_wake_runner=refused))
     caplog.set_level(logging.INFO, logger="api.routes")
     body = {"runtime": "codex", "session_ref": "target", "wake_delivery_id": "relay-delivery-" + "f" * 32, **SCOPE}
     with TestClient(app) as route:
