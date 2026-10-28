@@ -747,7 +747,14 @@ class SQLiteRetentionMixin:
                 continue
             if memory_record.type in durable_types:
                 return True
-            freshness_at = self._resolve_memory_object_freshness_in_session(session, memory_record)
+            # Share derived values within this read session without dirtying memories.
+            freshness_at = self._normalize_datetime(memory_record.freshness_at)
+            if freshness_at is None:
+                cache = session.info.setdefault("source_retention_freshness", {})
+                freshness_at = cache.get(memory_record.id)
+                if freshness_at is None:
+                    freshness_at = self._derive_memory_object_freshness_in_session(session, memory_record)
+                    cache[memory_record.id] = freshness_at
             if memory_record.type in working_types and freshness_at is not None and freshness_at > now - WORKING_MEMORY_TTL:
                 return True
         return False
