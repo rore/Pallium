@@ -539,6 +539,7 @@ def test_codex_hook_records_unavailable_after_committed_http_claim(
     assert json.loads(capsys.readouterr().out)["decision"] == "block"
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize(
     ("response_delay", "fragmented", "expected_state", "should_emit", "delay_refresh"),
     [
@@ -550,7 +551,8 @@ def test_codex_hook_records_unavailable_after_committed_http_claim(
 )
 def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
     request, monkeypatch, tmp_path, capsys, response_delay, fragmented,
-    expected_state, should_emit, delay_refresh, ack_response_delay=0.0, forward_delay=0.0,
+    expected_state, should_emit, delay_refresh, *, relay_admission_clock,
+    ack_response_delay=0.0, forward_delay=0.0,
 ):
     """Exercise actual hook urllib and /relay/turn through delayed loopback HTTP."""
     from contextlib import ExitStack
@@ -566,6 +568,7 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
     from app.main import create_app
     from integrations.codex.hooks import user_prompt_submit as hook
     from scripts.live_funnel_smoke import ScratchServer
+    from storage import sqlite_queue
     from storage.vector_index import VectorIndexConfig
     from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
@@ -687,13 +690,17 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         trust_env=False, follow_redirects=False,
     )
     existing_refs = [{"scope_ref": scope["container_ref"], "local_ref": "git-branch:fix/existing"}]
-    assert upstream_client.post("/relay/turn", json={
-        "runtime": "codex", "session_ref": "target-session", **scope,
-        **({"structural_work_refs": existing_refs} if delay_refresh else {}),
-    }).status_code == 200
-    assert upstream_client.post("/relay/turn", json={
-        "runtime": "claude-code", "session_ref": "sender-session", **scope,
-    }).status_code == 200
+    storage = app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
+    with relay_admission_clock(storage, expected_admissions=2 + int(delay_refresh)):
+        assert upstream_client.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target-session", **scope,
+            **({"structural_work_refs": existing_refs} if delay_refresh else {}),
+        }).status_code == 200
+        assert upstream_client.post("/relay/turn", json={
+            "runtime": "claude-code", "session_ref": "sender-session", **scope,
+        }).status_code == 200
+    assert sqlite_queue.time is native_time and storage._begin_relay_immediate == native_begin
     sent = upstream_client.post("/relay/messages", json={
         "sender_runtime": "claude-code", "sender_session_ref": "sender-session",
         "recipient": "codex:target-session",
@@ -1053,11 +1060,13 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
     assert (delivered["state"], delivered["attempts"]) == ("delivered", 1), diagnostics
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_codex_exact_wake_late_ack_response_keeps_durable_delivery_without_confirmation(
-    request, monkeypatch, tmp_path, capsys,
+    request, monkeypatch, tmp_path, capsys, relay_admission_clock,
 ):
     test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         request, monkeypatch, tmp_path, capsys, 0.0, False, "delivered", True, False,
+        relay_admission_clock=relay_admission_clock,
         ack_response_delay=0.65,
     )
 
