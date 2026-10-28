@@ -106,6 +106,14 @@ async def test_actual_mcp_idle_recovers_same_epoch_enrollment_without_replay(
     "changed-bootstrap", "changed-continuity", "disposal-failure", "different-thread",
     "dispose-changed-pipe", "dispose-changed-bootstrap", "dispose-changed-continuity",
     "dispose-unresolved", "changed-source", "admission-register-failure",
+    "replacement-deadline", "replacement-transport-failed",
+    "replacement-terminal", "replacement-unresolved", "replacement-pipe",
+    "replacement-bootstrap", "replacement-continuity", "replacement-source",
+    "replacement-dispose-unresolved", "replacement-dispose-failure",
+    "replacement-dispose-pipe", "replacement-dispose-bootstrap",
+    "replacement-dispose-continuity", "replacement-stop",
+    "replacement-register-deadline", "replacement-register-transport-failed",
+    "replacement-exhaustion", "replacement-budget", "replacement-backoff-stop",
 ])
 async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
     retained, monkeypatch, idle_result,
@@ -124,6 +132,17 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
     recovery_completed, replacement_observed = threading.Event(), threading.Event()
     native_type, worker_type = bridge.NativeInventoryClient, lifecycle.InventoryWorker
     monkeypatch.setattr(bridge, "_read_private", lambda *args: json.dumps(manifest).encode())
+    replacement_failure = idle_result.startswith("replacement-")
+    replacement_fault = idle_result.removeprefix("replacement-")
+    replacement_recovers = replacement_fault in {"deadline", "transport-failed"}
+    expected_clients = 3 if replacement_recovers else 2
+    if replacement_failure:
+        monkeypatch.setattr(lifecycle, "RECONNECT_INITIAL_BACKOFF_SECONDS", .001)
+        if replacement_fault == "exhaustion":
+            monkeypatch.setattr(lifecycle, "RECONNECT_MAX_ATTEMPTS", 3)
+        elif replacement_fault == "budget":
+            monkeypatch.setattr(lifecycle, "RECONNECT_WINDOW_SECONDS", .02)
+            monkeypatch.setattr(lifecycle, "RECONNECT_INITIAL_BACKOFF_SECONDS", .04)
 
     class Worker(worker_type):
         def __init__(self, *args, **kwargs):
@@ -134,7 +153,8 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
             if result[1]:
                 recoveries.append(result)
                 recovery_completed.set()
-            elif len(clients) == 2 and result[0] is clients[1] and len(registrations) == 2:
+            elif (len(clients) == expected_clients and result[0] is clients[-1]
+                  and len(registrations) == 2):
                 replacement_observed.set()
             return result
 
@@ -150,6 +170,24 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
             value = self.request
             if value["verb"] == "ready" and registrations:
                 idle_observed.set()
+                if (replacement_failure and self.index > 0
+                        and not replacement_fault.startswith("register-")
+                        and (self.index == 1 or replacement_fault == "exhaustion")):
+                    if replacement_fault == "unresolved":
+                        self.unresolved = True
+                    elif replacement_fault == "pipe":
+                        monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
+                    elif replacement_fault == "bootstrap":
+                        manifest["epoch"] = "changed-epoch"
+                    elif replacement_fault == "continuity":
+                        clients[-1].continuity = "b" * 64
+                    elif replacement_fault == "source":
+                        clients[-1].source.gone = True
+                    elif replacement_fault == "stop":
+                        workers[0].stop_event.set()
+                    raise bridge.ShadowUnavailable(
+                        "invalid-response" if replacement_fault == "terminal"
+                        else "transport-failed" if replacement_fault == "transport-failed" else "deadline")
                 if idle_result == "admission-register-failure":
                     service._drop()
                 elif len(clients) == 1 and idle_result not in {"healthy", "busy"}:
@@ -173,6 +211,8 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
             if value["verb"] == "register":
                 registrations.append(dict(value))
                 registration_sources.append(self.index)
+                if self.index == 1 and replacement_fault.startswith("register-"):
+                    raise bridge.ShadowUnavailable(replacement_fault.removeprefix("register-"))
             elif registrations and idle_result == "busy":
                 result = {**result, "status": "unavailable", "reason": "busy"}
             return {**result, "version": 1, "epoch": service.epoch,
@@ -184,6 +224,19 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
             disposed.set()
             if idle_result == "disposal-failure":
                 raise RuntimeError("controlled conclusive-disposal failure")
+            if self.index == 1 and replacement_failure:
+                if replacement_fault == "dispose-failure":
+                    raise RuntimeError("controlled replacement-disposal failure")
+                if replacement_fault == "dispose-unresolved":
+                    self.unresolved = True
+                elif replacement_fault == "dispose-pipe":
+                    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
+                elif replacement_fault == "dispose-bootstrap":
+                    manifest["epoch"] = "changed-epoch"
+                elif replacement_fault == "dispose-continuity":
+                    clients[-1].continuity = "b" * 64
+                elif replacement_fault == "backoff-stop":
+                    workers[0].stop_event.set()
             if idle_result == "dispose-changed-pipe":
                 monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
             elif idle_result == "dispose-changed-bootstrap":
@@ -219,21 +272,21 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
         assert (registrations[0]["thread_ref"], registrations[0]["turn_ref"]) == ("actual-runtime", "first")
         assert await asyncio.to_thread(idle_observed.wait, 1)
         worker, = workers
-        if idle_result in {"resolved-transport-failure", "resolved-deadline", "different-thread"}:
+        if idle_result in {"resolved-transport-failure", "resolved-deadline", "different-thread"} or replacement_recovers:
             assert await asyncio.to_thread(recovery_completed.wait, 1)
+            assert recoveries == [(clients[-1], True)]
             assert await asyncio.to_thread(replacement_observed.wait, 1)
-            assert recoveries == [(clients[1], True)]
             assert not service.unresolved and not source.gone
-            assert len(clients) == len(registrations) == 2 and len(operations) == 1
-            assert registration_sources == [0, 1]
+            assert len(clients) == expected_clients and len(registrations) == 2 and len(operations) == 1
+            assert registration_sources == [0, expected_clients - 1]
             assert [(value["thread_ref"], value["turn_ref"]) for value in registrations] == [
                 ("actual-runtime", "first"), ("actual-runtime", "first")]
-            replacement = clients[1]
+            replacement = clients[-1]
             replacement_io, custody = replacement.io, service.custody
             assert worker._thread.is_alive() and worker._restart_allowed
-            assert replacement_io is source_resources[1][0] and not replacement_io.closed
-            assert clients[0].io is clients[0].source is clients[0].peer is None
-            assert all(resource.closed for resource in source_resources[0])
+            assert replacement_io is source_resources[-1][0] and not replacement_io.closed
+            assert all(value.io is value.source is value.peer is None for value in clients[:-1])
+            assert all(resource.closed for resources in source_resources[:-1] for resource in resources)
             assert registrations[0]["continuity"] is None
             assert registrations[1]["continuity"] == clients[0].continuity == replacement.continuity
             assert all(value["epoch"] == manifest["epoch"] for value in registrations)
@@ -253,8 +306,8 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                 assert service.retained_registration is None and service.custody is None
             else:
                 assert not (await _actual_status(session, "fresh")).isError
-                assert len(clients) == 2 and len(registrations) == 3 and len(operations) == 2
-                assert registration_sources == [0, 1, 1]
+                assert len(clients) == expected_clients and len(registrations) == 3 and len(operations) == 2
+                assert registration_sources == [0, expected_clients - 1, expected_clients - 1]
                 assert [(value["thread_ref"], value["turn_ref"]) for value in registrations] == [
                     ("actual-runtime", "first"), ("actual-runtime", "first"), ("actual-runtime", "fresh")]
                 assert registrations[2]["continuity"] == registrations[1]["continuity"] == replacement.continuity
@@ -264,6 +317,18 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                 assert service.custody is custody and len(natives) == desktop_count
                 assert service.caller == service.retained_registration["caller"] == ("actual-runtime", "fresh")
                 assert recoveries == [(replacement, True)]
+        elif replacement_failure:
+            await asyncio.to_thread(worker._thread.join, 1)
+            assert not worker._thread.is_alive() and worker.stop_event.is_set()
+            assert len(operations) == 1, "reconnect replayed the original MCP call"
+            assert len(clients) == (4 if replacement_fault == "exhaustion" else 2)
+            assert registration_sources == ([0, 1] if replacement_fault.startswith("register-") else [0])
+            assert service.retained_registration is None and service.custody is None
+            assert all(resource.closed for resource in source_resources[0])
+            if replacement_fault not in {"unresolved", "dispose-failure"}:
+                assert all(resource.closed for resources in source_resources[1:] for resource in resources)
+            assert all(value["thread_ref"] == "actual-runtime" and value["turn_ref"] == "first"
+                       for value in registrations)
         elif idle_result in {"healthy", "busy"}:
             assert worker._thread.is_alive() and worker._restart_allowed
             assert service.retained_registration is not None and service.custody is not None
@@ -297,8 +362,8 @@ def test_missing_saved_registration_is_not_reported_as_peer_mismatch(retained):
 
 
 @pytest.fixture
-def retained(monkeypatch, tmp_path):
-    yield from retained_fixture.__wrapped__(monkeypatch, tmp_path)
+def retained(monkeypatch, tmp_path, request):
+    yield from retained_fixture.__wrapped__(monkeypatch, tmp_path, request)
 
 
 def _defer_on_state_timeout(http_wake, retained, bridge, *, unresolved=False, native_failure=False):

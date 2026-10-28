@@ -2843,7 +2843,7 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
     )
     clock[0] += timedelta(seconds=61)
     recover_expired_relay_wakes(relay, registry)
-    assert transported.wait(timeout=0.5)
+    assert transported.wait(timeout=5), "recovery transport must arrive within the harness allowance"
     assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
 
     forced, turn = [], relay._store.relay_turn

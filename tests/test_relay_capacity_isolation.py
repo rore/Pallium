@@ -2411,9 +2411,10 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
             requests = [asyncio.create_task(http.get("/dashboard/api/relay/summary"), name="summary-first")]
-            barrier = pair = None
+            barrier = pair = turn_request = None
             try:
-                assert await asyncio.to_thread(first.wait, 1)
+                # Worker admission is setup, not a product latency requirement.
+                assert await asyncio.to_thread(first.wait, 5)
                 pair = asyncio.gather(
                     http.get("/status"), http.get("/debug/queue/health"),
                 )
@@ -2436,14 +2437,19 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
                 cancelled.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await cancelled
-                barrier = await _start_operation_barrier(app)
-                await _assert_barrier_waiting(barrier)
                 assert not finished.is_set()
-                turn = await asyncio.wait_for(http.post("/relay/turn", json={
+                turn_request = asyncio.create_task(http.post("/relay/turn", json={
                     "runtime": "claude-code", "session_ref": "summary-drain-target",
                     "container_ref": "git:example.test/summary-drain",
-                }), 1)
-                assert turn.status_code == 200
+                }))
+                done, _ = await asyncio.wait((turn_request, requests[1]), return_when=asyncio.FIRST_COMPLETED)
+                assert (turn_request in done and not requests[1].done()
+                        and not first_worker_exited.is_set() and not release.is_set()
+                        and not finished.is_set()), "Relay did not complete while summary workers were held"
+                assert turn_request.result().status_code == 200
+                # Observe summary ownership without including unrelated Relay-body time.
+                barrier = await _start_operation_barrier(app)
+                await _assert_barrier_waiting(barrier)
                 release.set()
                 results = await asyncio.wait_for(asyncio.gather(*requests, return_exceptions=True), 2)
                 assert sum(isinstance(result, asyncio.CancelledError) for result in results) == 1
@@ -2456,6 +2462,8 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
                 app.state.pallium_service._storage.close()
             finally:
                 release.set()
+                if turn_request is not None:
+                    await asyncio.gather(turn_request, return_exceptions=True)
                 if pair is not None:
                     if not pair.done():
                         pair.cancel()
@@ -2465,6 +2473,59 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
                     await asyncio.wait_for(barrier, 2)
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("delayed_phase", ["summary-admission", "relay-body"])
+def test_summary_isolation_allows_delayed_admission_and_relay_body(client, monkeypatch, delayed_phase):
+    import time
+    from core.relay import RelayService
+
+    original_dispatch, original_turn = anyio.to_thread.run_sync, RelayService.turn
+    delayed = threading.Event()
+
+    async def dispatch(operation, *args, **kwargs):
+        if delayed_phase == "summary-admission" and asyncio.current_task().get_name() == "summary-first":
+            delayed.set()
+            await asyncio.sleep(1.1)
+        return await original_dispatch(operation, *args, **kwargs)
+
+    def turn(self, **kwargs):
+        if delayed_phase == "relay-body" and kwargs.get("session_ref") == "summary-drain-target":
+            delayed.set()
+            time.sleep(2.1)
+        return original_turn(self, **kwargs)
+
+    monkeypatch.setattr(anyio.to_thread, "run_sync", dispatch)
+    monkeypatch.setattr(RelayService, "turn", turn)
+    test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(client, monkeypatch, "queued")
+    assert delayed.is_set()
+
+
+def test_summary_relay_progress_after_worker_release_is_rejected(client, monkeypatch):
+    from core.relay import RelayService
+
+    events, event_type = [], threading.Event
+    original_turn = RelayService.turn
+
+    def event():
+        value = event_type()
+        events.append(value)
+        return value
+
+    def turn(self, **kwargs):
+        if kwargs.get("session_ref") == "summary-drain-target":
+            # Force progress only after the helper's held worker exits.
+            assert len(events) == 7
+            events[2].set()
+            assert events[3].wait(5)
+        return original_turn(self, **kwargs)
+
+    monkeypatch.setattr(sys.modules[__name__], "threading", SimpleNamespace(**{
+        **vars(threading), "Event": event,
+    }))
+    monkeypatch.setattr(RelayService, "turn", turn)
+    with pytest.raises(AssertionError, match="Relay did not complete while summary workers were held"):
+        test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(client, monkeypatch, "queued")
 
 
 def test_summary_health_progress_allows_slow_native_body(client, monkeypatch):

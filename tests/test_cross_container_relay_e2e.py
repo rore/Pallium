@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+import threading
+import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -202,7 +206,10 @@ def test_actor_global_alias_takeover_can_cross_runtimes_without_rebinding_pendin
     ).json()["deliveries"][0]["recipient_endpoint_id"] == old["endpoint_id"]
 
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
-def test_concurrent_first_claim_of_global_alias_has_one_owner_and_one_route(client, relay_admission_clock):
+@pytest.mark.parametrize("held_writer", [False, True], ids=["ordinary", "held-writer"])
+def test_concurrent_first_claim_of_global_alias_has_one_owner_and_one_route(
+    client, relay_admission_clock, monkeypatch, held_writer,
+):
     with relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=3):
         _turn(client, "codex", "sender", SOURCE)
         codex = _turn(client, "codex", "codex-contender", TARGET)["session"]
@@ -215,9 +222,43 @@ def test_concurrent_first_claim_of_global_alias_has_one_owner_and_one_route(clie
     def claim(body: dict):
         return client.post("/relay/sessions/name", json={**body, "alias": "race"})
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        responses = list(pool.map(claim, contenders))
+    storage = client.app.state.pallium_service._storage
+    native_budget = storage._RELAY_IMMEDIATE_ACQUISITION_SECONDS
+    gate, begin = storage._relay_writer_lock, storage._begin_relay_immediate
+    holder_entered, contender_waiting = threading.Event(), threading.Event()
+    timeouts = []
+
+    def acquire(*, timeout):
+        timeouts.append(timeout)
+        if gate.locked():
+            contender_waiting.set()
+        return gate.acquire(timeout=timeout)
+
+    @contextmanager
+    def delayed_begin():
+        with begin() as session:
+            if not holder_entered.is_set():
+                holder_entered.set()
+                assert contender_waiting.wait(5), "second naming request did not enter admission"
+                time.sleep(.6)  # Exceed native450ms without modeling the historical holder.
+            yield session
+
+    with monkeypatch.context() as naming:
+        # Model admitted ownership; native450ms refusal remains a separate contract.
+        naming.setattr(storage, "_RELAY_IMMEDIATE_ACQUISITION_SECONDS", 10)
+        if held_writer:
+            naming.setattr(storage, "_relay_writer_lock", SimpleNamespace(
+                acquire=acquire, release=gate.release, locked=gate.locked))
+            naming.setattr(storage, "_begin_relay_immediate", delayed_begin)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(claim, contenders))
+    assert storage._RELAY_IMMEDIATE_ACQUISITION_SECONDS == native_budget == .45
+    assert type(storage)._RELAY_IMMEDIATE_ACQUISITION_SECONDS == native_budget
+    assert storage._relay_writer_lock is gate and storage._begin_relay_immediate == begin
     assert sorted(response.status_code for response in responses) == [200, 409]
+    if held_writer:
+        assert holder_entered.is_set() and contender_waiting.is_set()
+        assert len(timeouts) == 2 and all(native_budget < timeout <= 10 for timeout in timeouts)
     routed = _send(client, "sender", "@race")
     assert routed.status_code == 200, routed.text
     owner = routed.json()["deliveries"][0]["recipient_endpoint_id"]

@@ -132,8 +132,10 @@ merge or passing private test does not authorize an installed database migration
 An enrolled Codex Desktop MCP child may reconnect automatically after the service
 restarts while that same child and Desktop identity remain alive. Recovery repeats
 the native identity/catalog checks and keeps every durable delivery fence; it does
-not replay tool calls or messages. Startup-only retries stop after 12 attempts or
-five minutes. Changed capability/identity, unsafe bootstrap, unresolved I/O and
+not replay tool calls or messages. Startup and resolved transient failures of the
+read-only readiness exchange share 12 attempts or five minutes; a failed
+registration exchange is not replayed. Changed capability/identity, unsafe
+bootstrap, unresolved I/O and
 explicit shutdown stop automatic reconnection. A new child still needs an actual
 authenticated request to enroll. Existing MCP children do not reload Python code
 on service restart: qualify an updated worker using a normally reloaded dedicated
