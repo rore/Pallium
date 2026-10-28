@@ -488,11 +488,30 @@ class InventoryWorker:
                 return None
             else:
                 client.continuity = continuity
+                source_io = getattr(client, "io", None)
+                retry_ready = False
                 try:
                     if time.monotonic() - started >= RECONNECT_WINDOW_SECONDS:
                         self._finish(client)
                         return None
-                    result = inventory_status(client.ready())
+                    manifest = getattr(client, "manifest", None)
+                    ready_manifest = dict(manifest) if type(manifest) is dict else None
+                    try:
+                        ready = client.ready()
+                    except ShadowUnavailable as exc:
+                        # READY is read-only; REGISTER failures below must never replay.
+                        retry_ready = (exc.category in {"deadline", "transport-failed"}
+                            and not self.stop_event.is_set() and self._restart_allowed
+                            and not getattr(client, "unresolved", False)
+                            and not getattr(source_io, "unresolved", False)
+                            and os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") == original_pipe
+                            and client.continuity == continuity
+                            and ready_manifest is not None
+                            and client.manifest == ready_manifest
+                            and client.bootstrap_unchanged() is True
+                            and client.service_current() is True)
+                        raise
+                    result = inventory_status(ready)
                     if result["status"] == "ready":
                         if (self.stop_event.is_set()
                                 or time.monotonic() - started >= RECONNECT_WINDOW_SECONDS
@@ -517,7 +536,20 @@ class InventoryWorker:
                         return None
                 except Exception:
                     self._finish(client)
-                    return None
+                    if not retry_ready:
+                        return None
+                    try:
+                        safe = (self._restart_allowed and not self.stop_event.is_set()
+                            and not getattr(source_io, "unresolved", False)
+                            and os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") == original_pipe
+                            and client.continuity == continuity
+                            and client.manifest == ready_manifest
+                            and client.bootstrap_unchanged() is True)
+                    except Exception:
+                        safe = False
+                    if not safe:
+                        self._restart_allowed = False
+                        return None
             if attempt + 1 == RECONNECT_MAX_ATTEMPTS:
                 break
             remaining = RECONNECT_WINDOW_SECONDS - (time.monotonic() - started)
