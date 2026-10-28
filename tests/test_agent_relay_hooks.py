@@ -915,7 +915,11 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
                        for event in wake_events), diagnostics
             assert not any(event["stage"] == "delivery_acked" for event in wake_events), diagnostics
         else:
-            assert any(event["stage"] == "delivery_acked" for event in wake_events), diagnostics
+            try:
+                assert any(event["stage"] == "delivery_acked" for event in wake_events), diagnostics
+            except AssertionError as error:
+                error.add_note("Pallium bounded HTTP diagnostics: " + json.dumps(diagnostics))
+                raise
     else:
         assert 1800 <= request_event["elapsed_ms"] < 2400
         assert not any(event["stage"] == "payload_emitted" for event in wake_events)
