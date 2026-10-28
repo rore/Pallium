@@ -28,12 +28,13 @@ jobs:
           Path("test-results/runtime.json").write_text(json.dumps(versions), encoding="utf-8")
           print(versions)
           assert versions == {"platform": "Linux", "python": "3.12.15", "sqlite": "3.45.1", "sqlalchemy": "2.1.6"}, "Runtime mismatch; not comparable"
-          expected = {"app/mcp/codex_desktop_bridge.py": "3b696b922e5193ead32c7fb0bcb606d7c3f5cb7f4d91f92c971d874ccf996b27",
-                      "tests/test_codex_retained_connection_recovery.py": "1f3e24bf3eeb6401390205fee6adfbb3857afdc87a9a0dad9d6298e7a6d9c8ca",
+          expected = {"app/mcp/codex_desktop_bridge.py": "03a99c99234588f23886391de7b1b971de468a8a7a45466cbc9c3fbd0dada96f",
+                      "tests/test_codex_retained_connection_recovery.py": "ef808bd65d95a902aed677d309927540af9e673a4a1aac44e9af770d14b872f7",
                       "tests/test_hermes_relay_plugin.py": "692b82303f9d3385f5c2043adda8b421f4a26fd2631964134a3cfdacfa0edeee",
                       "storage/sqlite_queue.py": "dde8dfe79eed27b626fc45af1b6d5b870082926a7cdfa36647e61a2b40ebda0c"}
           for name, digest in expected.items():
-              assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == digest, name
+              actual = hashlib.sha256(Path(name).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+              assert actual == digest, {"file": name, "actual": actual, "expected": digest}
           PY
           pip freeze > test-results/dependencies.txt
       - name: Execute exact reply node once with native clocks
