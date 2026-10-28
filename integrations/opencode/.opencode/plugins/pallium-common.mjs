@@ -463,7 +463,7 @@ export async function palliumRequest(method, reqPath, payload, signal) {
   }
 }
 
-export async function relayRequest(method, reqPath, payload, timeoutMs, signal) {
+export async function relayRequest(method, reqPath, payload, timeoutMs, signal, onHttpError) {
   if (signal?.aborted) return null;
   const controller = new AbortController();
   const cancel = () => controller.abort();
@@ -481,6 +481,12 @@ export async function relayRequest(method, reqPath, payload, timeoutMs, signal) 
       }),
     });
     if (!resp.ok) {
+      try {
+        if (onHttpError) {
+          const error = JSON.parse(await resp.text());
+          if (!controller.signal.aborted) onHttpError(resp.status, error);
+        }
+      } catch { /* An unreadable error remains an unknown failure. */ }
       try { await resp.body?.cancel(); } catch { /* ignore */ }
       return null;
     }

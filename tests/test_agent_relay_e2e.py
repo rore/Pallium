@@ -2254,3 +2254,72 @@ def test_claim_expiry_optional_and_integer_boundaries(client, expiry, status):
     if status == 200:
         assert response.json()["session"]["session_ref"] == "expiry-boundary"
         assert response.json()["deliveries"] == []
+
+
+@pytest.mark.parametrize("foreign", [False, True], ids=["missing", "foreign-scope"])
+def test_nonregistering_turn_without_current_scope_is_empty_and_nonmutating(client, foreign):
+    old, current = "git:example.test/team/absent-old", "git:example.test/team/absent-current"
+    identity = {"runtime": "codex", "session_ref": "absent-שלום"}
+    message = None
+    if foreign:
+        target = client.post("/relay/turn", json={**identity, "container_ref": old})
+        assert target.status_code == 200, target.text
+        assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": "sender",
+                                              "container_ref": old}).status_code == 200
+        message = client.post("/relay/messages", json={"sender_runtime": "claude-code",
+            "sender_session_ref": "sender", "recipient": target.json()["session"]["endpoint_id"],
+            "payload": "private old snapshot 🌍", "container_ref": old})
+        assert message.status_code == 200, message.text
+    scopes = {scope: client.get("/relay/sessions", params={"container_ref": scope, "include_inactive": True}).json()
+              for scope in (old, current)}
+    body = {**identity, "container_ref": current, "register_session": False}
+    response = client.post("/relay/turn", json=body)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["session"] is None and result["deliveries"] == []
+    assert result["has_more"] is False and result["remaining_count"] == 0
+    for scope, rows in scopes.items():
+        assert client.get("/relay/sessions", params={"container_ref": scope, "include_inactive": True}).json() == rows
+    assert client.get("/relay/pending-candidate", params={**identity, "container_ref": current}).json() is None
+    registered = client.post("/relay/turn", json={**identity, "container_ref": current})
+    assert registered.status_code == 200, registered.text
+    assert registered.json()["session"]["container_ref"] == current
+    known = client.post("/relay/turn", json=body)
+    assert known.status_code == 200 and known.json()["session"]["endpoint_id"] == registered.json()["session"]["endpoint_id"]
+    assert client.post("/relay/sessions/close", json={**identity, "container_ref": current}).status_code == 200
+    closed = client.post("/relay/turn", json=body)
+    assert closed.status_code == 200 and closed.json()["session"]["state"] == "closed"
+    assert closed.json()["deliveries"] == [] and closed.json()["remaining_count"] == 0
+    if message is not None:
+        delivery, = client.get("/relay/messages/" + message.json()["message_id"],
+                               params={"container_ref": old}).json()["deliveries"]
+        assert delivery["state"] == "pending" and delivery["attempts"] == 0
+
+
+@pytest.mark.parametrize("field", ["deliveries", "has_more", "remaining_count"])
+def test_missing_session_response_requires_empty_delivery_metadata(client, field):
+    from pydantic import ValidationError
+    from api.schemas import RelayTurnResponse
+
+    result = _turn(client, "codex", "response-target")
+    if field == "deliveries":
+        _turn(client, "claude-code", "response-sender")
+        assert _send(client, "claude-code", "response-sender", result["session"]["endpoint_id"]).status_code == 200
+        result = _turn(client, "codex", "response-target")
+        assert len(result["deliveries"]) == 1
+    else:
+        result[field] = True if field == "has_more" else 1
+    result["session"] = None
+    with pytest.raises(ValidationError, match="missing Relay session requires an empty result"):
+        RelayTurnResponse.model_validate(result)
+
+
+def test_turn_session_field_stays_required_and_opencode_stays_nonnull():
+    from pydantic import ValidationError
+    from api.schemas import RelayOpenCodeWakeResponse, RelayTurnResponse
+
+    empty = {"deliveries": [], "has_more": False, "remaining_count": 0}
+    with pytest.raises(ValidationError, match="Field required"):
+        RelayTurnResponse.model_validate(empty)
+    with pytest.raises(ValidationError, match="session"):
+        RelayOpenCodeWakeResponse.model_validate({**empty, "session": None, "wake": None, "restored": False})

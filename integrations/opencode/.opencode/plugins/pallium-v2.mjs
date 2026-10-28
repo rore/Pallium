@@ -52,8 +52,8 @@ export default {
       session_ref: id, container_ref: scope(id), endpoint_id: item.endpointId,
       scope_generation: item.scopeGeneration, native_location: cwd, owner_id: ownerId,
     });
-    const wakeRequest = (id, item, operation, extra = {}) => !live(id, item) || item.endpointId == null ? null :
-      pallium.relayRequest("POST", "/relay/opencode/wake", { operation, ...base(id, item), ...extra }, pallium.HTTP_TIMEOUT_MS, item.abort.signal);
+    const wakeRequest = (id, item, operation, extra = {}, onHttpError) => !live(id, item) || item.endpointId == null ? null :
+      pallium.relayRequest("POST", "/relay/opencode/wake", { operation, ...base(id, item), ...extra }, pallium.HTTP_TIMEOUT_MS, item.abort.signal, onHttpError);
     const remember = (id, item, session) => {
       if (!live(id, item) || session?.runtime !== "opencode" || session.session_ref !== id || session.container_ref !== scope(id) ||
           session.state !== "recent" || session.destination_health !== "active" ||
@@ -147,11 +147,13 @@ export default {
       item.busy = true;
       try {
         if (!await owned(id, item, signal)) { if (live(id, item, signal)) await detach(id, item); return; }
-        let response = await wakeRequest(id, item, "poll");
+        let registrationMissing = false;
+        let response = await wakeRequest(id, item, "poll", {}, (status, error) => {
+          registrationMissing = status === 409 && error?.detail === "OpenCode registration is missing or stale";
+        });
         if (!live(id, item, signal)) return;
-        // A restart or outage can outlive the owner lease. Enrollment still
-        // refuses a competing live owner and requires this exact native location.
-        if (!response) response = await enroll(id, item);
+        // Only an explicit registration conflict warrants another enrollment write.
+        if (!response && registrationMissing) response = await enroll(id, item);
         if (!await owned(id, item, signal) || !response?.session || !remember(id, item, response.session)) return;
         item.wake = response.wake;
         if (response.wake && !response.wake.terminal && sameLocation(response.wake.native_location, cwd))
