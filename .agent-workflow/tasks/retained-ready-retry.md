@@ -1,5 +1,11 @@
 # Retained reconnect readiness retry
 
+## Alias correction normal publication receipt
+
+Normal nonforce push updated EXISTING draftPR373 from6491f146 to21c37f8e42a1bf44210f0918ad25e5c8c6d46d77 under exact manager scope decision and parent's finish/publication authority. Fresh remote identity/current main23d51852/ordinary ancestry verified; only reviewed alias-test file plus existing record differs from previous published head, no registration-control mixing, no unresolved review thread. Final whole-PR workflow has only configured shadow API-review/original commit-order advisories, no blocking predicate. Body explicitly explains bounded10second instance/two-POST semantic allowance, restoration/native450ms controls, decisive RED/GREEN/7affected and historical physical-cause/installed limits. Previous full/helper evidence reused only for unchanged targets; no extra local full.
+
+Actual publication/head snapshots build/pr373-alias-published-head.json and published-runs.json. Immediately-after-push run listing was empty, so no qualification result inferred. Follow ONE automatic changed-head hosted execution, no manual dispatch/rerun. Keep record-only publication receipt local to avoid extra CI; no formalGitHubAPPROVE, merge or installed operation. Manager retains actual-head final review/gates/merge and installed-incident ownership. Private registrationf7bb4391 and all historic failures/evidence remain preserved; no routine approval loop or another reviewer requested.
+
 ## Alias admitted-ownership correction: decisive controlled result
 
 Implemented exact manager instance/two-request scope, with no production/global budget or shared-fixture edit. Existing cross-container ownership test now has ordinary and controlled-held-writer parameters. The controlled case delegates to the ORIGINAL real threading gate and transaction context; it records the second actual admission while the first real writer holds its transaction600ms, without serializing callers or forcing a lock result. Native450ms version reproduces exact200+503 failure1FAILED/1DESELECTED1.82s, busy local_gate457ms/othername607ms (alias-admission-red.log/XML). This proves the controlled precondition, not historical holder identity.
