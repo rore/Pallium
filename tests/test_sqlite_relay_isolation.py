@@ -1150,6 +1150,7 @@ def test_completed_main_reopen_does_not_rebuild_work_refs(tmp_path: Path) -> Non
     assert _closed_pragma(path, "user_version") == 1
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize(
     ("state", "version"),
     [
@@ -1164,17 +1165,22 @@ def test_completed_main_reopen_does_not_rebuild_work_refs(tmp_path: Path) -> Non
     ],
 )
 def test_main_work_ref_admission_refuses_unknown_or_incompatible_state_without_writes(
-    tmp_path: Path, state: str, version: int
+    tmp_path: Path, state: str, version: int, relay_admission_clock,
 ) -> None:
+    from storage import sqlite_queue
+
     main = tmp_path / f"main-{state}.db"
     relay = tmp_path / f"relay-{state}.db"
     provider = SQLiteStorageProvider(
         f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
     )
-    provider.relay_turn(
-        runtime="codex", session_ref="preserved", container_ref="c",
-        title=None, max_chars=100, max_messages=1, lease_seconds=60,
-    )
+    native_time, native_begin = sqlite_queue.time, provider._begin_relay_immediate
+    with relay_admission_clock(provider, expected_admissions=1):
+        provider.relay_turn(
+            runtime="codex", session_ref="preserved", container_ref="c",
+            title=None, max_chars=100, max_messages=1, lease_seconds=60,
+        )
+    assert sqlite_queue.time is native_time and provider._begin_relay_immediate == native_begin
     provider.close()
 
     with closing(sqlite3.connect(main)) as connection, connection:
@@ -1232,6 +1238,7 @@ def test_main_work_ref_admission_refuses_unknown_or_incompatible_state_without_w
     event.listen(Engine, "before_cursor_execute", observe_persistent_write)
     try:
         with pytest.raises(RuntimeError, match="Unsupported main|Incompatible"):
+            assert sqlite_queue.time is native_time
             SQLiteStorageProvider(
                 f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
             )
