@@ -1,5 +1,11 @@
 # Retained reconnect readiness retry
 
+## PR367 current-main composition completed and qualified locally
+
+Normal merge6238fa4e has actual main14be0008 as parent and exact reviewed367head8494718c ancestry; only shared-record conflict resolved. Main's entire feature/test state preserved, previousprivate/registration branches untouched. Source/docs blobs exactly reviewed849; testblobbe937769 matches inspected virtualtree203f300f, differing from original only in two main fixture-request forwarding lines. Original60PASS16.96s/source/result reviews reused where unchanged. Newlyinvalidated fixture-dependent file ran ONCE serial/elevated/privatePython3.13.14 with fresh absent p367a1 and process-scoped private PALLIUM_HOME:60PASSED13.96s/0skip/failure. Receipt build/pr367-final-result.json binds candidate/runtime/source/log/XML identities. All executions settled, no code redesign or budget/fence/REGISTER change.
+
+Actual whole-change selector FULL contains only original fourPR paths. Existing resolution authority excludes another blind localfull; true current-head hostedfull/platform checks remain mandatory. Existing inline review threads zero/unresolvedzero, no outside-diff review body finding in current API snapshot. Reuse unchanged technical review rather than new reviewer chain, preserve actual original reply503 and negative/uncertainty/identity controls. Prepare normal nonforce update to existing367 only after final checker/remote verification; no diagnostic dispatch/rerun, formalGitHubAPPROVE, installed edit/restart or manager-ownedmerge. Broad installed acceptance/metadata sync remains open;373verifiedmerge14be is separately recorded, not a live rollout.
+
 ## Preserved historical PR367 review and focused evidence
 
 ## PR367 conflict resolution against current main (2026-10-28)
