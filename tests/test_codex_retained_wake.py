@@ -1222,14 +1222,31 @@ def test_archive_response_at_deadline_is_not_used_as_positive_evidence(http_wake
     assert not desktop.owners and service._archive_snapshot is None
 
 
-@pytest.mark.parametrize("retained", ["archive"], indirect=True)
+@pytest.mark.parametrize("retained", [
+    {"type": "object", "properties": {
+        "source": {"type": "string"}, "limit": {"type": "integer"},
+        **({"cursor": cursor} if cursor is not None else {}),
+    }, "additionalProperties": False}
+    for cursor in (
+        {"type": "string", "maxLength": 3},
+        {"type": "string", "enum": ["valid"]},
+        None,
+        {"type": "integer"},
+    )
+], ids=["length", "enum", "missing", "type"], indirect=True)
 def test_archive_cursor_must_be_accepted_by_discovered_schema(http_wake):
-    _, _, _, service, desktop, send, _ = http_wake
-    service.archive_schema["properties"]["cursor"] = {"type": "string", "maxLength": 3}
-    desktop.archive_pages = {None: {"threads": [], "nextCursor": "too-long"}}
+    http, _, _, service, desktop, send, _ = http_wake
+    assert service.archive_schema is not None
+    desktop.archive_pages = {
+        None: {"threads": [], "nextCursor": "too-long"},
+        "too-long": {"threads": [{"id": TARGET, "kind": "codex", "hostId": "local"}],
+                     "nextCursor": None},
+    }
     send()
-    assert len(desktop.owners) == 1 and service._archive_snapshot is None
+    assert not desktop.owners and service._archive_snapshot is None
     assert len([v for v in desktop.writes if v.get("params", {}).get("tool") == "list_archived_threads"]) == 1
+    delivery = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
+    assert (delivery["state"], delivery["attempts"]) == ("pending", 0)
 
 
 @pytest.mark.parametrize("retained", ["archive"], indirect=True)

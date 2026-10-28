@@ -2819,7 +2819,7 @@ class RetainedService(InventoryService):
             if cursor is not None:
                 arguments["cursor"] = cursor
             if not _archive_arguments_valid(self.archive_schema, arguments):
-                return False
+                raise ShadowUnavailable("invalid-response")
             if time.monotonic() >= deadline:
                 raise ShadowUnavailable("deadline")
             result = self._call("list_archived_threads", arguments, deadline)
