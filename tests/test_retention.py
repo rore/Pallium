@@ -87,6 +87,141 @@ def test_retention_source_chunk_allows_competing_http_ingestion(client):
         event.remove(storage._engine, "before_cursor_execute", scan_cost)
 
 
+@pytest.mark.parametrize("legacy_freshness,boundary", [
+    (False, "preparation"), (False, "mutation"), (True, "preparation"),
+])
+def test_protected_source_scan_admits_ingestion_before_mutation(
+    client, monkeypatch, legacy_freshness, boundary,
+):
+    from concurrent.futures import ThreadPoolExecutor
+    import sqlite3
+    import threading
+    from core.errors import ImmediateTransactionBusyError
+    from storage.sqlite_schema import MemoryObjectRecord, RelationRecord
+
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(UTC)
+    protected = []
+    for number in range(663):
+        source = _make_source(storage, source_id=f"protected-{number}",
+                              occurred_at=now - timedelta(days=90) + timedelta(microseconds=number))
+        protected.append(source)
+    memories = [_make_memory(storage, memory_type="task_checkpoint",
+                             created_at=now - timedelta(days=1), source_items=[]) for _ in range(200)]
+    protector = _make_memory(storage, memory_type="task_checkpoint", created_at=now, source_items=[])
+    memories.insert(0, protector)
+    # Seed the shared graph once; freshness is already newer than every support item.
+    storage._with_retry(lambda session: session.add_all([
+        RelationRecord(id=f"support-{number}", from_kind="memory_object", from_id=protector.id,
+                       relation_type="supported_by", to_kind="source_item", to_id=source.id)
+        for number, source in enumerate(protected)
+    ]))
+    doomed = []
+    for number in range(16):
+        source = _make_source(storage, source_id=f"obsolete-{number}",
+                              occurred_at=now - timedelta(days=89) + timedelta(microseconds=number))
+        doomed.append(source)
+        storage.create_index_entry(IndexEntry(target_kind="source_item", target_id=source.id,
+            index_type="lexical", text_view="obsolete second view", text_view_name="second"))
+    if legacy_freshness:
+        # The newest memory remains beyond the earlier bounded working-memory sweep.
+        with storage._engine.begin() as conn:
+            conn.execute(text("UPDATE memory_objects SET freshness_at=NULL WHERE id=:id"),
+                         {"id": memories[0].id})
+    lease = storage.claim_retention_lease(worker_id="boundary-cleaner", lease_seconds=300, now=now)
+    assert lease is not None
+    entered, release = threading.Event(), threading.Event()
+    phases, checked = [], []
+    original_check = storage._source_item_is_protected
+    original_owned = storage._retention_lease_owned_in_session
+    original_derive = storage._derive_memory_object_freshness_in_session
+    derivations = []
+
+    def derive(session, record):
+        if record.id == protector.id:
+            derivations.append(session)
+        return original_derive(session, record)
+
+    def park(session):
+        phases.append(session.connection().connection.driver_connection.in_transaction)
+        entered.set()
+        assert release.wait(10), "test did not release controlled retention boundary"
+
+    def check(session, source_id, **kwargs):
+        if legacy_freshness and source_id == protected[0].id:
+            assert session.get(MemoryObjectRecord, memories[0].id).freshness_at is None
+        result = original_check(session, source_id, **kwargs)
+        if result:
+            checked.append(source_id)
+            if boundary == "preparation" and len(checked) == 2:
+                park(session)
+        return result
+
+    def owned(session, **kwargs):
+        result = original_owned(session, **kwargs)
+        # Lease-renewal reads are not the source cursor's guarded writer phase.
+        if (boundary == "mutation" and not entered.is_set()
+                and session.connection().connection.driver_connection.in_transaction):
+            assert result
+            park(session)
+        return result
+
+    monkeypatch.setattr(storage, "_source_item_is_protected", check)
+    monkeypatch.setattr(storage, "_retention_lease_owned_in_session", owned)
+    monkeypatch.setattr(storage, "_derive_memory_object_freshness_in_session", derive)
+    busy, response = None, None
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        cleanup = pool.submit(storage.run_retention_pass, now=now, batch_size=200,
+                              lease=lease, lease_seconds=300, lease_now=now,
+                              retention_policy=_TEST_RETENTION_POLICY)
+        try:
+            assert entered.wait(10), "controlled retention boundary was not reached"
+            try:
+                response = client.post("/items", json=[{
+                    "source_type": "chat_message", "source_id": "foreground-boundary",
+                    "content_type": "text/plain", "content": "A current foreground item",
+                    "artifact_kind": "message", "role": "user", "visibility": "public",
+                    "container_ref": "room:retention-boundary", "thread_ref": "current",
+                }])
+            except ImmediateTransactionBusyError as exc:
+                busy = exc
+        finally:
+            release.set()
+            stats = cleanup.result(timeout=15)
+    if boundary == "preparation":
+        assert busy is None, {"boundary": boundary, "native_transactions": phases, "error": str(busy)}
+        assert response.status_code == 200, response.text
+        source_id = response.json()[0]["source_item_id"]
+        assert client.get(f"/items/{source_id}/processing").status_code == 200
+        assert phases == [False]
+    else:
+        assert type(busy) is ImmediateTransactionBusyError and response is None
+        assert busy.acquisition_stage == "retry_exhausted"
+        assert busy.__cause__.orig.sqlite_errorcode & 255 == sqlite3.SQLITE_BUSY
+        assert phases == [True]
+        assert storage.find_source_item("chat_message", "foreground-boundary") is None
+    assert len(checked) == 663
+    assert (stats.skipped_protected_source_items, stats.deleted_source_items,
+            stats.deleted_index_entries, stats.deleted_memory_objects) == (663, 16, 32, 0)
+    assert all(storage.get_source_item(source.id).content == source.content for source in protected)
+    assert all(storage.get_memory_object(memory.id).lifecycle == "active" for memory in memories)
+    for source in doomed:
+        with pytest.raises(KeyError):
+            storage.get_source_item(source.id)
+    assert storage.get_memory_object(memories[0].id).freshness_at == (None if legacy_freshness else now)
+    if legacy_freshness:
+        assert 1 <= len(derivations) <= 4
+        assert len(set(derivations)) == len(derivations)
+    else:
+        assert derivations == []
+    assert storage.complete_retention_pass(worker_id=lease.claimed_by, claimed_at=lease.claimed_at,
+                                           completed_at=datetime.now(UTC), stats=stats)
+    health = QueueHealthResponse.model_validate(client.get("/debug/queue/health").json())
+    assert health.retention.last_deleted_source_items == 16
+    assert health.retention.last_skipped_protected_source_items == 663
+    assert health.retention.last_run_completed_at is not None
+
+
 def _make_source(
     storage: SQLiteStorageProvider,
     *,
