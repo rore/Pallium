@@ -1,6 +1,10 @@
 # Retained reconnect readiness retry
 
-## PR373 composition result: affected validation pending
+## PR373 composition result: affected validation passed
+
+Normal merge commit0a92987f preserves published1156 ancestry and merged main23d51852 without rewriting either branch. Exactly232 affected Codex-wake cases PASSED in76.16s, serial/elevated/private Python3.13.14, fresh absent C:/Users/I347041/AppData/Local/Temp/p373a1. Source/test bytes remained the verified ones above throughout. Receipt build/pr373-composed-result.json binds revision, command, log/XML/source hashes and limits. Whole-change selector still requires FULL; no full local or new hosted result exists for this composition. Existing required CI373 failure at the shutdown test's pre-wake entered.wait gate remains preserved, with no new cause attribution or unchanged rerun.
+
+The normal runtime adapter first could not locate Python; selecting the existing private executable only in that child shell allowed it to run. Its clean-worktree result is not whole-PR coverage. Explicit three-file origin/main...HEAD Redline plus checker then returned advisory only: configured shadow api-review CODEOWNER/label evidence and original1156 commit-order signal. No blocking predicate failed, boundary violation or protected behavior-contract path changed; no formal approval or label was fabricated. Existing independent reviews cover unchanged API logic, and retained main test wrappers are verified. Composition remains local and unpublished, original PR373 head1156 unchanged; report concrete focused result and remaining full/platform/publication gates to the manager. No additional reviewer chain, broad campaign, installed action or reliability closure.
 
 The next normal turn received actual hook payload for oldest relay-delivery-f157579f82c44a0f87df8a6a37c0674a, claim_attempt1/possible_redeliveryfalse, after the preceding long turn ended. Its old pagination PLAN GO was already completed in merged PR368 and was not replayed or answered again. This proves payload receipt at this new boundary for that original; it does not prove all nine drained, historical outage recovery or every unattended journey.
 
