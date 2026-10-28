@@ -333,16 +333,19 @@ class TestDashboardRelaySummary:
         assert "not returned by summary" not in str(response.json())
         assert relay_state_snapshot() == before
 
-    def test_relay_summary_reports_pending_delivery_expiry_and_latency_without_content(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+    def test_relay_summary_reports_pending_delivery_expiry_and_latency_without_content(self, tmp_path: Path, relay_admission_clock) -> None:
         app = create_app(_test_config(tmp_path))
         scope = {"container_ref": "git:example.test/team/dashboard"}
         with TestClient(app) as client:
-            for runtime, session_ref in (("claude-code", "sender"), ("codex", "target")):
-                response = client.post(
-                    "/relay/turn",
-                    json={"runtime": runtime, "session_ref": session_ref, **scope},
-                )
-                assert response.status_code == 200
+            storage = app.state.pallium_service._storage
+            with relay_admission_clock(storage, expected_admissions=2):
+                for runtime, session_ref in (("claude-code", "sender"), ("codex", "target")):
+                    response = client.post(
+                        "/relay/turn",
+                        json={"runtime": runtime, "session_ref": session_ref, **scope},
+                    )
+                    assert response.status_code == 200
             sent = client.post(
                 "/relay/messages",
                 json={
@@ -390,7 +393,6 @@ class TestDashboardRelaySummary:
                 },
             ).json()
             assert expiring["expires_at"] is not None
-            storage = app.state.pallium_service._storage
             with storage._relay_session_factory() as session:
                 session.execute(
                     text("UPDATE relay_messages SET expires_at=:past WHERE id=:id"),

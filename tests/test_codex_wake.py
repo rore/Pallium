@@ -2644,7 +2644,8 @@ def test_profile_is_idempotent_and_narrow(monkeypatch, tmp_path) -> None:
     setup_codex._remove_relay_profile()
     assert not (tmp_path / ".codex" / "pallium-relay.config.toml").exists()
 
-def test_http_reply_uses_the_same_post_persistence_callback(client) -> None:
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_http_reply_uses_the_same_post_persistence_callback(client, relay_admission_clock) -> None:
     seen: list[tuple[dict, dict[str, str]]] = []
     app = FastAPI()
     app.include_router(
@@ -2656,10 +2657,11 @@ def test_http_reply_uses_the_same_post_persistence_callback(client) -> None:
     )
     route_client = TestClient(app)
     scope = {"container_ref": "git:example.test/reply-wake"}
-    for runtime, session in (("codex", "original"), ("claude-code", "responder")):
-        assert route_client.post(
-            "/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}
-        ).status_code == 200
+    with relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=2):
+        for runtime, session in (("codex", "original"), ("claude-code", "responder")):
+            assert route_client.post(
+                "/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}
+            ).status_code == 200
     parent = route_client.post(
         "/relay/messages",
         json={
@@ -5892,11 +5894,25 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
         workers.append(worker)
         return worker
 
+    initial_finished, initial_errors = threading.Event(), []
+    original_wake = codex_wake._wake_after_debounce
+
+    def initial_wake(*args, **kwargs):
+        try:
+            return original_wake(*args, **kwargs)
+        except BaseException as error:
+            initial_errors.append(error)
+            raise
+        finally:
+            initial_finished.set()
+
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
     monkeypatch.setattr(codex_wake, "_codex_home", lambda: tmp_path)
     with patch("app.codex_wake._popen", return_value=process) as native_write, patch(
         "app.dependencies.schedule_codex_relay_wake", side_effect=schedule,
-    ):
+    ), patch(
+        "app.codex_wake._wake_after_debounce", side_effect=initial_wake,
+    ) as initial_dispatch:
         sent = route.post("/relay/messages", json={
             "sender_runtime": "claude-code",
             "sender_session_ref": "sender",
@@ -5905,8 +5921,12 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
             **source,
         }).json()
         assert len(workers) == 1 and workers[0] is not None
-        workers[0].join(timeout=1)
+        setup_deadline = time.monotonic() + 5
+        assert initial_finished.wait(max(0, setup_deadline - time.monotonic())), "initial native worker did not finish"
+        workers[0].join(timeout=max(0, setup_deadline - time.monotonic()))
         assert not workers[0].is_alive()
+        assert initial_errors == []
+        initial_dispatch.assert_called_once()
         native_write.assert_called_once()
 
     delivery = sent["deliveries"][0]
