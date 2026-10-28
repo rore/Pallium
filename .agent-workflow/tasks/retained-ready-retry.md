@@ -1,5 +1,9 @@
 # Retained reconnect readiness retry
 
+## Shared-helper correction published at6491f146
+
+Normal nonforce push updated existing draftPR373 from4e557e94 to6491f146abeeb53f405aa9582400943ac13c52c4, after verifying clean source identities, main23d51852, ordinary ancestry, zero unresolved review threads and final explicit-base workflow advisory-only result. Updated body distinguishes original8341full run from replacement67affected evidence and preserves both previous CI failures/physical-cause limits. Actual published-head/run snapshots build/pr373-helper-published-head.json and published-runs.json; immediately-after-push run listing was empty, so hosted scheduling/result was not assumed. No extra local full, manual dispatch/rerun, formal approval, installed action or merge. This publication receipt remains local to avoid CI-only pushes. Follow only this actual head's automatic hosted qualification and report its terminal gate or exact blocker to manager.
+
 ## Shared-helper independent review and normal publication GO
 
 Verified completed manager app turn01a1833b-c5ea-7b61-8f09-558cbf47ff43, actual reply to relay-delivery-d934d6972c0a4b78889ef207f048a847. Technical SOURCE/RESULT GO inspected exact4e557..d337helper diff and67affected receipt, including winning successfulRelay before heldsummary/release/firstexit/finished, cancellation beforeturn, ownershipbarrier waiting before release/drain/storageclose, delayed positives and released-worker negative. No new reviewer or source redesign. Explicit qualification disposition uses docs/testing-conventions invalidates-affected-evidence rule: reuse complete8341localPASS for unchanged production/other tests and replace changed helper evidence with67filePASS; do NOT label oldfull as run on newtestbytes. No extra local full; normal changed-head hosted full remains mandatory. Both originalLinux failures and physical-cause limits remain preserved.
