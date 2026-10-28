@@ -1,5 +1,11 @@
 # Retained reconnect readiness retry
 
+## Retained installed exact-turn failure at12:27Z
+
+Manager Relay message live-monitor-20261028T1240-exact-turn-error, sent2026-10-28T12:40:40.172777 and injected through deliveryrelay-delivery-f35d7f57f5784900aaf9125401d77430, adds this historical installed observation: at12:27:06.018772Z, deliveryrelay-delivery-5f278a8bc9eb4b699cde81a7a5feb700 logged service_ms0/route_ready_ms9011/outcomeerror, then was ACKed12:29:18.973622Z. Manager's12:40Z snapshot reported health/ingestionOK, pending0/uncertain0/delivered6550/uptime14510s, with no other matching new error in retained tail12:21:38-12:40:18Z. These are manager-provided historical observations, not a new local health check or proof of recipient model consumption. Later ACK does not explain the earlier error; status/category/stage remain unknown, service_ms0 does not prove no service entry or claim, and the clean window remains unstarted.
+
+Preserved the exact delta in existing build/pr367-owner-timeout-evidence.json under additional_actual_use_reports.live-monitor-20261028T1240-exact-turn-error. No new collector, synthetic traffic, receive/ACK/resend, suite, restart or ACK-only reply. Keep source work tied to installed delivery diagnosis/recovery; the stalled local qualification remains a publication gate, not authority for generic CI cleanup. The source-only metadata correction remains uninstalled and does not retroactively supply missing evidence. Existing incident State remainsBlocked; source/test bytes stay unchanged and private records/evidence are retained.
+
 ## Four-PR disposition after the metadata publication
 
 Manager assignment pr373-existing-ci-and-original-pr-disposition, sent2026-10-28T12:28:28.897504, requests retained-evidence disposition without another diagnostic campaign. Live GitHub inspection confirms all four PR heads unchanged and blocked by required CI. PR373 remains draft1156c949: Python3.12 passed12:35:43Z, Python3.13 failed the completed-stage shutdown test before its selected wake stage after begin_native_attempt late_begin refusal; Windows and workflow passed, aggregate CI failed. No install, restart, formal approval, rerun or cause closure.
