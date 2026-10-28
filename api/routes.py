@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import time
+from asyncio import CancelledError
 from collections.abc import Awaitable
 from typing import Any, Callable
 
@@ -822,6 +823,10 @@ def create_router(
     async def relay_turn(request: RelayTurnRequest):
         started = time.monotonic() if request.wake_delivery_id is not None else None
         service_ms: int | None = None
+        worker_start_ms: int | None = None
+        snapshot_ms: int | None = None
+        error_status: int | None = None
+        error_category = "none"
         outcome = "error"
         request_data = request.model_dump()
         if request.claim_expires_at_ms is None:
@@ -832,7 +837,10 @@ def create_router(
         try:
             if request.runtime == "codex" and request.wake_delivery_id is not None:
                 def exact_turn_operation():
-                    nonlocal service_ms
+                    nonlocal service_ms, worker_start_ms, snapshot_ms
+                    worker_started = time.monotonic()
+                    # Elapsed since route entry includes admission and scheduling.
+                    worker_start_ms = int((worker_started - started) * 1000)
                     captured = None
                     if relay_turn_snapshot_callback is not None:
                         try:
@@ -843,6 +851,8 @@ def create_router(
                         relay_request["codex_wake_endpoint_id"] = captured.recipient_endpoint_id
                         relay_request["codex_wake_generation"] = captured.generation
                     service_started = time.monotonic()
+                    # Includes snapshot lookup and captured authority preparation.
+                    snapshot_ms = int((service_started - worker_started) * 1000)
                     try:
                         result = _relay_sync_call("turn", lambda: _relay().turn(**relay_request))
                     finally:
@@ -910,15 +920,31 @@ def create_router(
             projected = await _with_relay_activation(result)
             outcome = "ready"
             return projected
+        except HTTPException as exc:
+            status = exc.status_code
+            error_status = status if type(status) is int and 400 <= status <= 599 else None
+            if error_status == 409 and type(exc.detail) is str and exc.detail == "Relay claim request expired":
+                error_category = "claim_expired"
+            else:
+                error_category = {409: "conflict", 503: "busy"}.get(error_status, "http_error")
+            raise
+        except BaseException as exc:
+            error_category = "cancelled" if isinstance(exc, CancelledError) else "unexpected"
+            raise
         finally:
             if started is not None:
                 logger.info(
                     "relay_turn_timing delivery_ref=%s service_ms=%s "
-                    "route_ready_ms=%d outcome=%s",
+                    "route_ready_ms=%d outcome=%s worker_start_ms=%s snapshot_ms=%s "
+                    "error_status=%s error_category=%s",
                     request.wake_delivery_id,
                     service_ms if service_ms is not None else "none",
                     int((time.monotonic() - started) * 1000),
                     outcome,
+                    worker_start_ms if worker_start_ms is not None else "none",
+                    snapshot_ms if snapshot_ms is not None else "none",
+                    error_status if error_status is not None else "none",
+                    error_category,
                 )
 
     @router.get("/relay/pending-candidate", response_model=RelayPendingCandidateResponse | None)
