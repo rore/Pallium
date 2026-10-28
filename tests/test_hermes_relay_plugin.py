@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
-from contextlib import nullcontext
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -347,21 +347,75 @@ def test_plugin_sanitizes_inaccessible_public_capability(plugin_context, capabil
 
 
 def _plugin_wake(client, create, payload="Hello שלום 🌍", *, preparation=None):
+    from tests.conftest import relay_admission_clock
+
+    @contextmanager
+    def prepare(admissions):
+        with pytest.MonkeyPatch.context() as scoped:
+            scope = relay_admission_clock.__wrapped__(SimpleNamespace(param="semantic"), scoped)
+            with scope(client.app.state.pallium_service._storage, expected_admissions=admissions):
+                yield
+
     ctx = create()
-    with preparation or nullcontext():
+    with preparation or prepare(1):
         ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="seed", user_message="seed")
     ctx.hooks["on_session_end"](session_id="ses_שלום")
     response = client.get("/relay/sessions", params={"runtime": "hermes", **SCOPE})
     response.raise_for_status()
     rows = response.json()
     assert len(rows) == 1
-    message = send(client, rows[0]["endpoint_id"], payload=payload)
+    with prepare(2):
+        message = send(client, rows[0]["endpoint_id"], payload=payload)
     _await(lambda: ctx.injections)
     marker, target = ctx.injections[0]
     assert target == {"role": "user", "session_key": "ses_שלום"}
     assert message["payload"] not in marker
     assert status(client, message)["deliveries"][0]["attempts"] == 0
     return ctx, marker, message
+
+
+def test_plugin_wake_preparation_restores_native_subject_boundaries(client, plugin_context, monkeypatch):
+    from storage import sqlite_queue
+
+    _, create, _ = plugin_context
+    storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
+    owner = threading.get_ident()
+    requests, ended = [], []
+    original_request = client.request
+
+    def request(method, url, **kwargs):
+        if threading.get_ident() == owner:
+            requests.append((method.upper(), str(url),
+                             sqlite_queue.time is native_time,
+                             storage._begin_relay_immediate == native_begin))
+        return original_request(method, url, **kwargs)
+
+    def context():
+        ctx = create()
+        original_end = ctx.hooks["on_session_end"]
+
+        def end(**kwargs):
+            ended.append((sqlite_queue.time is native_time,
+                          storage._begin_relay_immediate == native_begin))
+            return original_end(**kwargs)
+
+        ctx.hooks["on_session_end"] = end
+        return ctx
+
+    monkeypatch.setattr(client, "request", request)
+    ctx, marker, message = _plugin_wake(client, context)
+    prepared = [(method, path) for method, path, clock, writer in requests if not clock and not writer]
+    assert prepared == [("POST", "/relay/turn"), ("POST", "/relay/turn"), ("POST", "/relay/messages")]
+    assert ended == [(True, True)]
+    assert all(clock and writer for method, _path, clock, writer in requests if method == "GET")
+    assert sqlite_queue.time is native_time and storage._begin_relay_immediate == native_begin
+    subject_start = len(requests)
+    _admit_plugin_wake(ctx, marker, "native-subject")
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+    subject = requests[subject_start:]
+    assert any(method == "POST" for method, _path, _clock, _writer in subject)
+    assert all(clock and writer for _method, _path, clock, writer in subject)
 
 
 def _plugin_reply(ctx, args, **trusted):

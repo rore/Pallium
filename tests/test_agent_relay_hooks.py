@@ -1026,7 +1026,12 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
             hook.main()
         assert fresh.value.code == 0
         fresh_output = capsys.readouterr()
-        output = json.loads(fresh_output.out)["hookSpecificOutput"]["additionalContext"]
+        diagnostics = {
+            "ack": ack_result, "wake_events": events[:16], "stderr": fresh_output.err[:4000],
+        }
+        fresh_response = json.loads(fresh_output.out)
+        assert "hookSpecificOutput" in fresh_response, diagnostics
+        output = fresh_response["hookSpecificOutput"]["additionalContext"]
         assert output.count(delivery_id) == 1 and "expiry payload — 東京" in output
         assert any(event["stage"] == "payload_emitted" for event in events)
     finally:
@@ -1039,10 +1044,7 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
             assert not handler.is_alive()
         assert not server_thread.is_alive()
     delivered = client.get(f"/relay/messages/{message_id}", params=scope).json()["deliveries"][0]
-    diagnostics = {
-        "ack": ack_result, "wake_events": events[:16], "stderr": fresh_output.err[:4000],
-        "delivery": {"state": delivered["state"], "attempts": delivered["attempts"]},
-    }
+    diagnostics["delivery"] = {"state": delivered["state"], "attempts": delivered["attempts"]}
     assert any(event["stage"] == "delivery_acked" for event in events), diagnostics
     assert (delivered["state"], delivered["attempts"]) == ("delivered", 1), diagnostics
 

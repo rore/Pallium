@@ -362,8 +362,8 @@ def test_missing_saved_registration_is_not_reported_as_peer_mismatch(retained):
 
 
 @pytest.fixture
-def retained(monkeypatch, tmp_path):
-    yield from retained_fixture.__wrapped__(monkeypatch, tmp_path)
+def retained(monkeypatch, tmp_path, request):
+    yield from retained_fixture.__wrapped__(monkeypatch, tmp_path, request)
 
 
 def _defer_on_state_timeout(http_wake, retained, bridge, *, unresolved=False, native_failure=False):

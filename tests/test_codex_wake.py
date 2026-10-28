@@ -2644,7 +2644,8 @@ def test_profile_is_idempotent_and_narrow(monkeypatch, tmp_path) -> None:
     setup_codex._remove_relay_profile()
     assert not (tmp_path / ".codex" / "pallium-relay.config.toml").exists()
 
-def test_http_reply_uses_the_same_post_persistence_callback(client) -> None:
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_http_reply_uses_the_same_post_persistence_callback(client, relay_admission_clock) -> None:
     seen: list[tuple[dict, dict[str, str]]] = []
     app = FastAPI()
     app.include_router(
@@ -2656,10 +2657,11 @@ def test_http_reply_uses_the_same_post_persistence_callback(client) -> None:
     )
     route_client = TestClient(app)
     scope = {"container_ref": "git:example.test/reply-wake"}
-    for runtime, session in (("codex", "original"), ("claude-code", "responder")):
-        assert route_client.post(
-            "/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}
-        ).status_code == 200
+    with relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=2):
+        for runtime, session in (("codex", "original"), ("claude-code", "responder")):
+            assert route_client.post(
+                "/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}
+            ).status_code == 200
     parent = route_client.post(
         "/relay/messages",
         json={
@@ -3548,7 +3550,8 @@ def test_relay_turn_callback_rearms_only_after_success(client) -> None:
         assert route_client.post("/relay/turn", json=body).status_code == 422
     assert len(callbacks) == 2
 
-def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplog, monkeypatch) -> None:
+@pytest.mark.parametrize("queue_delay_ms", (0, 500))
+def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplog, monkeypatch, queue_delay_ms) -> None:
     import re
     import time
     from api import routes
@@ -3584,10 +3587,15 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
         callbacks.append((request, result))
         clock[0] += .125
 
+    async def runner(operation):
+        clock[0] += queue_delay_ms / 1000
+        return operation()
+
     app.include_router(create_router(
         client.app.state.pallium_service,
         relay_service=relay,
         relay_turn_callback=delayed_callback,
+        relay_codex_runner=runner,
     ))
     route = TestClient(app)
     delivery_id = "relay-delivery-" + "b" * 32
@@ -3606,14 +3614,16 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
     records = [record.getMessage() for record in caplog.records if delivery_id in record.getMessage()]
     assert len(records) == 1
     match = re.fullmatch(
-        rf"relay_turn_timing delivery_ref={delivery_id} service_ms=(\d+) route_ready_ms=(\d+) outcome=ready",
+        rf"relay_turn_timing delivery_ref={delivery_id} service_ms=(\d+) route_ready_ms=(\d+) outcome=ready "
+        rf"worker_start_ms=(\d+) snapshot_ms=(\d+) error_status=none error_category=none",
         records[0],
     )
     assert match, records[0]
-    service_ms, route_ready_ms = map(int, match.groups())
+    service_ms, route_ready_ms, worker_start_ms, snapshot_ms = map(int, match.groups())
     assert route_ready_ms >= service_ms
-    assert (service_ms, route_ready_ms) == (250, 375)
-    assert clock[0] == .375 and time.monotonic is native_monotonic
+    assert (service_ms, route_ready_ms) == (250, 375 + queue_delay_ms)
+    assert (worker_start_ms, snapshot_ms) == (queue_delay_ms, 0)
+    assert clock[0] == .375 + queue_delay_ms / 1000 and time.monotonic is native_monotonic
     assert SCOPE["container_ref"] not in records[0]
 
     caplog.clear()
@@ -3680,7 +3690,8 @@ def test_relay_turn_logs_service_time_when_exact_wake_fails(
     assert len(records) == 1
     match = re.fullmatch(
         rf"relay_turn_timing delivery_ref={delivery_id} service_ms=(\d+) "
-        rf"route_ready_ms=(\d+) outcome=error",
+        rf"route_ready_ms=(\d+) outcome=error worker_start_ms=0 snapshot_ms=125 "
+        rf"error_status=501 error_category=http_error",
         records[0],
     )
     assert match, records[0]
@@ -3690,6 +3701,127 @@ def test_relay_turn_logs_service_time_when_exact_wake_fails(
     assert (service_ms, route_ready_ms) == (250, 375)
     assert clock[0] == .375 and time.monotonic is native_monotonic
     assert SCOPE["container_ref"] not in records[0]
+
+@pytest.mark.parametrize("failure,status,category", [
+    ("conflict", 409, "conflict"), ("busy", 503, "busy"),
+    ("missing", 404, "http_error"), ("invalid", 422, "http_error"),
+    ("http", 418, "http_error"), ("unexpected", None, "unexpected"),
+    ("expiry_lookalike", 409, "conflict"), ("http_conflict", 409, "conflict"),
+])
+def test_relay_turn_logs_safe_failure_category(client, caplog, monkeypatch, failure, status, category):
+    from fastapi import HTTPException
+    from core.errors import ImmediateTransactionBusyError
+    from core.relay import RelayConflictError, RelayNotFoundError
+
+    private = "private payload-token marker"
+    error = {
+        "conflict": RelayConflictError(private), "busy": ImmediateTransactionBusyError(private),
+        "missing": RelayNotFoundError(private), "invalid": ValueError(private),
+        "http": HTTPException(418, detail={"private": private}), "unexpected": RuntimeError(private),
+        "expiry_lookalike": RelayConflictError("Relay claim request expired: " + private),
+        "http_conflict": HTTPException(409, detail={"reason": "Relay claim request expired", "private": private}),
+    }[failure]
+    relay = RelayService(client.app.state.pallium_service._storage)
+
+    def fail(**_kwargs):
+        raise error
+
+    monkeypatch.setattr(relay, "turn", fail)
+    app = FastAPI()
+    app.include_router(create_router(client.app.state.pallium_service, relay_service=relay))
+    caplog.set_level(logging.INFO, logger="api.routes")
+    delivery_id = "relay-delivery-" + "e" * 32
+    body = {"runtime": "codex", "session_ref": "private-session", "wake_delivery_id": delivery_id, **SCOPE}
+    with TestClient(app) as route:
+        if status is None:
+            with pytest.raises(RuntimeError) as observed:
+                route.post("/relay/turn", json=body)
+            assert observed.value is error
+        else:
+            response = route.post("/relay/turn", json=body)
+            assert response.status_code == status
+            if failure in {"conflict", "invalid"}:
+                assert response.json() == {"detail": private}
+            elif failure == "expiry_lookalike":
+                assert response.json() == {"detail": "Relay claim request expired: " + private}
+            elif failure in {"http", "http_conflict"}:
+                assert response.json() == {"detail": error.detail}
+            elif failure == "busy":
+                assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+    records = [r.getMessage() for r in caplog.records if r.getMessage().startswith("relay_turn_timing")]
+    assert len(records) == 1
+    fields = dict(part.split("=", 1) for part in records[0].split()[1:])
+    assert fields["error_status"] == (str(status) if status is not None else "none")
+    assert fields["error_category"] == category
+    assert int(fields["worker_start_ms"]) >= 0 and int(fields["snapshot_ms"]) >= 0
+    assert private not in records[0] and "private-session" not in records[0]
+    assert SCOPE["container_ref"] not in records[0]
+
+
+@pytest.mark.parametrize("failure", ("cancelled", "http"))
+def test_relay_turn_logs_failure_before_worker_entry(client, caplog, failure):
+    import asyncio
+    from concurrent.futures import CancelledError
+    from fastapi import HTTPException
+
+    async def refused(_operation):
+        if failure == "cancelled":
+            raise asyncio.CancelledError()
+        raise HTTPException(409, detail="Relay claim request expired")
+
+    app = FastAPI()
+    app.include_router(create_router(client.app.state.pallium_service, relay_codex_runner=refused))
+    caplog.set_level(logging.INFO, logger="api.routes")
+    body = {"runtime": "codex", "session_ref": "target", "wake_delivery_id": "relay-delivery-" + "f" * 32, **SCOPE}
+    with TestClient(app) as route:
+        if failure == "cancelled":
+            with pytest.raises(CancelledError):
+                route.post("/relay/turn", json=body)
+        else:
+            response = route.post("/relay/turn", json=body)
+            assert response.status_code == 409 and response.json() == {"detail": "Relay claim request expired"}
+    records = [r.getMessage() for r in caplog.records if r.getMessage().startswith("relay_turn_timing")]
+    assert len(records) == 1
+    assert "service_ms=none" in records[0]
+    status, category = ("none", "cancelled") if failure == "cancelled" else ("409", "claim_expired")
+    assert records[0].endswith(f"worker_start_ms=none snapshot_ms=none error_status={status} error_category={category}")
+
+
+def test_relay_turn_logs_actual_expiry_without_claim_then_preserves_delivery_lifecycle(client, caplog):
+    endpoints = {}
+    for session in ("metadata-sender", "metadata-target"):
+        response = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE})
+        assert response.status_code == 200, response.text
+        endpoints[session] = response.json()["session"]["endpoint_id"]
+    message = client.post("/relay/messages", json={"sender_runtime": "codex",
+        "sender_session_ref": "metadata-sender", "recipient": endpoints["metadata-target"],
+        "payload": "private payload-token marker", **SCOPE})
+    assert message.status_code == 200, message.text
+    message_id = message.json()["message_id"]
+    delivery_id = message.json()["deliveries"][0]["delivery_id"]
+    before = client.get("/relay/messages/" + message_id, params=SCOPE).json()["deliveries"][0]
+    caplog.clear()
+    caplog.set_level(logging.INFO, logger="api.routes")
+    body = {"runtime": "codex", "session_ref": "metadata-target", "max_chars": 2400,
+        "wake_delivery_id": delivery_id, **SCOPE}
+    expired = client.post("/relay/turn", json={**body, "claim_expires_at_ms": 1})
+    assert expired.status_code == 409
+    assert expired.json() == {"detail": "Relay claim request expired"}
+    after = client.get("/relay/messages/" + message_id, params=SCOPE).json()["deliveries"][0]
+    assert after == before and after["state"] == "pending" and after["attempts"] == 0
+    records = [r.getMessage() for r in caplog.records if r.getMessage().startswith("relay_turn_timing")]
+    assert len(records) == 1 and records[0].endswith("error_status=409 error_category=claim_expired")
+    assert "private payload-token marker" not in records[0] and SCOPE["container_ref"] not in records[0]
+    fresh = client.post("/relay/turn", json=body)
+    assert fresh.status_code == 200, fresh.text
+    claim, = fresh.json()["deliveries"]
+    assert claim["delivery_id"] == delivery_id and claim["payload"] == "private payload-token marker"
+    ack = client.post("/relay/deliveries/ack", json={"delivery_id": delivery_id,
+        "claim_token": claim["claim_token"], **SCOPE})
+    assert ack.status_code == 200, ack.text
+    final = client.get("/relay/messages/" + message_id, params=SCOPE).json()["deliveries"][0]
+    assert final["state"] == "delivered" and final["attempts"] == 1
+
 
 def test_delivery_specific_turn_claims_exact_message_beyond_normal_limit(client) -> None:
     callbacks = []
@@ -5762,11 +5894,25 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
         workers.append(worker)
         return worker
 
+    initial_finished, initial_errors = threading.Event(), []
+    original_wake = codex_wake._wake_after_debounce
+
+    def initial_wake(*args, **kwargs):
+        try:
+            return original_wake(*args, **kwargs)
+        except BaseException as error:
+            initial_errors.append(error)
+            raise
+        finally:
+            initial_finished.set()
+
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
     monkeypatch.setattr(codex_wake, "_codex_home", lambda: tmp_path)
     with patch("app.codex_wake._popen", return_value=process) as native_write, patch(
         "app.dependencies.schedule_codex_relay_wake", side_effect=schedule,
-    ):
+    ), patch(
+        "app.codex_wake._wake_after_debounce", side_effect=initial_wake,
+    ) as initial_dispatch:
         sent = route.post("/relay/messages", json={
             "sender_runtime": "claude-code",
             "sender_session_ref": "sender",
@@ -5775,8 +5921,12 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
             **source,
         }).json()
         assert len(workers) == 1 and workers[0] is not None
-        workers[0].join(timeout=1)
+        setup_deadline = time.monotonic() + 5
+        assert initial_finished.wait(max(0, setup_deadline - time.monotonic())), "initial native worker did not finish"
+        workers[0].join(timeout=max(0, setup_deadline - time.monotonic()))
         assert not workers[0].is_alive()
+        assert initial_errors == []
+        initial_dispatch.assert_called_once()
         native_write.assert_called_once()
 
     delivery = sent["deliveries"][0]

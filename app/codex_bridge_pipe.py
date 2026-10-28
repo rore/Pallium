@@ -2371,6 +2371,52 @@ def _read_tool_schema_valid(tools: object) -> bool:
     return True
 
 
+def _archive_arguments_valid(schema: object, arguments: dict) -> bool:
+    # Unknown constraints disable this optional capability rather than guessing.
+    annotations = {"description", "title", "default"}
+    if (not isinstance(schema, dict) or schema.get("type") != "object"
+            or set(schema) - (annotations | {"type", "properties", "required", "additionalProperties", "$schema"})):
+        return False
+    properties, required = schema.get("properties"), schema.get("required", [])
+    if (not isinstance(properties, dict) or not isinstance(required, list)
+            or any(type(name) is not str or name not in arguments for name in required)):
+        return False
+
+    def accepts(field, value, depth=0):
+        if not isinstance(field, dict) or depth > 2:
+            return False
+        if "anyOf" in field:
+            variants = field["anyOf"]
+            return (not set(field) - (annotations | {"anyOf"})
+                    and isinstance(variants, list) and 0 < len(variants) <= 8
+                    and any(accepts(item, value, depth + 1) for item in variants))
+        numeric = type(value) is int
+        bounds = {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"} if numeric else {"minLength", "maxLength"}
+        if set(field) - (annotations | bounds | {"type", "enum", "const"}):
+            return False
+        kinds = field.get("type")
+        kinds = kinds if isinstance(kinds, list) else [kinds]
+        if not any(type(kind) is str and kind in ({"integer", "number"} if numeric else {"string"}) for kind in kinds):
+            return False
+        if "enum" in field and (not isinstance(field["enum"], list) or value not in field["enum"]):
+            return False
+        if "const" in field and value != field["const"]:
+            return False
+        for key in bounds & field.keys():
+            bound = field[key]
+            if type(bound) not in ({int, float} if numeric else {int}) or bound != bound:
+                return False
+            actual = value if numeric else len(value)
+            if ((key in {"minimum", "minLength"} and actual < bound)
+                    or (key in {"maximum", "maxLength"} and actual > bound)
+                    or (key == "exclusiveMinimum" and actual <= bound)
+                    or (key == "exclusiveMaximum" and actual >= bound)):
+                return False
+        return True
+
+    return all(accepts(properties.get(name), value) for name, value in arguments.items())
+
+
 class RetainedService(InventoryService):
     """Normal source-channel custody. Trial authority and files are never consulted."""
 
@@ -2419,6 +2465,8 @@ class RetainedService(InventoryService):
         self._custody_lock = threading.RLock()
         self.ancestors = []
         self.read_tool = False
+        self.archive_schema = None
+        self._archive_snapshot = None
         self.retained_registration = None
         self._enrollment_diagnostics_lost = False
         try:
@@ -2510,6 +2558,8 @@ class RetainedService(InventoryService):
                 self._clear_registration()
             super()._drop()
             self.read_tool = False
+            self.archive_schema = None
+            self._archive_snapshot = None
             if not self.unresolved:
                 for peer in self.ancestors:
                     peer.close()
@@ -2653,6 +2703,15 @@ class RetainedService(InventoryService):
         if expected_identity is not None and self._registration_identity(self.desktop, self.ancestors) != expected_identity:
             raise ShadowUnavailable("peer-mismatch")
         self.owner_tool_before = self.read_tool = True
+        self._archive_snapshot = None
+        archived_tools = [tool for tool in tools if isinstance(tool, dict)
+                          and tool.get("namespace") == "codex_app"
+                          and tool.get("name") == "list_archived_threads"]
+        self.archive_schema = None
+        if len(archived_tools) == 1:
+            schema = archived_tools[0].get("inputSchema")
+            if _archive_arguments_valid(schema, {"source": "codex", "limit": 50}):
+                self.archive_schema = schema
         self._check_custody()
         if continuity is not None and self._continuity_fingerprint() != continuity:
             raise ShadowUnavailable("peer-mismatch")
@@ -2742,6 +2801,56 @@ class RetainedService(InventoryService):
 
     def _call(self, tool: str, arguments: dict, deadline: float) -> dict:
         return self._read_call(self._write_call(tool, arguments, deadline), deadline)
+
+    def _target_archived(self, session_ref: str, deadline: float) -> bool:
+        if self.archive_schema is None:
+            return False
+        observed = time.monotonic()
+        cached = self._archive_snapshot
+        if cached is not None and observed < cached[0] + EXCHANGE_SECONDS:
+            if session_ref in cached[1]:
+                return True
+            if cached[2]:
+                return False
+        archived, cursors = set(), set()
+        cursor, total_bytes = None, 0
+        while True:
+            arguments = {"source": "codex", "limit": 50}
+            if cursor is not None:
+                arguments["cursor"] = cursor
+            if not _archive_arguments_valid(self.archive_schema, arguments):
+                raise ShadowUnavailable("invalid-response")
+            if time.monotonic() >= deadline:
+                raise ShadowUnavailable("deadline")
+            result = self._call("list_archived_threads", arguments, deadline)
+            content = result.get("contentItems")
+            if (not isinstance(content, list) or len(content) != 1
+                    or not isinstance(content[0], dict) or content[0].get("type") != "inputText"
+                    or not isinstance(content[0].get("text"), str)):
+                raise ShadowUnavailable("invalid-response")
+            raw = content[0]["text"].encode("utf-8")
+            total_bytes += len(raw)
+            if total_bytes > MAX_DESKTOP_FRAME:
+                raise ShadowUnavailable("message-limit")
+            body = _json(raw, limit=MAX_DESKTOP_FRAME)
+            rows, cursor = body.get("threads"), body.get("nextCursor")
+            if (not isinstance(rows, list) or len(rows) > 50 or "nextCursor" not in body
+                    or (cursor is not None and (type(cursor) is not str or not cursor
+                                                or len(cursor) > MAX_MESSAGE or cursor in cursors))):
+                raise ShadowUnavailable("invalid-response")
+            for row in rows:
+                if (not isinstance(row, dict) or type(row.get("id")) is not str
+                        or not 0 < len(row["id"]) <= MAX_MESSAGE
+                        or type(row.get("kind")) is not str or type(row.get("hostId")) is not str):
+                    raise ShadowUnavailable("invalid-response")
+                if row["kind"] == "codex" and row["hostId"] == "local":
+                    archived.add(row["id"])
+            if time.monotonic() >= deadline:
+                raise ShadowUnavailable("deadline")
+            if session_ref in archived or cursor is None:
+                self._archive_snapshot = (observed, frozenset(archived), cursor is None)
+                return session_ref in archived
+            cursors.add(cursor)
 
     def _process(self, request, peer, sequence, deadline):
         if not self._custody_lock.acquire(blocking=False):
@@ -2879,6 +2988,23 @@ class RetainedService(InventoryService):
                 if not eligible:
                     return ActivationAttemptResult(
                         "deferred", "target_not_idle", native_retry_safe=not retrying
+                    ), reservation
+                if target_state == "notLoaded" and self._target_archived(
+                        target_session, time.monotonic() + EXCHANGE_SECONDS):
+                    try:
+                        delivery_ref, _, _ = relay_wake_log_refs(
+                            reservation.delivery_id, target_session, target_container)
+                        generation = (reservation.generation if type(reservation.generation) is int
+                                      and 0 < reservation.generation <= (1 << 63) - 1 else "invalid")
+                        _log.warning(
+                            "codex_retained_dispatch outcome=deferred category=target-archived "
+                            "stage=state-read delivery_ref=%s generation=%s",
+                            delivery_ref, generation,
+                        )
+                    except Exception:
+                        pass  # Result logging cannot change eligibility or retry fences.
+                    return ActivationAttemptResult(
+                        "deferred", "target_archived", native_retry_safe=not retrying
                     ), reservation
                 if retrying:
                     rearmed = registry.rearm_for_retry(
