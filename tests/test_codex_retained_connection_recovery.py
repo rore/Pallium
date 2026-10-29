@@ -2,6 +2,7 @@
 import pytest
 import asyncio
 import json
+import os
 import threading
 
 from tests.test_codex_retained_wake import (
@@ -113,20 +114,25 @@ async def test_actual_mcp_idle_recovers_same_epoch_enrollment_without_replay(
     "replacement-dispose-pipe", "replacement-dispose-bootstrap",
     "replacement-dispose-continuity", "replacement-stop",
     "replacement-register-deadline", "replacement-register-transport-failed",
-    "replacement-exhaustion", "replacement-budget", "replacement-backoff-stop",
+    "replacement-register-refusal", "replacement-acquisition-startup",
+    "replacement-ready-busy", "replacement-diagnostic-sink-failure",
+    "replacement-exhaustion", "replacement-exhaustion-rotation", "replacement-budget",
+    "replacement-backoff-stop",
 ])
 async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
-    retained, monkeypatch, idle_result,
+    retained, monkeypatch, tmp_path, idle_result,
 ):
     from app import codex_bridge_pipe as bridge
     from app.mcp import codex_desktop_bridge as lifecycle
     from tests.test_codex_worker_reconnect import _protocol_server, _actual_status
     from tests.test_codex_mcp_desktop_bridge import _serve_protocol
 
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path / "private-home"))
     service, request, natives = retained
     source = service.source
     manifest = {"epoch": service.epoch}
     registrations, operations, workers, clients = [], [], [], []
+    acquisition_failures = 0
     registration_sources, source_resources, recoveries = [], [], []
     idle_observed, disposed = threading.Event(), threading.Event()
     recovery_completed, replacement_observed = threading.Event(), threading.Event()
@@ -134,15 +140,24 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
     monkeypatch.setattr(bridge, "_read_private", lambda *args: json.dumps(manifest).encode())
     replacement_failure = idle_result.startswith("replacement-")
     replacement_fault = idle_result.removeprefix("replacement-")
-    replacement_recovers = replacement_fault in {"deadline", "transport-failed"}
-    expected_clients = 3 if replacement_recovers else 2
+    replacement_recovers = replacement_fault in {
+        "deadline", "transport-failed", "acquisition-startup", "ready-busy", "diagnostic-sink-failure"}
+    expected_clients = 3 if replacement_recovers else 4 if replacement_fault == "exhaustion" else (
+        21 if replacement_fault == "exhaustion-rotation" else 2)
     if replacement_failure:
         monkeypatch.setattr(lifecycle, "RECONNECT_INITIAL_BACKOFF_SECONDS", .001)
         if replacement_fault == "exhaustion":
             monkeypatch.setattr(lifecycle, "RECONNECT_MAX_ATTEMPTS", 3)
+        elif replacement_fault == "exhaustion-rotation":
+            monkeypatch.setattr(lifecycle, "RECONNECT_MAX_ATTEMPTS", 20)
+            monkeypatch.setattr(lifecycle, "RECONNECT_MAX_BACKOFF_SECONDS", .001)
         elif replacement_fault == "budget":
             monkeypatch.setattr(lifecycle, "RECONNECT_WINDOW_SECONDS", .02)
             monkeypatch.setattr(lifecycle, "RECONNECT_INITIAL_BACKOFF_SECONDS", .04)
+        if replacement_fault == "diagnostic-sink-failure":
+            def fail_diagnostic_sink(*_args):
+                raise OSError("controlled diagnostic sink failure")
+            monkeypatch.setattr(lifecycle, "_write_client_diagnostic", fail_diagnostic_sink)
 
     class Worker(worker_type):
         def __init__(self, *args, **kwargs):
@@ -172,7 +187,8 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                 idle_observed.set()
                 if (replacement_failure and self.index > 0
                         and not replacement_fault.startswith("register-")
-                        and (self.index == 1 or replacement_fault == "exhaustion")):
+                        and replacement_fault != "ready-busy"
+                        and (self.index == 1 or replacement_fault.startswith("exhaustion"))):
                     if replacement_fault == "unresolved":
                         self.unresolved = True
                     elif replacement_fault == "pipe":
@@ -207,13 +223,19 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                     raise bridge.ShadowUnavailable(category)
             if value["verb"] == "register" and registrations and idle_result == "admission-register-failure":
                 raise bridge.ShadowUnavailable("transport-failed")
-            result = service._process(value, service.source, value["sequence"] - 1, deadline)
+            result = ({"status": "unavailable", "reason": "native-failed"}
+                      if value["verb"] == "register" and registrations
+                      and replacement_fault == "register-refusal"
+                      else service._process(value, service.source, value["sequence"] - 1, deadline))
             if value["verb"] == "register":
                 registrations.append(dict(value))
                 registration_sources.append(self.index)
-                if self.index == 1 and replacement_fault.startswith("register-"):
+                if (self.index == 1 and replacement_fault.startswith("register-")
+                        and replacement_fault != "register-refusal"):
                     raise bridge.ShadowUnavailable(replacement_fault.removeprefix("register-"))
-            elif registrations and idle_result == "busy":
+            elif registrations and (idle_result == "busy" or
+                                    replacement_fault == "ready-busy" and self.index == 1
+                                    and value["verb"] == "ready"):
                 result = {**result, "status": "unavailable", "reason": "busy"}
             return {**result, "version": 1, "epoch": service.epoch,
                     "sequence": value["sequence"]}
@@ -247,6 +269,10 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                 self.unresolved = True
 
     def native(path, stop, *, retained):
+        nonlocal acquisition_failures
+        if replacement_fault == "acquisition-startup" and clients and acquisition_failures == 0:
+            acquisition_failures += 1
+            raise bridge.ShadowUnavailable("startup-unavailable")
         client = object.__new__(native_type)
         client.w, client.sid = service.w, service.sid
         client.bootstrap_path, client.manifest = path, dict(manifest)
@@ -321,7 +347,7 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
             await asyncio.to_thread(worker._thread.join, 1)
             assert not worker._thread.is_alive() and worker.stop_event.is_set()
             assert len(operations) == 1, "reconnect replayed the original MCP call"
-            assert len(clients) == (4 if replacement_fault == "exhaustion" else 2)
+            assert len(clients) == expected_clients
             assert registration_sources == ([0, 1] if replacement_fault.startswith("register-") else [0])
             assert service.retained_registration is None and service.custody is None
             assert all(resource.closed for resource in source_resources[0])
@@ -350,6 +376,50 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
             await worker.stop()
             await asyncio.to_thread(worker._thread.join, 1)
             assert not worker._thread.is_alive()
+    if replacement_failure and replacement_fault != "diagnostic-sink-failure":
+        diagnostic = (tmp_path / "private-home" / "logs" /
+                      f"codex-retained-client-{os.getpid()}.log").read_text(encoding="utf-8")
+        records = [line for line in diagnostic.splitlines() if "event=recovery " in line]
+        assert records
+        assert all(len(line) < 4096 and "worker=" in line and "episode=" in line
+                   and "attempt=" in line and "acquisition=" in line and "ready=" in line
+                   and "register=" in line and "terminal=" in line
+                   and "restart_allowed=" in line and "unresolved=" in line for line in records)
+        assert request["endpoint"] not in diagnostic
+        assert "actual-runtime" not in diagnostic and "turn_ref" not in diagnostic
+        fields = [dict(field.split("=", 1) for field in line.split() if "=" in field)
+                  for line in records]
+        assert len({field["worker"] for field in fields}) == 1
+        assert len({field["episode"] for field in fields}) == 1
+        assert all(field["worker"].isdigit() and len(field["worker"]) <= 9
+                   and field["episode"].isdigit() and len(field["episode"]) <= 6
+                   and field["attempt"].isdigit() and 1 <= int(field["attempt"]) <= 20
+                   for field in fields)
+        if replacement_fault in {"deadline", "transport-failed"}:
+            assert "terminal=ready-retry" in diagnostic and "terminal=success" in diagnostic
+        elif replacement_fault == "acquisition-startup":
+            assert "acquisition=startup-unavailable" in diagnostic
+            assert "terminal=retry" in diagnostic and "terminal=success" in diagnostic
+        elif replacement_fault == "ready-busy":
+            assert "ready=busy" in diagnostic and "terminal=retry" in diagnostic
+            assert "terminal=success" in diagnostic
+        elif replacement_fault.startswith("register-"):
+            assert ("register=refused" if replacement_fault == "register-refusal"
+                    else "register=error") in diagnostic
+            assert "terminal=register-terminal" in diagnostic
+        elif replacement_fault == "exhaustion":
+            assert "terminal=exhausted" in diagnostic
+        elif replacement_fault == "exhaustion-rotation":
+            rotated = diagnostic + (tmp_path / "private-home" / "logs" /
+                f"codex-retained-client-{os.getpid()}.log.1").read_text(encoding="utf-8")
+            assert "terminal=exhausted" in diagnostic and len(diagnostic.encode("utf-8")) <= 4096
+            assert len(rotated.encode("utf-8")) <= 8192
+        elif replacement_fault == "budget":
+            assert "terminal=window-exhausted" in diagnostic
+        elif replacement_fault == "backoff-stop":
+            assert "terminal=stopped" in diagnostic
+        if replacement_fault == "unresolved":
+            assert "unresolved=True" in diagnostic and "restart_allowed=False" in diagnostic
 
 
 def test_missing_saved_registration_is_not_reported_as_peer_mismatch(retained):
