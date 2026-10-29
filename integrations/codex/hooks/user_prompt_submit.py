@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -86,6 +87,9 @@ def main() -> None:
     wake_failure_recorded = False
     internal_wake = False
     wake_payload_emitted = False
+    item_query_worker = None
+    item_query_worker_started = False
+    item_query_parent_deadline = None
     try:
         start_hook_deadline(8, host_reserve=1)
         record_codex_hook_execution(script=__file__)
@@ -324,10 +328,8 @@ def main() -> None:
         ) if has_session else ""
         if len(content) >= 20:
             parent_deadline = _common.hook_deadline()
-            child_deadline = _common.HookDeadline(
-                parent_deadline.deadline, parent_deadline.reserve + 1.0, parent_deadline.clock,
-            )
-            response = pallium_request("POST", "/item-and-query", {
+            item_query_parent_deadline = parent_deadline
+            request_payload = {
                 "source_type": SOURCE_TYPE,
                 "source_id": f"cdx-{uuid.uuid4().hex[:12]}",
                 "content_type": "text/plain",
@@ -347,31 +349,84 @@ def main() -> None:
                 "source_turn_id": source_turn_key(payload.get("turn_id")),
                 "relay_name": relay_name_snapshot(relay_response)[1],
                 "relay_attribution_state": relay_name_snapshot(relay_response)[0],
-            }, deadline=child_deadline)
-            if response:
-                if isinstance(response.get("work_ref_metadata"), dict):
-                    warning = work_ref_warning(response["work_ref_metadata"])
-                    memory_budget = min(
-                        2400,
-                        max(
-                            0,
-                            4000
-                            - len(relay_output)
-                            - len(warning)
-                            - separator,
-                        ),
+            }
+            request_callable = pallium_request
+            request_result = []
+
+            def run_item_query(
+                request=request_callable,
+                body=request_payload,
+                deadline=parent_deadline,
+                result=request_result,
+            ):
+                response_value = None
+                try:
+                    response_value = request(
+                        "POST", "/item-and-query", body, deadline=deadline,
                     )
-                memory_output = format_injection(
-                    response.get("injectable_blocks", []),
-                    container_ref,
-                    budget_chars=memory_budget,
-                    thread_ref=session_id,
-                    actor_ref=actor_ref,
-                    agent_ref=AGENT_REF,
-                    visibility="private",
-                    work_ref=current_work_ref,
-                    request_source_item_id=response.get("source_item_id"),
+                except Exception:
+                    pass
+                try:
+                    completed_at = deadline.clock()
+                except Exception:
+                    completed_at = None
+                result.append((completed_at, response_value))
+
+            enrichment_cutoff = (
+                parent_deadline.deadline - parent_deadline.reserve - 1.0
+            )
+            try:
+                item_query_worker = threading.Thread(
+                    target=run_item_query, daemon=True,
                 )
+                item_query_worker.start()
+                item_query_worker_started = True
+            except Exception:
+                item_query_worker = None
+
+            response = None
+            if item_query_worker_started:
+                try:
+                    item_query_worker.join(timeout=max(
+                        0.0, enrichment_cutoff - parent_deadline.clock(),
+                    ))
+                except Exception:
+                    pass
+                if request_result:
+                    completed_at, candidate = request_result[0]
+                    if (
+                        completed_at is not None
+                        and completed_at <= enrichment_cutoff
+                        and isinstance(candidate, dict)
+                    ):
+                        response = candidate
+            if response:
+                try:
+                    response_warning = warning
+                    response_budget = memory_budget
+                    if isinstance(response.get("work_ref_metadata"), dict):
+                        response_warning = work_ref_warning(response["work_ref_metadata"])
+                        response_budget = min(
+                            2400,
+                            max(0, 4000 - len(relay_output) - len(response_warning) - separator),
+                        )
+                    enriched_output = format_injection(
+                        response.get("injectable_blocks", []),
+                        container_ref,
+                        budget_chars=response_budget,
+                        thread_ref=session_id,
+                        actor_ref=actor_ref,
+                        agent_ref=AGENT_REF,
+                        visibility="private",
+                        work_ref=current_work_ref,
+                        request_source_item_id=response.get("source_item_id"),
+                    )
+                except Exception:
+                    pass
+                else:
+                    if enriched_output:
+                        memory_output = enriched_output
+                        warning = response_warning
 
         output = "\n\n".join(part for part in (relay_output, memory_output, warning) if part)
         if output:
@@ -401,6 +456,18 @@ def main() -> None:
                 reason="unexpected_error",
             )
         print(f"pallium user_prompt_submit hook error: {exc}", file=sys.stderr)
+    finally:
+        if item_query_worker_started and item_query_worker is not None:
+            try:
+                remaining = max(
+                    0.0,
+                    item_query_parent_deadline.deadline
+                    - item_query_parent_deadline.clock()
+                    - item_query_parent_deadline.reserve,
+                )
+                item_query_worker.join(timeout=remaining)
+            except Exception:
+                pass
 
     sys.exit(0)
 

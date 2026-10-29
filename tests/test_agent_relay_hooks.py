@@ -2894,7 +2894,6 @@ def test_hook_deadline_clamps_requests_and_skips_when_exhausted(
 @pytest.mark.parametrize(
     ("kind", "relative"),
     [
-        ("prompt", "integrations/codex/hooks/user_prompt_submit.py"),
         ("session-start", "integrations/codex/hooks/session_start.py"),
     ],
 )
@@ -3014,6 +3013,396 @@ def test_codex_optional_memory_request_preserves_scope_emission_budget(
         assert logical_now[0] == optional_start
     elif queries:
         assert logical_now[0] == 6.0
+
+
+@pytest.mark.parametrize(
+    ("case", "capture_start"),
+    [
+        ("enrichment-exhausted", 6.1),
+        ("fast-success", 2.0),
+        ("slow-late-result", 5.6),
+        ("uncertain-parent-timeout", 5.6),
+        ("emit-failure", 5.6),
+        ("format-failure", 2.0),
+        ("malformed-list", 2.0),
+        ("unsafe-source", 2.0),
+        ("malformed-block", 2.0),
+        ("global-exhaustion", 7.0),
+    ],
+)
+def test_codex_prompt_capture_survives_enrichment_cutoff(
+    client, monkeypatch, tmp_path, capsys, case, capture_start,
+):
+    """Keep the single user capture alive while optional enrichment yields to scope."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+    import urllib.request
+
+    from core.contracts import QueryResult
+    from core.models import InjectableBlock
+
+    hook = _load(f"prompt_capture_{case}", "integrations/codex/hooks/user_prompt_submit.py")
+    common = hook._common
+    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(common, "STATE_DIR", tmp_path / "state")
+    container_ref = "git:example/repo"
+    actor_ref = "actor"
+    prompt = "Preserve this migration decision before enriching the prompt."
+    logical_now = [0.0]
+    capture_started = threading.Event()
+    release_capture = threading.Event()
+    capture_finished = threading.Event()
+    request_started = threading.Event()
+    request_finished = threading.Event()
+    scope_emitted = threading.Event()
+    emit_during_request = []
+    capture_response = {}
+    capture_errors = []
+    capture_requests = []
+    hook_result = {}
+    hook_finished = threading.Event()
+    acknowledgements = []
+    hold_capture = case in {
+        "slow-late-result", "uncertain-parent-timeout", "emit-failure",
+    }
+    expects_capture = case != "global-exhaustion"
+
+    def start_deadline(seconds, *, host_reserve=0.0):
+        assert seconds == 8 and host_reserve == 1
+        return common.start_hook_deadline(
+            seconds, host_reserve=host_reserve, clock=lambda: logical_now[0],
+        )
+
+    monkeypatch.setattr(hook, "start_hook_deadline", start_deadline)
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(tmp_path), "session_id": "target-session", "prompt": prompt,
+    })
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_args: actor_ref)
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_args: container_ref)
+    monkeypatch.setattr(hook, "discover_work_refs", lambda *_args: common.WorkRefDiscovery())
+    monkeypatch.setattr(hook, "check_dedup", lambda *_args: False)
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_args: ([], 0))
+    monkeypatch.setattr(hook, "record_codex_hook_execution", lambda **_kwargs: None)
+    monkeypatch.setattr(hook, "record_codex_wake_event", lambda **_kwargs: None)
+
+    def empty_turn(*_args, **_kwargs):
+        logical_now[0] = capture_start
+        return _turn_response()
+
+    monkeypatch.setattr(hook, "relay_turn", empty_turn)
+    monkeypatch.setattr(
+        hook, "acknowledge_relay",
+        lambda *args, **kwargs: acknowledgements.append((args, kwargs)),
+    )
+    # Keep the combined route's retrieval bounded while exercising real capture,
+    # route validation, persistence, and source-context readback.
+    injected = case in {
+        "fast-success", "format-failure", "unsafe-source", "malformed-block",
+    }
+    query_result = QueryResult(
+        results=[],
+        injectable_blocks=[InjectableBlock(
+            result_id="memory-result", block_type="memory", title="Prior decision",
+            text="optional enrichment", evidence=[], memory_object_id="memory-1",
+        )] if injected else [],
+    )
+    monkeypatch.setattr(client.app.state.pallium_service, "query", lambda *_args, **_kwargs: query_result)
+
+    class CaptureHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            capture_started.set()
+            capture_requests.append(self.path)
+            try:
+                if hold_capture and not release_capture.wait(5):
+                    raise TimeoutError("test did not release held capture")
+                response = client.post(
+                    self.path, content=body,
+                    headers={"content-type": "application/json"},
+                )
+                capture_response.update(status=response.status_code, body=response.json())
+                response_body = response.content
+                if case == "malformed-list":
+                    response_body = json.dumps(["malformed response"]).encode("utf-8")
+                elif case == "unsafe-source":
+                    response_body = json.dumps({
+                        **response.json(), "source_item_id": "bad\nsource-id",
+                    }).encode("utf-8")
+                elif case == "malformed-block":
+                    response_body = json.dumps({
+                        **response.json(), "injectable_blocks": [1],
+                    }).encode("utf-8")
+                self.send_response(response.status_code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response_body)))
+                self.end_headers()
+                try:
+                    self.wfile.write(response_body)
+                except OSError:
+                    pass
+            except BaseException as exc:
+                capture_errors.append(exc)
+                try:
+                    self.send_error(500)
+                except OSError:
+                    pass
+            finally:
+                capture_finished.set()
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), CaptureHandler)
+    server.daemon_threads = True
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    monkeypatch.setattr(common, "PALLIUM_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+    monkeypatch.setattr(
+        common, "_build_opener",
+        lambda *_handlers: urllib.request.build_opener(urllib.request.ProxyHandler({})),
+    )
+
+    original_request = hook.pallium_request
+
+    def observe_request(*args, **kwargs):
+        request_started.set()
+        try:
+            return original_request(*args, **kwargs)
+        finally:
+            request_finished.set()
+
+    monkeypatch.setattr(hook, "pallium_request", observe_request)
+    original_emit = hook.emit_context
+    emit_attempted = threading.Event()
+
+    def observe_emit(*args, **kwargs):
+        if case == "emit-failure":
+            logical_now[0] = 6.1
+            emit_attempted.set()
+            raise OSError("controlled stdout failure")
+        result = original_emit(*args, **kwargs)
+        emit_during_request.append(not request_finished.is_set())
+        if case in {"slow-late-result", "uncertain-parent-timeout"}:
+            logical_now[0] = 8.0 if case == "uncertain-parent-timeout" else 6.1
+        scope_emitted.set()
+        return result
+
+    monkeypatch.setattr(hook, "emit_context", observe_emit)
+    if case == "format-failure":
+        original_format = hook.format_injection
+
+        def fail_enrichment(blocks, *args, **kwargs):
+            if blocks:
+                raise ValueError("controlled enrichment formatting failure")
+            return original_format(blocks, *args, **kwargs)
+
+        monkeypatch.setattr(hook, "format_injection", fail_enrichment)
+
+    def run_hook():
+        try:
+            hook.main()
+        except SystemExit as exc:
+            hook_result["exit"] = exc.code
+        except BaseException as exc:
+            hook_result["error"] = exc
+        finally:
+            hook_result["request_finished_at_exit"] = request_finished.is_set()
+            hook_finished.set()
+
+    server_thread.start()
+    worker = threading.Thread(target=run_hook, daemon=True)
+    worker.start()
+    emitted_while_capture_live = False
+    request_pending_at_parent_exit = False
+    try:
+        if case == "global-exhaustion":
+            assert hook_finished.wait(3), "globally exhausted hook did not settle"
+        else:
+            assert request_started.wait(3), "the hook did not attempt its one capture request"
+        if hold_capture:
+            observed_output = emit_attempted if case == "emit-failure" else scope_emitted
+            assert observed_output.wait(1.0), "scope handling did not reach the enrichment cutoff"
+            emitted_while_capture_live = not request_finished.is_set()
+            if case == "uncertain-parent-timeout":
+                assert hook_finished.wait(3), "parent-expired hook did not finish"
+                request_pending_at_parent_exit = not request_finished.is_set()
+        else:
+            assert hook_finished.wait(3), "the exhausted-enrichment capture did not settle"
+    finally:
+        release_capture.set()
+        capture_settled = capture_finished.wait(4) if expects_capture else not capture_started.is_set()
+        request_settled = request_finished.wait(4) if request_started.is_set() else True
+        hook_settled = hook_finished.wait(4)
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=2)
+        worker.join(timeout=2)
+
+    assert capture_settled and hook_settled and not worker.is_alive()
+    assert not server_thread.is_alive()
+    assert not capture_errors
+    if expects_capture:
+        assert capture_response.get("status") == 200
+        assert capture_requests == ["/item-and-query"]
+        assert request_settled
+    else:
+        assert capture_requests == [] and capture_response == {}
+    assert hook_result.get("exit") == 0 and "error" not in hook_result
+    assert acknowledgements == []
+    if case in {"slow-late-result", "uncertain-parent-timeout", "emit-failure"}:
+        assert emitted_while_capture_live, "hook output handling must happen while capture remains in flight"
+    if case in {"slow-late-result", "uncertain-parent-timeout"}:
+        assert emit_during_request == [True]
+    if case == "uncertain-parent-timeout":
+        assert request_pending_at_parent_exit and not hook_result["request_finished_at_exit"]
+    if case == "emit-failure":
+        assert hook_result["request_finished_at_exit"]
+
+    output_lines = [line for line in capsys.readouterr().out.splitlines() if line]
+    if case in {"global-exhaustion", "emit-failure"}:
+        assert output_lines == []
+        if expects_capture:
+            source_item_id = capture_response["body"]["source_item_id"]
+            stored = client.get(
+                f"/source/{source_item_id}/context",
+                params={"container_ref": container_ref, "query_actor_ref": actor_ref,
+                        "query_visibility": "private"},
+            )
+            assert stored.status_code == 200, stored.text
+            assert any(item["content"] == prompt for item in stored.json()["items"])
+        return
+
+    assert expects_capture
+    assert len(output_lines) == 1
+    output = json.loads(output_lines[0])["hookSpecificOutput"]
+    assert output["hookEventName"] == "UserPromptSubmit"
+    context = output["additionalContext"]
+    scope_line = next(line for line in context.splitlines() if line.startswith("[Pallium scope — "))
+    scope = json.loads(scope_line.removeprefix("[Pallium scope — ").removesuffix("]"))
+    assert {key: scope[key] for key in (
+        "container_ref", "thread_ref", "actor_ref", "agent_ref", "visibility",
+    )} == {
+        "container_ref": container_ref,
+        "thread_ref": "target-session",
+        "actor_ref": actor_ref,
+        "agent_ref": "codex",
+        "visibility": "private",
+    }
+    if case == "fast-success":
+        assert "optional enrichment" in context
+        assert scope["request_source_item_id"] == capture_response["body"]["source_item_id"]
+    else:
+        assert "optional enrichment" not in context
+        assert "request_source_item_id" not in scope
+    assert "bad\nsource-id" not in context
+
+    source_item_id = capture_response["body"]["source_item_id"]
+    stored = client.get(
+        f"/source/{source_item_id}/context",
+        params={
+            "container_ref": container_ref,
+            "query_actor_ref": actor_ref,
+            "query_visibility": "private",
+        },
+    )
+    assert stored.status_code == 200, stored.text
+    assert any(
+        item["source_item_id"] == source_item_id and item["content"] == prompt
+        for item in stored.json()["items"]
+    )
+
+
+@pytest.mark.parametrize(
+    "failure", ["constructor", "start", "completion-clock", "join", "late-completion"],
+)
+def test_codex_prompt_worker_failures_preserve_scope_without_replay(
+    monkeypatch, tmp_path, capsys, failure,
+):
+    from types import SimpleNamespace
+
+    hook = _load(f"prompt_worker_failure_{failure}", "integrations/codex/hooks/user_prompt_submit.py")
+    common = hook._common
+    now = [0.0]
+    clock_calls = [0]
+    requests = []
+    joins = []
+    acknowledgements = []
+
+    def clock():
+        clock_calls[0] += 1
+        if failure == "completion-clock" and clock_calls[0] == 2:
+            raise RuntimeError("controlled completion clock failure")
+        return now[0]
+
+    monkeypatch.setattr(hook, "start_hook_deadline", lambda seconds, **kwargs:
+        common.start_hook_deadline(seconds, host_reserve=1, clock=clock))
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(tmp_path), "session_id": "target-session",
+        "prompt": "Preserve this worker-failure capture attempt.",
+    })
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_args: "actor")
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_args: "git:example/repo")
+    monkeypatch.setattr(hook, "discover_work_refs", lambda *_args: common.WorkRefDiscovery())
+    monkeypatch.setattr(hook, "check_dedup", lambda *_args: False)
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_args: ([], 0))
+    monkeypatch.setattr(hook, "record_codex_hook_execution", lambda **_kwargs: None)
+    monkeypatch.setattr(hook, "record_codex_wake_event", lambda **_kwargs: None)
+    monkeypatch.setattr(hook, "relay_turn", lambda *_args, **_kwargs: _turn_response())
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda *args, **kwargs: acknowledgements.append(args))
+    def request(*args, **kwargs):
+        requests.append((args, kwargs))
+        if failure == "late-completion":
+            now[0] = 6.1
+            return {
+                "source_item_id": "source-late",
+                "injectable_blocks": [{
+                    "title": "Late result", "memory_object_id": "late-memory",
+                    "text": "late enrichment must be discarded", "expand_available": False,
+                }],
+            }
+        return {"source_item_id": "source-1", "injectable_blocks": []}
+
+    monkeypatch.setattr(hook, "pallium_request", request)
+
+    class ControlledThread:
+        def __init__(self, *, target, daemon):
+            assert daemon is True
+            if failure == "constructor":
+                raise RuntimeError("controlled thread constructor failure")
+            self.target = target
+
+        def start(self):
+            if failure == "start":
+                raise RuntimeError("controlled thread start failure")
+            self.target()
+
+        def join(self, timeout=None):
+            joins.append(timeout)
+            if failure == "join":
+                raise RuntimeError("controlled thread join failure")
+
+    monkeypatch.setattr(hook, "threading", SimpleNamespace(Thread=ControlledThread))
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+
+    assert exited.value.code == 0
+    assert acknowledgements == []
+    assert len(requests) == (0 if failure in {"constructor", "start"} else 1)
+    assert len(joins) == (0 if failure in {"constructor", "start"} else 2)
+    output_lines = [line for line in capsys.readouterr().out.splitlines() if line]
+    assert len(output_lines) == 1
+    output = json.loads(output_lines[0])["hookSpecificOutput"]
+    assert output["hookEventName"] == "UserPromptSubmit"
+    context = output["additionalContext"]
+    assert "[Pallium scope — " in context
+    assert "Preserve this worker-failure capture attempt." not in context
+    if failure in {"constructor", "start", "completion-clock", "late-completion"}:
+        assert "request_source_item_id" not in context
+    if failure == "late-completion":
+        assert "late enrichment must be discarded" not in context
+    if failure in {"constructor", "start"}:
+        assert joins == []
+    if failure == "join":
+        assert len(joins) == 2
 
 
 @pytest.mark.parametrize(
