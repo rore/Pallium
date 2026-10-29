@@ -88,6 +88,7 @@ def test_hook_redelivery_after_emit_or_ack_gap_preserves_exact_id_and_receipt(
 
     monkeypatch.setattr(hook, "_exit_blocked_wake", blocked_exit)
     with pytest.raises(SystemExit) as first_exit:
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
     assert first_exit.value.code == (2 if failure == "emit" else 0)
     assert blocked_exits == ([2] if failure == "emit" else [])
@@ -102,6 +103,7 @@ def test_hook_redelivery_after_emit_or_ack_gap_preserves_exact_id_and_receipt(
         record.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
     gap = False
     with pytest.raises(SystemExit) as retry_exit:
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
     assert retry_exit.value.code == 0
     current = claims[-1]
