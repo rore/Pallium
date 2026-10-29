@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import time
+
+_HOOK_STARTED_AT = time.monotonic()
+
 import importlib.util
 import json
 import os
 import re
 import sys
 import threading
-import time
 import uuid
 from pathlib import Path
 
@@ -91,7 +94,10 @@ def main() -> None:
     item_query_worker_started = False
     item_query_parent_deadline = None
     try:
-        start_hook_deadline(8, host_reserve=1)
+        start_hook_deadline(
+            max(0.0, 8.0 - (time.monotonic() - _HOOK_STARTED_AT)),
+            host_reserve=1,
+        )
         record_codex_hook_execution(script=__file__)
         payload = read_hook_input()
         session_id = payload.get("session_id")

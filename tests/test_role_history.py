@@ -443,6 +443,8 @@ def test_codex_hooks_capture_start_name_and_link_delayed_stop(client, monkeypatc
     monkeypatch.setattr(prompt_hook._common, "_HOOK_DEADLINE", None)
     monkeypatch.setattr(prompt_hook, "start_hook_deadline", lambda *a, **k:
         prompt_hook._common.start_hook_deadline(*a, **k, clock=lambda: 0.0))
+    monkeypatch.setattr(prompt_hook, "time", SimpleNamespace(monotonic=lambda: 0.0))
+    prompt_hook._HOOK_STARTED_AT = 0.0
     monkeypatch.setattr(prompt_hook, "record_codex_hook_execution", lambda **k: True)
     monkeypatch.setattr(prompt_hook, "record_codex_wake_event", lambda **k: None)
     monkeypatch.setattr(prompt_hook, "resolve_container_ref", lambda *a, **k: container_ref)
@@ -464,6 +466,7 @@ def test_codex_hooks_capture_start_name_and_link_delayed_stop(client, monkeypatc
             "cwd": str(tmp_path), "session_id": session_id, "turn_id": turn_id, "prompt": prompt,
         })
         with pytest.raises(SystemExit) as exit_result:
+            prompt_hook._HOOK_STARTED_AT = 0.0
             prompt_hook.main()
         assert exit_result.value.code == 0
 

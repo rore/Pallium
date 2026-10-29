@@ -7,9 +7,12 @@ broadcasting on user-initiated clear in Codex.
 
 from __future__ import annotations
 
+import time
+
+_HOOK_STARTED_AT = time.monotonic()
+
 import importlib.util
 import sys
-import time
 from pathlib import Path
 
 _common_path = str(Path(__file__).resolve().parent / "common.py")
@@ -55,7 +58,10 @@ def _fetch_retrieval_fallback(container_ref: str, actor_ref: str) -> list[dict]:
 
 def main() -> None:
     try:
-        start_hook_deadline(8, host_reserve=1)
+        start_hook_deadline(
+            max(0.0, 8.0 - (time.monotonic() - _HOOK_STARTED_AT)),
+            host_reserve=1,
+        )
         payload = read_hook_input()
         source = payload.get("source", "")
         if source == "clear":

@@ -5,6 +5,7 @@ import io
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -59,6 +60,7 @@ def isolated_hook_state(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(profile))
     sessions = tmp_path / "sessions"
     state = tmp_path / "state"
+    hook_started_at = time.monotonic()
     for module in list(sys.modules.values()):
         if module is None:
             continue
@@ -68,6 +70,8 @@ def isolated_hook_state(monkeypatch, tmp_path):
                 monkeypatch.setattr(state_module, "SESSIONS_DIR", sessions, raising=False)
             if hasattr(state_module, "STATE_DIR"):
                 monkeypatch.setattr(state_module, "STATE_DIR", state, raising=False)
+            if hasattr(state_module, "_HOOK_STARTED_AT"):
+                monkeypatch.setattr(state_module, "_HOOK_STARTED_AT", hook_started_at, raising=False)
 
 def _load(name: str, relative: str):
     path = ROOT / relative
@@ -850,6 +854,7 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
 
     try:
         hook_started = time.monotonic()
+        hook._HOOK_STARTED_AT = hook_started
         with pytest.raises(SystemExit) as exited:
             hook.main()
         hook_elapsed = time.monotonic() - hook_started
@@ -1019,6 +1024,7 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
     monkeypatch.setattr(hook, "record_codex_wake_event", record)
     try:
         server_thread.start()
+        hook._HOOK_STARTED_AT = time.monotonic()
         with pytest.raises(SystemExit) as exited:
             hook.main()
         assert exited.value.code == 0
@@ -1033,6 +1039,7 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
         assert times["status"] == 409
         assert type(requests[0]["claim_expires_at_ms"]) is int
         events.clear()
+        hook._HOOK_STARTED_AT = time.monotonic()
         with pytest.raises(SystemExit) as fresh:
             hook.main()
         assert fresh.value.code == 0
@@ -1732,6 +1739,7 @@ def test_codex_session_start_allows_bounded_delayed_claim_response(client, monke
     thread.start()
     try:
         started = time.monotonic()
+        hook._HOOK_STARTED_AT = started
         with pytest.raises(SystemExit) as exited:
             hook.main()
         assert exited.value.code == 0 and time.monotonic() - started < 7
@@ -2909,6 +2917,8 @@ def test_hook_deadline_clamps_requests_and_skips_when_exhausted(
 def test_codex_optional_memory_request_preserves_scope_emission_budget(
     monkeypatch, capsys, tmp_path, kind, relative, case, optional_start, queries, emits, enriched, times_out,
 ):
+    from types import SimpleNamespace
+
     hook = _load(f"scope_reserve_{kind}_{case}", relative)
     common = hook._common
     monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "sessions")
@@ -2920,6 +2930,9 @@ def test_codex_optional_memory_request_preserves_scope_emission_budget(
 
     def clock():
         return logical_now[0]
+
+    monkeypatch.setattr(hook, "_HOOK_STARTED_AT", 0.0, raising=False)
+    monkeypatch.setattr(hook, "time", SimpleNamespace(monotonic=clock))
 
     def start_deadline(seconds, *, host_reserve=0.0):
         assert seconds == 8 and host_reserve == 1
@@ -3037,6 +3050,7 @@ def test_codex_prompt_capture_survives_enrichment_cutoff(
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import threading
     import urllib.request
+    from types import SimpleNamespace
 
     from core.contracts import QueryResult
     from core.models import InjectableBlock
@@ -3049,6 +3063,8 @@ def test_codex_prompt_capture_survives_enrichment_cutoff(
     actor_ref = "actor"
     prompt = "Preserve this migration decision before enriching the prompt."
     logical_now = [0.0]
+    monkeypatch.setattr(hook, "_HOOK_STARTED_AT", 0.0, raising=False)
+    monkeypatch.setattr(hook, "time", SimpleNamespace(monotonic=lambda: logical_now[0]))
     capture_started = threading.Event()
     release_capture = threading.Event()
     capture_finished = threading.Event()
@@ -3318,8 +3334,10 @@ def test_codex_prompt_worker_failures_preserve_scope_without_replay(
     monkeypatch, tmp_path, capsys, failure,
 ):
     from types import SimpleNamespace
+    import time
 
     hook = _load(f"prompt_worker_failure_{failure}", "integrations/codex/hooks/user_prompt_submit.py")
+    monkeypatch.setattr(hook, "_HOOK_STARTED_AT", time.monotonic(), raising=False)
     common = hook._common
     now = [0.0]
     clock_calls = [0]
@@ -3685,3 +3703,294 @@ def test_configured_actor_hook_registers_and_delivers_across_git_containers(
     if advance_empty_optional_lookup:
         assert discoveries and all(not discovery.structural_refs for discovery in discoveries)
         assert lookup_calls == []
+
+
+_CODEX_ENTRY_PROBE_DRIVER = r'''
+import importlib.machinery
+import os
+from pathlib import Path
+import runpy
+import sys
+import time
+
+delay = float(sys.argv[2])
+original = importlib.machinery.SourceFileLoader.exec_module
+Path.home = classmethod(lambda cls: Path(sys.argv[3]))
+
+def observed_exec_module(loader, module):
+    original(loader, module)
+    if getattr(loader, "name", None) == "codex_common":
+        if delay:
+            time.sleep(delay)
+        module.PALLIUM_BASE_URL = "http://127.0.0.1:" + os.environ["PALLIUM_PORT"]
+        module.resolve_container_ref = lambda *_args, **_kwargs: "git:example.test/startup-probe"
+        module.derive_container_ref = lambda *_args, **_kwargs: "git:example.test/startup-probe"
+        module.derive_actor_ref = lambda *_args, **_kwargs: "startup-probe-actor"
+        module.discover_work_refs = lambda *_args, **_kwargs: module.WorkRefDiscovery()
+
+importlib.machinery.SourceFileLoader.exec_module = observed_exec_module
+runpy.run_path(sys.argv[1], run_name="__main__")
+'''
+
+
+def _run_codex_entry_probe(hook_path, payload, delay, home, port, release_response):
+    import os
+    import threading
+    import time
+
+    env = {key: os.environ[key] for key in (
+        "PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP",
+    ) if key in os.environ}
+    env.update({
+        "PALLIUM_PORT": str(port), "PALLIUM_HOOK_ACTOR_REF": "startup-probe-actor",
+        "PYTHONUTF8": "1",
+    })
+    started = time.monotonic()
+    deadline = started + 8.0
+    process = subprocess.Popen(
+        [sys.executable, "-X", "utf8", "-c", _CODEX_ENTRY_PROBE_DRIVER,
+         str(hook_path), str(delay), str(home)],
+        cwd=home, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    output = []
+    output_count = [0]
+    output_at = [None]
+    output_ready = threading.Event()
+
+    def read_stdout():
+        assert process.stdout is not None
+        for line in process.stdout:
+            output_count[0] += 1
+            if output_at[0] is None:
+                output_at[0] = time.monotonic()
+                output.append(line[:8192])
+                output_ready.set()
+
+    stdout_reader = threading.Thread(target=read_stdout, daemon=True)
+    stdout_reader.start()
+    assert process.stdin is not None
+    process.stdin.write(json.dumps(payload).encode("utf-8"))
+    process.stdin.close()
+    timed_out = False
+    process_finished = None
+    try:
+        while not output_ready.is_set() and process.poll() is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            output_ready.wait(min(0.05, remaining))
+        remaining = max(0.0, deadline - time.monotonic())
+        try:
+            returncode = process.wait(timeout=remaining)
+            process_finished = time.monotonic()
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            process.kill()
+            returncode = process.wait(timeout=2)
+            process_finished = time.monotonic()
+    finally:
+        release_response.set()
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=2)
+        stdout_reader.join(timeout=2)
+    return {
+        "returncode": returncode, "timed_out": timed_out,
+        "process_started_at": started,
+        "elapsed": None if process_finished is None else process_finished - started,
+        "process_finished_at": process_finished,
+        "stdout_count": output_count[0], "stdout": output,
+        "stdout_at": output_at[0],
+        "readers_drained": not stdout_reader.is_alive(),
+    }
+
+
+def _codex_entry_probe_server(client, hold_path):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+    import time
+
+    release_response = threading.Event()
+    request_finished = threading.Event()
+    state = {"paths": [], "errors": [], "response_write_errors": [], "source_item_id": None}
+
+    class Server(ThreadingHTTPServer):
+        daemon_threads = False
+        block_on_close = True
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            held = self.path == hold_path
+            state["paths"].append(self.path)
+            try:
+                response = client.post(
+                    self.path, content=body,
+                    headers={"content-type": "application/json"},
+                )
+                if self.path == "/item-and-query":
+                    state["source_item_id"] = response.json().get("source_item_id")
+                if self.path == hold_path:
+                    release_response.wait(9)
+                try:
+                    self.send_response(response.status_code)
+                    self.send_header("Content-Type", response.headers.get("content-type", "application/json"))
+                    self.send_header("Content-Length", str(len(response.content)))
+                    self.end_headers()
+                    self.wfile.write(response.content)
+                except OSError as exc:
+                    state["response_write_errors"].append(type(exc).__name__)
+            except BaseException as exc:
+                state["errors"].append(type(exc).__name__)
+            finally:
+                if held:
+                    request_finished.set()
+
+        def log_message(self, *_args):
+            pass
+
+    server = Server(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, release_response, request_finished, state
+
+
+def _assert_probe_scope(result, event_name):
+    assert result["returncode"] == 0
+    assert not result["timed_out"] and result["elapsed"] < 8.0
+    assert result["stdout_at"] is not None
+    assert result["stdout_at"] - result["process_started_at"] < 8.0
+    assert result["readers_drained"]
+    assert result["stdout_count"] == 1 and len(result["stdout"]) == 1
+    output = json.loads(result["stdout"][0].decode("utf-8"))["hookSpecificOutput"]
+    assert output["hookEventName"] == event_name
+    context = output["additionalContext"]
+    scope_line = next(line for line in context.splitlines() if line.startswith("[Pallium scope — "))
+    scope = json.loads(scope_line.removeprefix("[Pallium scope — ").removesuffix("]"))
+    assert {key: scope[key] for key in (
+        "container_ref", "thread_ref", "actor_ref", "agent_ref", "visibility",
+    )} == {
+        "container_ref": "git:example.test/startup-probe",
+        "thread_ref": "startup-probe-session",
+        "actor_ref": "startup-probe-actor", "agent_ref": "codex", "visibility": "private",
+    }
+    return context
+
+
+@pytest.mark.parametrize(
+    ("kind", "delay"),
+    [(kind, delay) for kind in ("prompt", "session-start") for delay in (0.0, 2.0)],
+    ids=["prompt-no-delay", "prompt-two-second-delay", "session-start-no-delay", "session-start-two-second-delay"],
+)
+def test_codex_hook_subprocess_preserves_scope_across_startup_delay(
+    client, monkeypatch, tmp_path, kind, delay,
+):
+    from core.contracts import QueryResult
+    from core.models import InjectableBlock
+
+    is_prompt = kind == "prompt"
+    held_path = "/item-and-query" if is_prompt else "/query"
+    query_result = QueryResult(results=[], injectable_blocks=[InjectableBlock(
+        result_id="startup-probe-result", block_type="memory", title="Probe memory",
+        text="late optional enrichment", evidence=[], memory_object_id="probe-memory",
+    )])
+    query_calls = []
+    def query(*_args, **_kwargs):
+        query_calls.append(1)
+        return query_result
+
+    monkeypatch.setattr(
+        client.app.state.pallium_service, "query", query,
+    )
+    server, server_thread, release, request_finished, server_state = _codex_entry_probe_server(client, held_path)
+    private_home = tmp_path / "private-home"
+    private_home.mkdir()
+    payload = {"cwd": str(private_home), "session_id": "startup-probe-session"}
+    if is_prompt:
+        payload.update(turn_id="startup-probe-turn", prompt="Record this generic startup probe once.")
+    else:
+        payload["source"] = "resume"
+    try:
+        result = _run_codex_entry_probe(
+            ROOT / ("integrations/codex/hooks/user_prompt_submit.py" if is_prompt
+                    else "integrations/codex/hooks/session_start.py"),
+            payload, delay, private_home, server.server_port, release,
+        )
+    finally:
+        release.set()
+        request_finished.wait(3)
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=2)
+    context = _assert_probe_scope(result, "UserPromptSubmit" if is_prompt else "SessionStart")
+    assert server_state["paths"] == ["/relay/turn", held_path]
+    assert not server_state["errors"]
+    assert request_finished.is_set()
+    assert query_calls == [1], "optional query was replayed"
+    if is_prompt:
+        assert "late optional enrichment" not in context
+        source_item_id = server_state["source_item_id"]
+        assert isinstance(source_item_id, str) and source_item_id
+        stored = client.get(
+            f"/source/{source_item_id}/context",
+            params={"container_ref": "git:example.test/startup-probe",
+                    "query_actor_ref": "startup-probe-actor", "query_visibility": "private"},
+        )
+        assert stored.status_code == 200, stored.text
+        assert any(item["content"] == payload["prompt"] for item in stored.json()["items"])
+    assert not server_thread.is_alive()
+
+
+@pytest.mark.parametrize(
+    ("kind", "relative"),
+    [
+        ("prompt", "integrations/codex/hooks/user_prompt_submit.py"),
+        ("session-start", "integrations/codex/hooks/session_start.py"),
+    ],
+)
+def test_codex_hooks_exhausted_at_main_entry_skip_http(monkeypatch, tmp_path, capsys, kind, relative):
+    from types import SimpleNamespace
+
+    hook = _load(f"codex_{kind}_entry_exhausted", relative)
+    common = hook._common
+    network_calls = []
+    now = [10.0]
+    requested_budgets = []
+    monkeypatch.setattr(hook, "_HOOK_STARTED_AT", 0.0, raising=False)
+    monkeypatch.setattr(hook, "time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    def start_deadline(seconds, *, host_reserve=0.0):
+        requested_budgets.append((seconds, host_reserve))
+        return common.start_hook_deadline(
+            seconds, host_reserve=host_reserve, clock=lambda: now[0],
+        )
+
+    monkeypatch.setattr(hook, "start_hook_deadline", start_deadline)
+    payload = {"cwd": str(tmp_path), "session_id": "startup-probe-session", "source": "resume"}
+    if kind == "prompt":
+        payload["prompt"] = "Record this generic startup probe once."
+        monkeypatch.setattr(hook, "record_codex_hook_execution", lambda **_kwargs: None)
+        monkeypatch.setattr(hook, "record_codex_wake_event", lambda **_kwargs: None)
+        monkeypatch.setattr(hook, "check_dedup", lambda *_args: False)
+        monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_args: ([], 0))
+        monkeypatch.setattr(hook, "resolve_container_ref", lambda *_args: "git:example.test/startup-probe")
+        monkeypatch.setattr(hook, "discover_work_refs", lambda *_args: common.WorkRefDiscovery())
+    else:
+        monkeypatch.setattr(hook, "derive_container_ref", lambda *_args: "git:example.test/startup-probe")
+        monkeypatch.setattr(hook, "pin_container", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_args: "startup-probe-actor")
+
+    def observe_request(request, *, timeout):
+        network_calls.append((request.full_url, timeout))
+        raise TimeoutError("controlled private no-response transport")
+
+    monkeypatch.setattr(common, "_urlopen", observe_request)
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+    assert exited.value.code == 0
+    assert requested_budgets == [(0.0, 1)]
+    assert network_calls == []
+    assert common.remaining_safe_time() == 0
+    assert capsys.readouterr().out == ""
