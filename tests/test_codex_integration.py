@@ -1021,9 +1021,14 @@ def test_codex_injection_scope_is_exact_bounded_and_optional() -> None:
 
 def test_codex_prompt_scope_uses_host_session_and_never_fabricates_unknown(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_hook_transport: list[str],
 ) -> None:
     from integrations.codex.hooks import user_prompt_submit as hook
 
+    monkeypatch.setattr(hook._common, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(hook._common, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(hook, "relay_turn", lambda *_args, **_kwargs: None)
     requests: list[dict] = []
     contexts: list[str] = []
     payload = {"cwd": ".", "session_id": "codex:task:1", "prompt": "Resume the prior implementation work now."}
@@ -1037,13 +1042,14 @@ def test_codex_prompt_scope_uses_host_session_and_never_fabricates_unknown(
         lambda *_args, **_kwargs: {"pallium_work_refs": ["git-branch:feature/demo"]},
     )
 
-    def request(_method: str, _path: str, body: dict) -> dict:
+    def request(_method: str, _path: str, body: dict, *, deadline=None) -> dict:
         requests.append(body)
         return {"source_item_id": "request-codex-1", "injectable_blocks": []}
 
     monkeypatch.setattr(hook, "pallium_request", request)
     monkeypatch.setattr(hook, "emit_context", lambda text, _event: contexts.append(text))
     with pytest.raises(SystemExit):
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
     assert requests[-1]["thread_ref"] == "codex:task:1"
     assert requests[-1]["metadata"] == {
@@ -1057,6 +1063,7 @@ def test_codex_prompt_scope_uses_host_session_and_never_fabricates_unknown(
     payload = {"cwd": ".", "prompt": "Resume the prior implementation work now."}
     monkeypatch.setattr(hook, "check_dedup", lambda *_args: pytest.fail("missing identity must skip dedup"))
     with pytest.raises(SystemExit):
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
     assert requests[-1]["thread_ref"] is None
     assert len(contexts) == 1
@@ -1100,6 +1107,7 @@ def test_codex_relay_delivery_bypasses_identical_prompt_dedup(
     )
 
     with pytest.raises(SystemExit):
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
 
     assert events == ["relay", "emit", "ack"]
@@ -1135,6 +1143,7 @@ def test_codex_no_relay_still_dedups_before_ingestion(
         hook, "pallium_request", lambda *_args, **_kwargs: pytest.fail("ingestion ran")
     )
 
+    hook._HOOK_STARTED_AT = hook.time.monotonic()
     hook.main()
 
     assert events == ["relay", "dedup"]
@@ -1847,6 +1856,7 @@ def test_codex_setup_then_actual_hook_execution_verifies_matching_entrypoint(
     assert marker["state"] == "review_required"
     monkeypatch.setattr(hook, "read_hook_input", lambda: {"prompt": ""})
 
+    hook._HOOK_STARTED_AT = hook.time.monotonic()
     hook.main()
 
     assert codex_readiness.read(tmp_path)["state"] == "verified"
@@ -1923,6 +1933,7 @@ def test_codex_user_prompt_marker_failure_does_not_block_relay_delivery(
     )
 
     with pytest.raises(SystemExit) as exc:
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
 
     assert exc.value.code == 0
@@ -1945,6 +1956,7 @@ def test_codex_user_prompt_entrypoint_observes_execution_before_input(
         "read_hook_input",
         lambda: calls.append("input") or {"prompt": ""},
     )
+    user_prompt_submit._HOOK_STARTED_AT = user_prompt_submit.time.monotonic()
     user_prompt_submit.main()
     assert calls == ["observed", "input"]
 
