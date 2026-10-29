@@ -42,7 +42,7 @@ Qualification limits -> keep simulated/native/historical evidence separate; star
 
 **Approvals:** Approved by user 2026-10-29: "yes, i approve, and no need to ask every time - i approve all the work to get this bug fixed". The coordinator agreed to the fresh replacement draft with a new privacy-safe record. No merge, installation, history rewrite, requirement weakening or unrelated environment change is authorized by that coordination instruction.
 
-**State:** In progress
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Evidence carried forward
@@ -69,6 +69,8 @@ The corrected-head CI remains blocked by three distinct failures: native-owner a
 
 Agent technical review: independent non-implementer technical RESULT GO for replacement draft publication at cd0ad08e, including the equivalent fixture-privacy amendment, separately validated affected-file evidence and the narrowly defined installed recovery observations. The subsequent shared-helper correction and deterministic control received independent SOURCE/RESULT GO at capacity-file hash E25E9A7D, with the expected failing witness and all 71 corrected cases independently checked.
 
-Reviewed revision: 2622a3f29b642a5d10f6d10b631b63ffedc50d17
+Reviewed revision: a8bf12e8aaa9b54f0b229d954af26fe087e46b37
 
 Verification adequacy: The reviewer independently checked the complete full-suite report, all affected/protected cases, the 91-case anonymization report, the expected RED witness and 71-case capacity report, both equivalent fixture deltas, source identities, unchanged initial baseline and historical record, and bounded native evidence. Unaffected full coverage is reused; no current-revision full rerun is claimed. The capacity change removes only the setup observer timer; all old post-release watchdogs, counts, ownership assertions and cleanup remain intact. Publication requires complete changed-path and history-aware workflow/Redline validation for this source revision. Saved current-head Linux/Windows CI and the coordinator's merge disposition remain required. No merge or new installation is claimed.
+
+The latest independent SOURCE/RESULT review additionally checked the three final test blobs at the reviewed revision, the five-case and 517-case reports, and the three-case final sink-control report. Audited prerequisite scopes restore native clocks before every tested owner/hook/recovery boundary. The Hermes observer contains its own sink failure, preserves the original assertion and records only capped allowlisted categories. The prior three CI failures remain evidence; the local passing cases do not explain their physical causes or close the Hermes incident. A new current-head CI run follows these actual corrections. No repeated whole-suite local run, blind remote rerun or increased product deadline is claimed.
