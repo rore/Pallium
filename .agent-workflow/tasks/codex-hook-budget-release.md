@@ -29,13 +29,13 @@ This fresh branch carries the reviewed hook repair and fixture corrections from 
 
 **Plan:** Commit this valid initial Work Record and obtain independent plan review before copying source. Carry the exact nine reviewed files from the preserved repair revision, with no historical-record edit or consumer-harness update. Reuse valid review and test evidence, run the whole-change selector and required affected/current-head checks, then publish a replacement draft. Link the old PR as superseded only after the replacement exists.
 
-**Verification plan:** Byte identity for all nine files and installed hook hashes; relevant hook lifecycle, deadline, capture and scope tests, including the configured behavior-contract identifier codex-busy-wake in the existing test job; whole-change selector and required full validation with evidence reuse scoped honestly; Redline and history-aware workflow checks; required Linux/Windows CI. Actual native proofs cover original and later-message receipts after loaded/unloaded claim loss, scope movement, lost ACK and service restart, without manual receive/ACK/resend. Keep simulated, native and historical evidence separate.
+**Verification plan:** Byte identity for all nine files and installed hook hashes; relevant hook lifecycle, deadline, capture and scope tests, including the configured behavior-contract identifier codex-busy-wake in the existing test job; whole-change selector and required full validation with evidence reuse scoped honestly; Redline and history-aware workflow checks; required Linux/Windows CI. Actual native proofs cover original and later-message receipts after loaded/unloaded claim loss, scope movement, an ACK request suppressed before commit and service restart, without manual receive/ACK/resend. Post-commit ACK-response loss was not qualified. Keep simulated, native and historical evidence separate.
 
-**Plan review:** Pending independent review of this fresh release record and unchanged payload route.
+**Plan review:** Agent technical review: independent non-implementer recovery_diagnostics_review confirmed PLAN GO at 8f74a48f5081c8035689814158f4b1bf140aca69 for the exact nine-file carry from 2d71b117. Preserve all capture/deadline requirements, equivalent fresh-process fixtures, evidence provenance and open qualification boundaries. No historical-record, consumer-harness or installed-file edit is planned.
 
 **Approvals:** Approved by user 2026-10-29: "yes, i approve, and no need to ask every time - i approve all the work to get this bug fixed". The coordinator agreed to the fresh replacement draft with a new privacy-safe record. No merge, installation, history rewrite, requirement weakening or unrelated environment change is authorized by that coordination instruction.
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Evidence carried forward
