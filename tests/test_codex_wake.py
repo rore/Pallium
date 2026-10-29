@@ -2759,7 +2759,7 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
     monkeypatch.setattr(hook, "relay_request", relay_request)
     monkeypatch.setattr(hook._common, "relay_request", relay_request)
 
-    def pallium_request(method: str, path: str, payload: dict | None = None, *, quiet: bool = False) -> dict | None:
+    def pallium_request(method: str, path: str, payload: dict | None = None, *, quiet: bool = False, deadline=None) -> dict | None:
         response = client.request(method, path, json=payload)
         if response.status_code != 200:
             return None
