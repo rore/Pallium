@@ -73,7 +73,7 @@ The corrected-head CI remains blocked by three distinct failures: native-owner a
 
 Agent technical review: independent non-implementer technical RESULT GO for replacement draft publication at cd0ad08e, including the equivalent fixture-privacy amendment and separately validated affected-file evidence. The subsequent shared-helper correction and deterministic control received independent SOURCE/RESULT GO at capacity-file hash E25E9A7D, with the expected failing witness and all 71 corrected cases independently checked.
 
-Reviewed revision: 7cf229a2d3f6afc2602d1d03f347b5ca20688593
+Reviewed revision: e6564c699e0e64d9a66fb6fbcd23310edd939915
 
 Verification adequacy: The reviewer independently checked the complete full-suite report, all affected/protected cases, the 91-case anonymization report, the expected RED witness and 71-case capacity report, both equivalent fixture deltas, source identities, and unchanged initial baseline and historical record. Unaffected full coverage is reused; no current-revision full rerun is claimed. The capacity change removes only the setup observer timer; all old post-release watchdogs, counts, ownership assertions and cleanup remain intact. Publication requires complete changed-path and history-aware workflow/Redline validation for this source revision. Saved current-head Linux/Windows CI and the coordinator's merge disposition remain required. No merge or new installation is claimed.
 
@@ -109,3 +109,5 @@ Focused hook/Hermes nodes passed 23 cases in 14.23 seconds before the delayed-ta
 Current reviewed UPS source SHA-256: `979c4b58d34e93d8a5e8f7e9ce3a5f941eead7be0ef4d9364ea79bcb030f0add`. Current test SHA-256 values: `tests/test_agent_relay_hooks.py` `d371a8e08644d98b43ddd6afcf27b71cf75d43a050dc779d3111fc30872029b3`; `tests/test_hermes_relay_plugin.py` `81d40e4d86d310b8ed61d18652fbcb2aafbe41440e19e6f99623a34261705f93`.
 
 The initial complementary batch failed during fixture setup because its temporary parent directory was missing; it produced no test-body result. The separately retained corrected-harness run is the 755-pass report above. Its production and Hermes hashes remained unchanged; the hook-test file changed only for the subsequently validated delayed-target control. Earlier full-suite coverage is reused solely for unaffected content, not claimed as a new full run of these final bytes.
+
+Independent non-implementer SOURCE/RESULT/privacy GO confirms the final source and test hashes, the delayed target's actual entry and completion without replay, and the separately stated 23-, 414-, 755-pass and final 7-pass evidence. The initial requirement baseline is unchanged; the equivalent scope extension was reviewed. No demonstrated regression or unresolved source finding remains in this correction. Actual required current-head CI and normal repository protections remain mandatory before merge; earlier unexplained failures and qualification limits remain open.
