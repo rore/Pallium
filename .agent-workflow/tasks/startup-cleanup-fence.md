@@ -43,5 +43,11 @@ Isolated branch based on main revision `447580f6`. No installed changes or publi
 
 **Approvals:** Approved by user 2026-10-29: "yes, i approve, and no need to ask every time - i approve all the work to get this bug fixed". This covers necessary bug-fix work; unrelated environment changes remain outside scope. No live operation is planned here.
 
-**State:** Ready to implement
+## Implementation and verification evidence
+
+Implementation: `_start_api_with_retry` now checks the owned process after the existing forced tree cleanup. If `poll()` still reports alive, it logs unresolved cleanup and returns before backoff or another spawn. Cleanup exceptions retain their existing catch behavior and take the same liveness check. Tests cover no-effect and raised cleanup, already-exited retry behavior, startup caller failure before worker helpers, and fake successful cleanup in existing retry-exhaustion/budget cases; their retry-count assertions are preserved.
+
+Verification: the new fence/control and caller/exhaustion focused nodes passed. The requested serial supervisor files passed with local loopback enabled: `tests/test_supervisor.py tests/test_supervisor_kill_tree.py -q -n 0 -p no:cacheprovider` → 74 passed, 6 skipped. An earlier sandboxed attempt had 12 failures because local loopback was denied and the startup-budget fake had not yet been updated; the final elevated local-only run passed. No service, installed app, persistent config, or live database was touched. Whole-change selector/full suite remain with the parent task owner.
+
+**State:** Ready for review
 <!-- agent-workflow:end -->
