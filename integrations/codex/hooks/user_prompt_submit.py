@@ -93,6 +93,7 @@ def main() -> None:
     item_query_worker = None
     item_query_worker_started = False
     item_query_parent_deadline = None
+    item_query_fallback = None
     try:
         start_hook_deadline(
             max(0.0, 8.0 - (time.monotonic() - _HOOK_STARTED_AT)),
@@ -358,25 +359,33 @@ def main() -> None:
             }
             request_callable = pallium_request
             request_result = []
+            request_claim_lock = threading.Lock()
+            request_claimed = False
 
-            def run_item_query(
-                request=request_callable,
-                body=request_payload,
-                deadline=parent_deadline,
-                result=request_result,
-            ):
+            def claim_item_query():
+                nonlocal request_claimed
+                with request_claim_lock:
+                    if request_claimed:
+                        return False
+                    request_claimed = True
+                    return True
+
+            def run_item_query():
+                if not claim_item_query():
+                    return
                 response_value = None
                 try:
-                    response_value = request(
-                        "POST", "/item-and-query", body, deadline=deadline,
+                    response_value = request_callable(
+                        "POST", "/item-and-query", request_payload,
+                        deadline=parent_deadline,
                     )
                 except Exception:
                     pass
                 try:
-                    completed_at = deadline.clock()
+                    completed_at = parent_deadline.clock()
                 except Exception:
                     completed_at = None
-                result.append((completed_at, response_value))
+                request_result.append((completed_at, response_value))
 
             enrichment_cutoff = (
                 parent_deadline.deadline - parent_deadline.reserve - 1.0
@@ -385,27 +394,27 @@ def main() -> None:
                 item_query_worker = threading.Thread(
                     target=run_item_query, daemon=True,
                 )
-                item_query_worker.start()
                 item_query_worker_started = True
+                item_query_worker.start()
             except Exception:
-                item_query_worker = None
+                item_query_fallback = run_item_query
 
             response = None
-            if item_query_worker_started:
+            if item_query_worker_started and item_query_fallback is None:
                 try:
                     item_query_worker.join(timeout=max(
                         0.0, enrichment_cutoff - parent_deadline.clock(),
                     ))
                 except Exception:
                     pass
-                if request_result:
-                    completed_at, candidate = request_result[0]
-                    if (
-                        completed_at is not None
-                        and completed_at <= enrichment_cutoff
-                        and isinstance(candidate, dict)
-                    ):
-                        response = candidate
+            if request_result:
+                completed_at, candidate = request_result[0]
+                if (
+                    completed_at is not None
+                    and completed_at <= enrichment_cutoff
+                    and isinstance(candidate, dict)
+                ):
+                    response = candidate
             if response:
                 try:
                     response_warning = warning
@@ -463,6 +472,11 @@ def main() -> None:
             )
         print(f"pallium user_prompt_submit hook error: {exc}", file=sys.stderr)
     finally:
+        if item_query_fallback is not None:
+            try:
+                item_query_fallback()
+            except Exception:
+                pass
         if item_query_worker_started and item_query_worker is not None:
             try:
                 remaining = max(

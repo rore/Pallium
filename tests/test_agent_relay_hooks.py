@@ -2097,6 +2097,7 @@ def test_confirmed_switch_does_not_attach_old_identity_to_new_pin(
 ):
     from itertools import count
     from types import SimpleNamespace
+    import threading
     import time
 
     common = _load(f"confirmed_identity_{runtime}", relative)
@@ -3034,13 +3035,16 @@ def test_codex_optional_memory_request_preserves_scope_emission_budget(
         ("enrichment-exhausted", 6.1),
         ("fast-success", 2.0),
         ("slow-late-result", 5.6),
-        ("uncertain-parent-timeout", 5.6),
+        ("server-body-accepted-hook-return", 5.6),
         ("emit-failure", 5.6),
         ("format-failure", 2.0),
         ("malformed-list", 2.0),
         ("unsafe-source", 2.0),
         ("malformed-block", 2.0),
         ("global-exhaustion", 7.0),
+        ("outer-worker-constructor-failure", 2.0),
+        ("outer-worker-start-refusal", 2.0),
+        ("outer-worker-start-after-entry", 2.0),
     ],
 )
 def test_codex_prompt_capture_survives_enrichment_cutoff(
@@ -3075,11 +3079,12 @@ def test_codex_prompt_capture_survives_enrichment_cutoff(
     capture_response = {}
     capture_errors = []
     capture_requests = []
+    event_order = []
     hook_result = {}
     hook_finished = threading.Event()
     acknowledgements = []
     hold_capture = case in {
-        "slow-late-result", "uncertain-parent-timeout", "emit-failure",
+        "slow-late-result", "server-body-accepted-hook-return", "emit-failure",
     }
     expects_capture = case != "global-exhaustion"
 
@@ -3128,6 +3133,7 @@ def test_codex_prompt_capture_survives_enrichment_cutoff(
         def do_POST(self):
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             capture_started.set()
+            event_order.append("capture")
             capture_requests.append(self.path)
             try:
                 if hold_capture and not release_capture.wait(5):
@@ -3180,6 +3186,7 @@ def test_codex_prompt_capture_survives_enrichment_cutoff(
     original_request = hook.pallium_request
 
     def observe_request(*args, **kwargs):
+        event_order.append("request")
         request_started.set()
         try:
             return original_request(*args, **kwargs)
@@ -3197,8 +3204,13 @@ def test_codex_prompt_capture_survives_enrichment_cutoff(
             raise OSError("controlled stdout failure")
         result = original_emit(*args, **kwargs)
         emit_during_request.append(not request_finished.is_set())
-        if case in {"slow-late-result", "uncertain-parent-timeout"}:
-            logical_now[0] = 8.0 if case == "uncertain-parent-timeout" else 6.1
+        if case in {"slow-late-result", "server-body-accepted-hook-return"}:
+            logical_now[0] = 8.0 if case == "server-body-accepted-hook-return" else 6.1
+        if case in {
+            "outer-worker-constructor-failure", "outer-worker-start-refusal",
+            "outer-worker-start-after-entry",
+        }:
+            event_order.append("scope")
         scope_emitted.set()
         return result
 
@@ -3212,6 +3224,37 @@ def test_codex_prompt_capture_survives_enrichment_cutoff(
             return original_format(blocks, *args, **kwargs)
 
         monkeypatch.setattr(hook, "format_injection", fail_enrichment)
+
+    worker_failure = {
+        "outer-worker-constructor-failure": "constructor",
+        "outer-worker-start-refusal": "start",
+        "outer-worker-start-after-entry": "start-after-entry",
+    }.get(case)
+    if worker_failure:
+        class ControlledThread:
+            def __init__(self, *, target, daemon):
+                assert daemon is True
+                if worker_failure == "constructor":
+                    raise RuntimeError("controlled thread constructor failure")
+                self.target = target
+                self.started = False
+
+            def start(self):
+                if worker_failure == "start":
+                    raise RuntimeError("controlled thread start refusal")
+                self.started = True
+                self.target()
+                if worker_failure == "start-after-entry":
+                    raise RuntimeError("controlled ambiguous start failure")
+
+            def join(self, timeout=None):
+                if not self.started:
+                    raise RuntimeError("controlled unstarted thread join")
+
+        monkeypatch.setattr(
+            hook, "threading",
+            SimpleNamespace(Thread=ControlledThread, Lock=threading.Lock),
+        )
 
     def run_hook():
         try:
@@ -3228,7 +3271,8 @@ def test_codex_prompt_capture_survives_enrichment_cutoff(
     worker = threading.Thread(target=run_hook, daemon=True)
     worker.start()
     emitted_while_capture_live = False
-    request_pending_at_parent_exit = False
+    request_pending_at_hook_return = False
+    capture_pending_at_hook_return = False
     try:
         if case == "global-exhaustion":
             assert hook_finished.wait(3), "globally exhausted hook did not settle"
@@ -3238,9 +3282,10 @@ def test_codex_prompt_capture_survives_enrichment_cutoff(
             observed_output = emit_attempted if case == "emit-failure" else scope_emitted
             assert observed_output.wait(1.0), "scope handling did not reach the enrichment cutoff"
             emitted_while_capture_live = not request_finished.is_set()
-            if case == "uncertain-parent-timeout":
-                assert hook_finished.wait(3), "parent-expired hook did not finish"
-                request_pending_at_parent_exit = not request_finished.is_set()
+            if case == "server-body-accepted-hook-return":
+                assert hook_finished.wait(3), "hook did not return at the parent deadline"
+                request_pending_at_hook_return = not request_finished.is_set()
+                capture_pending_at_hook_return = not capture_finished.is_set()
         else:
             assert hook_finished.wait(3), "the exhausted-enrichment capture did not settle"
     finally:
@@ -3264,12 +3309,13 @@ def test_codex_prompt_capture_survives_enrichment_cutoff(
         assert capture_requests == [] and capture_response == {}
     assert hook_result.get("exit") == 0 and "error" not in hook_result
     assert acknowledgements == []
-    if case in {"slow-late-result", "uncertain-parent-timeout", "emit-failure"}:
+    if case in {"slow-late-result", "server-body-accepted-hook-return", "emit-failure"}:
         assert emitted_while_capture_live, "hook output handling must happen while capture remains in flight"
-    if case in {"slow-late-result", "uncertain-parent-timeout"}:
+    if case in {"slow-late-result", "server-body-accepted-hook-return"}:
         assert emit_during_request == [True]
-    if case == "uncertain-parent-timeout":
-        assert request_pending_at_parent_exit and not hook_result["request_finished_at_exit"]
+    if case == "server-body-accepted-hook-return":
+        assert request_pending_at_hook_return and not hook_result["request_finished_at_exit"]
+        assert capture_started.is_set() and capture_pending_at_hook_return
     if case == "emit-failure":
         assert hook_result["request_finished_at_exit"]
 
@@ -3303,12 +3349,21 @@ def test_codex_prompt_capture_survives_enrichment_cutoff(
         "agent_ref": "codex",
         "visibility": "private",
     }
-    if case == "fast-success":
-        assert "optional enrichment" in context
+    if case in {"fast-success", "outer-worker-start-after-entry"}:
+        if case == "fast-success":
+            assert "optional enrichment" in context
+        else:
+            assert "optional enrichment" not in context
         assert scope["request_source_item_id"] == capture_response["body"]["source_item_id"]
     else:
         assert "optional enrichment" not in context
         assert "request_source_item_id" not in scope
+    if worker_failure in {"constructor", "start"}:
+        assert event_order.index("scope") < event_order.index("request")
+    elif worker_failure == "start-after-entry":
+        assert event_order.index("request") < event_order.index("scope")
+    if worker_failure:
+        assert event_order.count("request") == 1
     assert "bad\nsource-id" not in context
 
     source_item_id = capture_response["body"]["source_item_id"]
@@ -3328,12 +3383,13 @@ def test_codex_prompt_capture_survives_enrichment_cutoff(
 
 
 @pytest.mark.parametrize(
-    "failure", ["constructor", "start", "completion-clock", "join", "late-completion"],
+    "failure", ["constructor", "start", "start-after-entry", "start-after-fallback", "completion-clock", "join", "late-completion"],
 )
 def test_codex_prompt_worker_failures_preserve_scope_without_replay(
     monkeypatch, tmp_path, capsys, failure,
 ):
     from types import SimpleNamespace
+    import threading
     import time
 
     hook = _load(f"prompt_worker_failure_{failure}", "integrations/codex/hooks/user_prompt_submit.py")
@@ -3344,6 +3400,10 @@ def test_codex_prompt_worker_failures_preserve_scope_without_replay(
     requests = []
     joins = []
     acknowledgements = []
+    fallback_finished = threading.Event()
+    late_target_entered = threading.Event()
+    late_worker_finished = threading.Event()
+    late_worker_errors = []
 
     def clock():
         clock_calls[0] += 1
@@ -3368,6 +3428,7 @@ def test_codex_prompt_worker_failures_preserve_scope_without_replay(
     monkeypatch.setattr(hook, "acknowledge_relay", lambda *args, **kwargs: acknowledgements.append(args))
     def request(*args, **kwargs):
         requests.append((args, kwargs))
+        fallback_finished.set()
         if failure == "late-completion":
             now[0] = 6.1
             return {
@@ -3387,25 +3448,65 @@ def test_codex_prompt_worker_failures_preserve_scope_without_replay(
             if failure == "constructor":
                 raise RuntimeError("controlled thread constructor failure")
             self.target = target
+            self.started = False
+
+        def run_after_fallback(self):
+            if fallback_finished.wait(2):
+                late_target_entered.set()
+                try:
+                    self.target()
+                finally:
+                    late_worker_finished.set()
+            else:
+                late_worker_errors.append("fallback did not finish")
+                late_worker_finished.set()
 
         def start(self):
             if failure == "start":
                 raise RuntimeError("controlled thread start failure")
+            if failure == "start-after-fallback":
+                self.worker = threading.Thread(
+                    target=self.run_after_fallback, daemon=True,
+                )
+                self.worker.start()
+                self.started = True
+                raise RuntimeError("controlled ambiguous start before target entry")
+            self.started = True
             self.target()
+            if failure == "start-after-entry":
+                raise RuntimeError("controlled ambiguous start failure")
 
         def join(self, timeout=None):
             joins.append(timeout)
-            if failure == "join":
+            if failure in {"join", "start"}:
                 raise RuntimeError("controlled thread join failure")
+            if failure == "start-after-fallback":
+                self.worker.join(timeout)
 
-    monkeypatch.setattr(hook, "threading", SimpleNamespace(Thread=ControlledThread))
+    monkeypatch.setattr(
+        hook, "threading",
+        SimpleNamespace(Thread=ControlledThread, Lock=threading.Lock),
+    )
     with pytest.raises(SystemExit) as exited:
         hook.main()
 
     assert exited.value.code == 0
     assert acknowledgements == []
-    assert len(requests) == (0 if failure in {"constructor", "start"} else 1)
-    assert len(joins) == (0 if failure in {"constructor", "start"} else 2)
+    assert len(requests) == 1
+    assert late_worker_errors == []
+    if failure == "start-after-fallback":
+        assert late_target_entered.is_set() and late_worker_finished.is_set()
+    assert all(kwargs["deadline"] is common.hook_deadline() for _, kwargs in requests)
+    if failure == "constructor":
+        assert joins == []
+    elif failure == "start":
+        assert len(joins) == 1
+    elif failure == "start-after-entry":
+        assert len(joins) == 1
+    elif failure == "start-after-fallback":
+        assert len(joins) == 1
+    else:
+        assert len(joins) == 2
     output_lines = [line for line in capsys.readouterr().out.splitlines() if line]
     assert len(output_lines) == 1
     output = json.loads(output_lines[0])["hookSpecificOutput"]
@@ -3417,8 +3518,6 @@ def test_codex_prompt_worker_failures_preserve_scope_without_replay(
         assert "request_source_item_id" not in context
     if failure == "late-completion":
         assert "late enrichment must be discarded" not in context
-    if failure in {"constructor", "start"}:
-        assert joins == []
     if failure == "join":
         assert len(joins) == 2
 

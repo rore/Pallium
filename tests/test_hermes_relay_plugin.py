@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from types import ModuleType, SimpleNamespace
+import urllib.error
 
 import pytest
 from fastapi import FastAPI
@@ -67,6 +68,25 @@ def _report_native_route_dispatch_diagnostics(events, lock):
         print("Hermes dispatch-boundary diagnostic events=" + json.dumps(snapshot, separators=(",", ":")))
     except Exception:
         pass
+
+
+def _native_route_error_category(error):
+    if isinstance(error, RuntimeError):
+        try:
+            status = getattr(error, "status_code", None)
+        except Exception:
+            status = None
+        if type(status) is int and 100 <= status <= 599:
+            return f"http_{status}"
+    if isinstance(error, TimeoutError):
+        return "timeout"
+    if isinstance(error, urllib.error.HTTPError):
+        return "http"
+    if isinstance(error, urllib.error.URLError):
+        return "transport"
+    if isinstance(error, json.JSONDecodeError):
+        return "json"
+    return "other"
 
 
 def test_hermes_pending_read_and_reply_lifecycle(client):
@@ -219,7 +239,9 @@ def plugin_context(client, monkeypatch):
     def http(base, method, path, *, body=None, query=None):
         response = client.request(method, path, json=body, params=query)
         if response.status_code >= 400:
-            raise RuntimeError(f"Relay HTTP {response.status_code}")
+            error = RuntimeError(f"Relay HTTP {response.status_code}")
+            error.status_code = response.status_code
+            raise error
         return response.json()
 
     module._real_json_request = module._json_request
@@ -675,7 +697,6 @@ def test_native_route_change_preserves_attempted_wake(client, plugin_context, mo
 def test_native_route_invalidated_at_dispatch_boundary_is_not_used(
         client, plugin_context, monkeypatch, new_route):
     from collections import deque
-    import urllib.error
 
     module, create, config = plugin_context
     native = ModuleType("hermes_cli.plugin_session")
@@ -697,17 +718,6 @@ def test_native_route_invalidated_at_dispatch_boundary_is_not_used(
         except Exception:
             pass
 
-    def error_category(error):
-        if isinstance(error, TimeoutError):
-            return "timeout"
-        if isinstance(error, urllib.error.HTTPError):
-            return "http"
-        if isinstance(error, urllib.error.URLError):
-            return "transport"
-        if isinstance(error, json.JSONDecodeError):
-            return "json"
-        return "other"
-
     original_json_request = module._json_request
     request_categories = {
         "/relay/pending-candidate": "pending_candidate",
@@ -723,7 +733,9 @@ def test_native_route_invalidated_at_dispatch_boundary_is_not_used(
         try:
             result = original_json_request(base, method, path, **kwargs)
         except Exception as error:
-            record_event("relay_http_error", f"{category}_{error_category(error)}")
+            record_event(
+                "relay_http_error", f"{category}_{_native_route_error_category(error)}"
+            )
             raise
         record_event("relay_http_end", category)
         return result
@@ -744,7 +756,7 @@ def test_native_route_invalidated_at_dispatch_boundary_is_not_used(
                 ctx.hooks["pre_llm_call"](
                     session_id="ses_שלום", turn_id="route-change", user_message="seed")
             except Exception as error:
-                record_event("reentrant_hook_error", error_category(error))
+                record_event("reentrant_hook_error", _native_route_error_category(error))
                 raise
             else:
                 record_event("reentrant_hook_return")
@@ -795,6 +807,20 @@ def test_native_route_dispatch_diagnostic_sink_failure_preserves_assertion(monke
             raise
     except AssertionError as observed:
         assert observed is original
+
+
+def test_native_route_dispatch_diagnostic_classifies_http_and_reports_output(capsys):
+    from collections import deque
+
+    error = RuntimeError("Relay HTTP 503")
+    error.status_code = 503
+    assert _native_route_error_category(error) == "http_503"
+
+    events = deque([("relay_http_error", "sessions_http_503")], maxlen=32)
+    _report_native_route_dispatch_diagnostics(events, threading.Lock())
+    assert capsys.readouterr().out == (
+        'Hermes dispatch-boundary diagnostic events=[["relay_http_error","sessions_http_503"]]\n'
+    )
 
 
 @pytest.mark.parametrize("phase", ["accessor", "response", "publication"])
