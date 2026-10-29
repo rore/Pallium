@@ -1,6 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+import gc
+import os
+import sys
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -21,6 +25,105 @@ BRANCH = {
     "scope_ref": "git:example.test/team/relay",
     "local_ref": "branch:feat/relay-session-work-associations",
 }
+
+
+class _SetupPragmaObserver:
+    _MAX_EVENTS = 16
+
+    def __init__(self, engine, *, enabled=False):
+        self.engine, self.enabled = engine, enabled
+        self.events, self.truncated, self.failed = [], False, False
+        self.ready = self.active = self.pragma_seen = self.pragma_active = False
+        self.thread, self.installed = None, []
+        self.callbacks = [
+            ("gc", None, self._on_gc),
+            ("event", "before_cursor_execute", self._before_cursor_execute),
+            ("event", "after_cursor_execute", self._after_cursor_execute),
+        ]
+
+    @staticmethod
+    def matches(statement):
+        return str(statement).strip().upper().startswith("PRAGMA BUSY_TIMEOUT=")
+
+    def record(self, kind, *fields):
+        if len(self.events) >= self._MAX_EVENTS:
+            self.truncated = True
+        else:
+            self.events.append((kind, *fields))
+
+    def _on_gc(self, phase, info):
+        if not self.active:
+            return
+        try:
+            self.record("gc", phase, info.get("generation"), threading.get_ident() == self.thread,
+                        time.perf_counter_ns())
+        except Exception:
+            self.failed = True
+
+    def _cursor_event(self, phase, statement):
+        try:
+            if (not self.active or threading.get_ident() != self.thread
+                    or not self.matches(statement)):
+                return
+            if phase == "before":
+                if self.pragma_seen:
+                    return
+                self.pragma_seen = self.pragma_active = True
+            elif not self.pragma_active:
+                return
+            if phase == "after":
+                self.pragma_active = False
+            self.record("cursor", phase, True, time.perf_counter_ns())
+        except Exception:
+            self.failed = True
+
+    def _before_cursor_execute(self, connection, cursor, statement, parameters, context, executemany):
+        self._cursor_event("before", statement)
+
+    def _after_cursor_execute(self, connection, cursor, statement, parameters, context, executemany):
+        self._cursor_event("after", statement)
+
+    def __enter__(self):
+        if not self.enabled:
+            return self
+        for kind, name, callback in self.callbacks:
+            try:
+                self.installed.append((kind, name, callback))
+                if kind == "gc":
+                    gc.callbacks.append(callback)
+                else:
+                    event.listen(self.engine, name, callback)
+            except Exception:
+                self.failed = True
+                self.__exit__(None, None, None)
+                return self
+        self.ready = True
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.active = False
+        self.thread = None
+        for kind, name, callback in reversed(self.installed):
+            try:
+                if kind == "gc" and callback in gc.callbacks:
+                    gc.callbacks.remove(callback)
+                elif kind == "event" and event.contains(self.engine, name, callback):
+                    event.remove(self.engine, name, callback)
+            except Exception:
+                self.failed = True
+        self.installed.clear()
+        self.ready = False
+        return False
+
+    def begin(self):
+        self.thread = threading.get_ident()
+        self.pragma_seen = self.pragma_active = False
+        self.active = True
+
+    def finish(self):
+        self.active = False
+        self.thread = None
+        self.pragma_active = False
 
 
 def _turn(client, session="worker", structural_work_refs=None):
@@ -280,7 +383,7 @@ def relay_settlement_control(client, monkeypatch):
         held=threading.Event(), release=threading.Event(),
         b_active=threading.Event(), release_b=threading.Event(),
         begins=[], failures=[], closes=[], commit_returned=False, rollback_returned=False,
-        pool=ThreadPoolExecutor(max_workers=2),
+        pool=ThreadPoolExecutor(max_workers=2), setup_observer=None,
     )
 
     def pause(connection):
@@ -353,12 +456,23 @@ def relay_settlement_control(client, monkeypatch):
         previous = getattr(local, "role", None)
         value = kwargs["work_ref"]["local_ref"]
         local.role = value[-1] if value in {"item:A", "item:B", "item:C"} else None
+        observer = control.setup_observer if local.role is None else None
+        if observer is not None:
+            try:
+                observer.begin()
+            except Exception:
+                observer.failed = True
         try:
             return attach(**kwargs)
         except BaseException as exc:
             control.failures.append((local.role, getattr(exc, "acquisition_stage", None)))
             raise
         finally:
+            if observer is not None:
+                try:
+                    observer.finish()
+                except Exception:
+                    observer.failed = True
             local.role = previous
 
     monkeypatch.setattr(store, "_relay_session_factory", session_factory)
@@ -379,6 +493,40 @@ def _association_pairs(client, session="worker"):
             for row in _list(client, session)["work_refs"]}
 
 
+def test_setup_pragma_observer_is_bounded_and_exception_safe(client):
+    engine = client.app.state.pallium_service._storage._relay_engine
+    observer = _SetupPragmaObserver(engine, enabled=True)
+    observer.begin()
+    observer._on_gc("start", {"generation": 2})
+    observer._on_gc("stop", {"generation": 2})
+    observer._before_cursor_execute(None, None, "PRAGMA busy_timeout=100", None, None, False)
+    observer._after_cursor_execute(None, None, "PRAGMA busy_timeout=100", None, None, False)
+    observer._before_cursor_execute(None, None, "SELECT 1", None, None, False)
+    observer._before_cursor_execute(None, None, "PRAGMA busy_timeout=15000", None, None, False)
+    for index in range(observer._MAX_EVENTS):
+        observer.record("control", index)
+    observer.finish()
+
+    assert [(row[0], row[1]) for row in observer.events[:4]] == [
+        ("gc", "start"), ("gc", "stop"), ("cursor", "before"), ("cursor", "after"),
+    ]
+    assert observer.events[0][2:4] == (2, True)
+    assert observer.events[1][2:4] == (2, True)
+    assert observer.events[2][2] is True and observer.events[3][2] is True
+    assert len(observer.events) == observer._MAX_EVENTS and observer.truncated is True
+
+    with pytest.raises(RuntimeError, match="observer teardown control"):
+        with observer:
+            assert observer.ready
+            raise RuntimeError("observer teardown control")
+
+    assert observer.failed is False
+    assert observer.ready is False and observer.active is False
+    assert observer.callbacks[0][2] not in gc.callbacks
+    assert not event.contains(engine, "before_cursor_execute", observer.callbacks[1][2])
+    assert not event.contains(engine, "after_cursor_execute", observer.callbacks[2][2])
+
+
 @pytest.mark.parametrize("settlement", ["commit", "rollback"])
 @pytest.mark.parametrize("cleanup,error", [
     ("close", None), ("reset", None), ("close", "close"), ("reset", "reset"),
@@ -391,8 +539,32 @@ def test_settled_relay_write_releases_gate_before_cleanup(
     scope = "scope:gate-cleanup"
     _turn(client)
     seeds = [f"item:seed-{index}" for index in range(2 if settlement == "commit" else 3)]
-    for value in seeds:
-        assert _attach(client, {"scope_ref": scope, "local_ref": value}).status_code == 200
+    diagnostic_enabled = (
+        os.environ.get("GITHUB_ACTIONS") == "true"
+        and sys.version_info[:2] == (3, 12)
+        and settlement == "commit" and cleanup == "reset" and error is None
+    )
+    observer = _SetupPragmaObserver(
+        client.app.state.pallium_service._storage._relay_engine,
+        enabled=diagnostic_enabled,
+    )
+    with observer:
+        control.setup_observer = observer if observer.ready else None
+        try:
+            for index, value in enumerate(seeds):
+                response = _attach(client, {"scope_ref": scope, "local_ref": value})
+                if response.status_code != 200 and diagnostic_enabled:
+                    try:
+                        print(
+                            "relay setup observer: "
+                            f"seed_ordinal={index} failed={observer.failed} "
+                            f"truncated={observer.truncated} events={observer.events!r}"
+                        )
+                    except Exception:
+                        observer.failed = True
+                assert response.status_code == 200
+        finally:
+            control.setup_observer = None
     expected = {(scope, value, "explicit") for value in seeds}
     if settlement == "commit":
         expected.add((scope, "item:A", "explicit"))
