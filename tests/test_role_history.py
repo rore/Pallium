@@ -440,7 +440,9 @@ def test_codex_hooks_capture_start_name_and_link_delayed_stop(client, monkeypatc
         assert response.status_code == 200, response.text
         return response.json()
 
-    monkeypatch.setattr(prompt_hook, "start_hook_deadline", lambda *a, **k: None)
+    monkeypatch.setattr(prompt_hook._common, "_HOOK_DEADLINE", None)
+    monkeypatch.setattr(prompt_hook, "start_hook_deadline", lambda *a, **k:
+        prompt_hook._common.start_hook_deadline(*a, **k, clock=lambda: 0.0))
     monkeypatch.setattr(prompt_hook, "record_codex_hook_execution", lambda **k: True)
     monkeypatch.setattr(prompt_hook, "record_codex_wake_event", lambda **k: None)
     monkeypatch.setattr(prompt_hook, "resolve_container_ref", lambda *a, **k: container_ref)
