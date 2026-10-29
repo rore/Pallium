@@ -651,10 +651,63 @@ def test_stop_and_source_disconnect_clear_reopen_authority(http_wake, retained):
 
 
 @pytest.mark.parametrize("response", ["lost", "native-error"])
-def test_post_owner_failure_keeps_spent_delivery_fenced(http_wake, response, capsys):
-    http, _, registry, _, desktop, send, _ = http_wake
+def test_post_owner_failure_keeps_spent_delivery_fenced(http_wake, response, capsys, monkeypatch):
+    http, relay, registry, _, desktop, send, workers = http_wake
     desktop.response = response
-    send()
+    from itertools import count
+    import threading
+    from types import SimpleNamespace
+
+    from storage import sqlite_queue
+
+    native_time = sqlite_queue.time
+    local = threading.local()
+    policy_time = SimpleNamespace(**vars(native_time))
+
+    def monotonic():
+        clock = getattr(local, "clock", None)
+        return clock() if clock is not None else native_time.monotonic()
+
+    policy_time.monotonic = monotonic
+    begin_threads = []
+    owner_observations = []
+    test_thread = threading.get_ident()
+    original_transition = relay.codex_wake_transition
+    original_on_owner = desktop.on_owner
+
+    def transition(operation, *args, **kwargs):
+        if operation != "begin_native_attempt":
+            return original_transition(operation, *args, **kwargs)
+        begin_threads.append(threading.get_ident())
+        if len(begin_threads) != 1:
+            return original_transition(operation, *args, **kwargs)
+        previous = getattr(local, "clock", None)
+        local.clock = count(step=0.001).__next__
+        sqlite_queue.time = policy_time
+        try:
+            return original_transition(operation, *args, **kwargs)
+        finally:
+            local.clock = previous
+            sqlite_queue.time = native_time
+
+    def observe_owner(request):
+        if original_on_owner is not None:
+            original_on_owner(request)
+        owner_observations.append((
+            sqlite_queue.time is native_time,
+            sqlite_queue.time.monotonic is native_time.monotonic,
+            getattr(local, "clock", None) is None,
+            threading.get_ident(),
+        ))
+
+    desktop.on_owner = observe_owner
+    with monkeypatch.context() as transition_patch:
+        transition_patch.setattr(relay, "codex_wake_transition", transition)
+        send()
+    assert sqlite_queue.time is native_time
+    assert len(begin_threads) == 1 and begin_threads[0] != test_thread
+    assert len(workers) == 1 and workers[0].ident == begin_threads[0]
+    assert owner_observations == [(True, True, True, begin_threads[0])]
     assert len(desktop.owners) == 1
     assert registry.reservations()[0].outcome == "uncertain"
     recover(http_wake)

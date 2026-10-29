@@ -3188,10 +3188,12 @@ def test_actual_codex_hook_drains_bounded_backlog_and_arrival_once(
         status = client.get(f"/relay/messages/{sent[index]['message_id']}", params=scope)
         assert status.json()["deliveries"][0]["state"] == "delivered"
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
-    client, monkeypatch, tmp_path,
+    client, monkeypatch, tmp_path, relay_admission_clock,
 ) -> None:
     from integrations.codex.hooks import user_prompt_submit as hook
+    from storage import sqlite_queue
 
     scope = {
         "container_ref": SCOPE["container_ref"],
@@ -3204,12 +3206,17 @@ def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
 
     sender = "s" * 255
     target = "maximum-target"
-    for runtime, session in (("claude-code", sender), ("codex", target)):
-        assert client.post("/relay/turn", json={
-            "runtime": runtime,
-            "session_ref": session,
-            **scope,
-        }).status_code == 200
+    native_queue_time = sqlite_queue.time
+    with relay_admission_clock(
+        client.app.state.pallium_service._storage, expected_admissions=2,
+    ):
+        for runtime, session in (("claude-code", sender), ("codex", target)):
+            assert client.post("/relay/turn", json={
+                "runtime": runtime,
+                "session_ref": session,
+                **scope,
+            }).status_code == 200
+    assert sqlite_queue.time is native_queue_time
 
     parent_id = "p" * 128
     parent = client.post("/relay/messages", json={

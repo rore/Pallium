@@ -60,6 +60,15 @@ def status(client, message):
     return response.json()
 
 
+def _report_native_route_dispatch_diagnostics(events, lock):
+    try:
+        with lock:
+            snapshot = list(events)
+        print("Hermes dispatch-boundary diagnostic events=" + json.dumps(snapshot, separators=(",", ":")))
+    except Exception:
+        pass
+
+
 def test_hermes_pending_read_and_reply_lifecycle(client):
     assert pending(client).json() is None
     session = turn(client)["session"]
@@ -665,6 +674,9 @@ def test_native_route_change_preserves_attempted_wake(client, plugin_context, mo
 @pytest.mark.parametrize("new_route", ["opaque-replacement-route", ""])
 def test_native_route_invalidated_at_dispatch_boundary_is_not_used(
         client, plugin_context, monkeypatch, new_route):
+    from collections import deque
+    import urllib.error
+
     module, create, config = plugin_context
     native = ModuleType("hermes_cli.plugin_session")
     native.session_key = lambda: "opaque-original-route"
@@ -675,14 +687,69 @@ def test_native_route_invalidated_at_dispatch_boundary_is_not_used(
     ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="seed")
     set_state = ctx.state.set
     invalidated, revisited = threading.Event(), threading.Event()
+    diagnostic_lock = threading.Lock()
+    diagnostic_events = deque(maxlen=32)
+
+    def record_event(name, category="ok"):
+        try:
+            with diagnostic_lock:
+                diagnostic_events.append((name, category))
+        except Exception:
+            pass
+
+    def error_category(error):
+        if isinstance(error, TimeoutError):
+            return "timeout"
+        if isinstance(error, urllib.error.HTTPError):
+            return "http"
+        if isinstance(error, urllib.error.URLError):
+            return "transport"
+        if isinstance(error, json.JSONDecodeError):
+            return "json"
+        return "other"
+
+    original_json_request = module._json_request
+    request_categories = {
+        "/relay/pending-candidate": "pending_candidate",
+        "/relay/sessions": "sessions",
+        "/relay/turn": "turn",
+    }
+
+    def observe_relay_request(base, method, path, **kwargs):
+        category = request_categories.get(path)
+        if category is None:
+            return original_json_request(base, method, path, **kwargs)
+        record_event("relay_http_begin", category)
+        try:
+            result = original_json_request(base, method, path, **kwargs)
+        except Exception as error:
+            record_event("relay_http_error", f"{category}_{error_category(error)}")
+            raise
+        record_event("relay_http_end", category)
+        return result
+
+    monkeypatch.setattr(module, "_json_request", observe_relay_request)
 
     def invalidate_after_fence(key, value):
-        set_state(key, value)
+        record_event("state_fence_begin", "wake" if key.startswith("wake:") else "other")
+        try:
+            set_state(key, value)
+        finally:
+            record_event("state_fence_end", "wake" if key.startswith("wake:") else "other")
         if key.startswith("wake:") and not invalidated.is_set():
             # Synchronous host callbacks can reenter even while the RLock is held.
             native.session_key = lambda: new_route
-            ctx.hooks["pre_llm_call"](
-                session_id="ses_שלום", turn_id="route-change", user_message="seed")
+            record_event("reentrant_hook_begin")
+            try:
+                ctx.hooks["pre_llm_call"](
+                    session_id="ses_שלום", turn_id="route-change", user_message="seed")
+            except Exception as error:
+                record_event("reentrant_hook_error", error_category(error))
+                raise
+            else:
+                record_event("reentrant_hook_return")
+            finally:
+                record_event("reentrant_hook_end")
             invalidated.set()
 
     reads = []
@@ -698,11 +765,36 @@ def test_native_route_invalidated_at_dispatch_boundary_is_not_used(
     monkeypatch.setattr(sys.modules["hermes_cli.config"], "load_config_readonly", current_config)
     endpoint = client.get("/relay/sessions", params={"runtime": "hermes", **SCOPE}).json()[0]["endpoint_id"]
     message = send(client, endpoint)
-    assert invalidated.wait(2) and revisited.wait(2)
+    try:
+        assert invalidated.wait(2) and revisited.wait(2)
+    except AssertionError:
+        _report_native_route_dispatch_diagnostics(diagnostic_events, diagnostic_lock)
+        raise
     assert not ctx.injections
     assert _persisted_wake(ctx)["state"] == "injection_attempted"
     delivery = status(client, message)["deliveries"][0]
     assert delivery["state"] == "pending" and delivery["attempts"] == 0
+
+
+def test_native_route_dispatch_diagnostic_sink_failure_preserves_assertion(monkeypatch):
+    from collections import deque
+
+    events = deque([("relay_http_begin", "pending_candidate")], maxlen=32)
+    lock = threading.Lock()
+    original = AssertionError("original wait assertion")
+
+    def failing_print(*_args, **_kwargs):
+        raise OSError("private sink failure")
+
+    monkeypatch.setattr("builtins.print", failing_print)
+    try:
+        try:
+            raise original
+        except AssertionError:
+            _report_native_route_dispatch_diagnostics(events, lock)
+            raise
+    except AssertionError as observed:
+        assert observed is original
 
 
 @pytest.mark.parametrize("phase", ["accessor", "response", "publication"])
