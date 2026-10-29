@@ -5,6 +5,7 @@ import io
 import sys
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -241,6 +242,10 @@ def test_claude_wake_control_request_cannot_outlive_deadline(operation, monkeypa
 def test_each_hook_starts_one_budget_before_reading_input(relative, monkeypatch):
     hook = _load("deadline_entry_" + relative.replace("/", "_"), relative)
     events = []
+    elapsed = 2.0 if hasattr(hook, "_HOOK_STARTED_AT") else 0.0
+    if elapsed:
+        monkeypatch.setattr(hook, "time", SimpleNamespace(monotonic=lambda: 102.0))
+        monkeypatch.setattr(hook, "_HOOK_STARTED_AT", 100.0)
 
     class Halt(BaseException):
         pass
@@ -254,7 +259,7 @@ def test_each_hook_starts_one_budget_before_reading_input(relative, monkeypatch)
         hook.main()
     assert events[0] == (
         "start",
-        (15,) if relative.endswith("/stop.py") else (8,),
+        (15,) if relative.endswith("/stop.py") else (8.0 - elapsed,),
         {"host_reserve": 1},
     )
     assert events[1] == ("read",)

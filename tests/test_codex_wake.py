@@ -113,6 +113,7 @@ def isolated_codex_registry(monkeypatch: pytest.MonkeyPatch) -> Iterator[CodexWa
 
 def setup_function() -> None:
     hook_module._common._HOOK_DEADLINE = None
+    hook_module._HOOK_STARTED_AT = hook_module.time.monotonic()
     codex_wake._scheduled_delivery_ids.clear()
     codex_wake._scheduled_session_generations.clear()
     codex_wake._scheduled_session_delivery_ids.clear()
@@ -2612,6 +2613,7 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
     })
 
     with pytest.raises(SystemExit) as exited:
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
     assert exited.value.code == 0
     assert len(contexts) == 1 and "preserve until hook →" in contexts[0]
@@ -2751,6 +2753,7 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
             lambda: {"cwd": str(tmp_path), "session_id": session_id, "prompt": prompt},
         )
         with pytest.raises(SystemExit) as exited:
+            hook._HOOK_STARTED_AT = hook.time.monotonic()
             hook.main()
         assert exited.value.code == 0
 
@@ -2759,7 +2762,7 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
     monkeypatch.setattr(hook, "relay_request", relay_request)
     monkeypatch.setattr(hook._common, "relay_request", relay_request)
 
-    def pallium_request(method: str, path: str, payload: dict | None = None, *, quiet: bool = False) -> dict | None:
+    def pallium_request(method: str, path: str, payload: dict | None = None, *, quiet: bool = False, deadline=None) -> dict | None:
         response = client.request(method, path, json=payload)
         if response.status_code != 200:
             return None
@@ -2985,6 +2988,7 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
     monkeypatch.setattr(hook._common, "relay_request", relay_request)
 
     with pytest.raises(SystemExit) as competing:
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
     assert competing.value.code == 0
     assert len(contexts) == 1
@@ -2998,6 +3002,7 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
     contexts.clear()
     capsys.readouterr()
     with pytest.raises(SystemExit) as overtaken:
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
     assert overtaken.value.code == 0
     assert contexts == []
@@ -3075,6 +3080,7 @@ def test_redaction_expansion_is_compacted_and_internal_wake_delivers_once(
     monkeypatch.setattr(hook, "relay_request", relay_request)
     monkeypatch.setattr(hook._common, "relay_request", relay_request)
     with pytest.raises(SystemExit) as exited:
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
 
     assert exited.value.code == 0
@@ -3157,6 +3163,7 @@ def test_actual_codex_hook_drains_bounded_backlog_and_arrival_once(
     scheduled.clear()
 
     with pytest.raises(SystemExit):
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
     assert len(scheduled) == 3
     assert {
@@ -3170,6 +3177,7 @@ def test_actual_codex_hook_drains_bounded_backlog_and_arrival_once(
     send(4)
     assert len(scheduled) == 4
     with pytest.raises(SystemExit):
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
     assert len(scheduled) == 4
     assert contexts[1].count("[Pallium Relay message") == 2
@@ -3180,10 +3188,12 @@ def test_actual_codex_hook_drains_bounded_backlog_and_arrival_once(
         status = client.get(f"/relay/messages/{sent[index]['message_id']}", params=scope)
         assert status.json()["deliveries"][0]["state"] == "delivered"
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
-    client, monkeypatch, tmp_path,
+    client, monkeypatch, tmp_path, relay_admission_clock,
 ) -> None:
     from integrations.codex.hooks import user_prompt_submit as hook
+    from storage import sqlite_queue
 
     scope = {
         "container_ref": SCOPE["container_ref"],
@@ -3196,12 +3206,17 @@ def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
 
     sender = "s" * 255
     target = "maximum-target"
-    for runtime, session in (("claude-code", sender), ("codex", target)):
-        assert client.post("/relay/turn", json={
-            "runtime": runtime,
-            "session_ref": session,
-            **scope,
-        }).status_code == 200
+    native_queue_time = sqlite_queue.time
+    with relay_admission_clock(
+        client.app.state.pallium_service._storage, expected_admissions=2,
+    ):
+        for runtime, session in (("claude-code", sender), ("codex", target)):
+            assert client.post("/relay/turn", json={
+                "runtime": runtime,
+                "session_ref": session,
+                **scope,
+            }).status_code == 200
+    assert sqlite_queue.time is native_queue_time
 
     parent_id = "p" * 128
     parent = client.post("/relay/messages", json={
@@ -3265,6 +3280,7 @@ def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
     })
 
     with pytest.raises(SystemExit):
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
 
     assert len(contexts) == 1
@@ -4407,6 +4423,7 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
         ),
     })
     with pytest.raises(SystemExit):
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
 
     assert json.loads(capsys.readouterr().out)["decision"] == "block"
@@ -4477,6 +4494,7 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     })
 
     with pytest.raises(SystemExit):
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
 
     assert len(contexts) == 1 and contexts[0].count("😀") == 1500
@@ -4626,6 +4644,7 @@ def test_late_exact_hook_claim_is_correlated_before_expired_wake_sweep(
     monkeypatch.setattr(hook, "record_codex_wake_event", record_event)
     try:
         with pytest.raises(SystemExit):
+            hook._HOOK_STARTED_AT = hook.time.monotonic()
             hook.main()
         assert claim_done.wait(3) and response_done.wait(3)
     finally:
@@ -4772,6 +4791,7 @@ def test_pending_and_expired_codex_work_rewakes_after_real_app_restart(
             "prompt": codex_wake._wake_prompt(),
         })
         with pytest.raises(SystemExit):
+            hook._HOOK_STARTED_AT = hook.time.monotonic()
             hook.main()
         hook._common.pin_container("pending-target", SCOPE["container_ref"])
         monkeypatch.setattr(hook, "read_hook_input", lambda: {
@@ -4780,6 +4800,7 @@ def test_pending_and_expired_codex_work_rewakes_after_real_app_restart(
             "prompt": codex_wake._wake_prompt(),
         })
         with pytest.raises(SystemExit):
+            hook._HOOK_STARTED_AT = hook.time.monotonic()
             hook.main()
 
         relay = RelayService(http_b.app.state.pallium_service._storage)

@@ -7,9 +7,12 @@ broadcasting on user-initiated clear in Codex.
 
 from __future__ import annotations
 
+import time
+
+_HOOK_STARTED_AT = time.monotonic()
+
 import importlib.util
 import sys
-import time
 from pathlib import Path
 
 _common_path = str(Path(__file__).resolve().parent / "common.py")
@@ -35,6 +38,10 @@ RETRIEVAL_FALLBACK_QUERY = "recent decisions, progress, and open tasks"
 
 
 def _fetch_retrieval_fallback(container_ref: str, actor_ref: str) -> list[dict]:
+    parent_deadline = _common.hook_deadline()
+    child_deadline = _common.HookDeadline(
+        parent_deadline.deadline, parent_deadline.reserve + 1.0, parent_deadline.clock,
+    )
     response = pallium_request("POST", "/query", {
         "text": RETRIEVAL_FALLBACK_QUERY,
         "container_ref": container_ref,
@@ -43,7 +50,7 @@ def _fetch_retrieval_fallback(container_ref: str, actor_ref: str) -> list[dict]:
         "limit": 5,
         # Phase 4 (2026-06-28): tag the orientation query for audit-log analysis.
         "trigger_origin": "session_start_orientation",
-    })
+    }, deadline=child_deadline)
     if not response:
         return []
     return response.get("injectable_blocks", []) or []
@@ -51,7 +58,10 @@ def _fetch_retrieval_fallback(container_ref: str, actor_ref: str) -> list[dict]:
 
 def main() -> None:
     try:
-        start_hook_deadline(8, host_reserve=1)
+        start_hook_deadline(
+            max(0.0, 8.0 - (time.monotonic() - _HOOK_STARTED_AT)),
+            host_reserve=1,
+        )
         payload = read_hook_input()
         source = payload.get("source", "")
         if source == "clear":
