@@ -74,7 +74,7 @@ The corrected-head CI remains blocked by three distinct failures: native-owner a
 
 Agent technical review: independent non-implementer technical RESULT GO for replacement draft publication at cd0ad08e, including the equivalent fixture-privacy amendment and separately validated affected-file evidence. The subsequent shared-helper correction and deterministic control received independent SOURCE/RESULT GO at capacity-file hash E25E9A7D, with the expected failing witness and all 71 corrected cases independently checked.
 
-Reviewed revision: e6564c699e0e64d9a66fb6fbcd23310edd939915
+Reviewed revision: 4f6ba1869fdab5d363a623a41ebbd2d75d36b421
 
 Verification adequacy: The reviewer independently checked the complete full-suite report, all affected/protected cases, the 91-case anonymization report, the expected RED witness and 71-case capacity report, both equivalent fixture deltas, source identities, and unchanged initial baseline and historical record. Unaffected full coverage is reused; no current-revision full rerun is claimed. The capacity change removes only the setup observer timer; all old post-release watchdogs, counts, ownership assertions and cleanup remain intact. Publication requires complete changed-path and history-aware workflow/Redline validation for this source revision. Saved current-head Linux/Windows CI and the coordinator's merge disposition remain required. No merge or new installation is claimed.
 
@@ -121,3 +121,5 @@ Required CI run 40968732525 at 3237bf30 failed on the first `/relay/turn` in the
 The only test adjustment scopes the existing semantic admission fixture around that first turn with an exact one-admission audit. It explicitly verifies that `storage.sqlite_queue.time` is restored to its native object before the first attachment. The helper, later attach/capture/detach/replay/history operations, and all caller assertions remain unchanged; no retry or deadline change was added.
 
 The exact E2E node passed once, and the owning work-reference associations E2E file passed all 34 cases serially. These focused results validate the fixture boundary only; they do not explain the CI acquisition delay or replace current-head CI. The initial requirement baseline remains unchanged. Current test SHA-256: `24f78031e52ac52ca0d43f898194c373c9f80a84ced0a0b3ecaef4aa96beaf80`.
+
+Independent non-implementer SOURCE/RESULT/privacy GO verifies the exact one-admission prerequisite, native-clock restoration before attachment, unchanged later operations and assertions, matching test hash, one exact pass and all 34 owning-file passes without failures, errors or skips. Shared helpers, product code and protected tests are untouched. Equivalent scope-chain entry 8 preserves the initial baseline. Required current-head CI remains the release gate; no physical-cause or broader recovery conclusion follows.
