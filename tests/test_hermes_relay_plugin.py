@@ -160,7 +160,7 @@ def test_hermes_callbacks_do_not_use_codex_executor(client):
     app = FastAPI()
     app.include_router(create_router(
         service, relay_service=RelayService(service._storage),
-        relay_runner=general, relay_codex_runner=codex,
+        relay_runner=general, relay_wake_runner=codex,
         relay_ack_callback=lambda result, scope: callbacks.append(result),
     ))
     with TestClient(app) as isolated:
@@ -277,7 +277,44 @@ def _await(check):
         if value:
             return value
         time.sleep(.02)
+    value = check()
+    if value:
+        return value
     pytest.fail("plugin did not reach the expected observable state")
+
+
+@pytest.mark.parametrize("readiness", ["before-deadline", "absent"])
+def test_await_observes_final_sleep_without_extending_budget(monkeypatch, request, readiness):
+    clock, sleeps, observations, available_at = [0.0], [], [], []
+    value = object()
+
+    def sleep(seconds):
+        assert seconds == .02
+        sleeps.append(seconds)
+        if readiness == "before-deadline" and len(sleeps) == 150:
+            clock[0] = 2.997
+            available_at.append(time.monotonic())
+        clock[0] = len(sleeps) / 50
+
+    def check():
+        observations.append(clock[0])
+        return value if available_at else None
+
+    monkeypatch.setattr(sys.modules[__name__], "time", SimpleNamespace(
+        monotonic=lambda: clock[0], sleep=sleep))
+    try:
+        if readiness == "before-deadline":
+            assert _await(check) is value
+            assert available_at == [2.997] and observations[-1] == 3.0
+        else:
+            with pytest.raises(pytest.fail.Exception, match="plugin did not reach the expected observable state"):
+                _await(check)
+        assert clock[0] == 3.0 and sleeps == [.02] * 150
+    finally:
+        request.node.user_properties.append(("hermes_await_clock", json.dumps({
+            "available_at": available_at, "last_observed_at": observations[-1],
+            "finished_at": clock[0], "sleeps": len(sleeps),
+        })))
 
 
 @pytest.mark.parametrize("capability", [

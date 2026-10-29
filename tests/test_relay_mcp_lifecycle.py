@@ -435,8 +435,15 @@ def test_mcp_ack_same_actor_cross_container_returns_200(client: TestClient):
     assert _mcp_ack(client, d["delivery_id"], d["receipt"], container_ref="git:other/repo").status_code == 200
 
 
-def test_mcp_ack_not_claimed_returns_409(client: TestClient):
-    _register(client)
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_mcp_ack_not_claimed_returns_409(client: TestClient, relay_admission_clock):
+    from storage import sqlite_queue
+
+    storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
+    with relay_admission_clock(storage, expected_admissions=1):
+        _register(client)
+    assert sqlite_queue.time is native_time and storage._begin_relay_immediate == native_begin
     msg = _send(client)
     # delivery is pending (never claimed via /relay/turn); any receipt returns 409
     delivery_id = msg["deliveries"][0]["delivery_id"]

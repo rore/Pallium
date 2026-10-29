@@ -564,7 +564,7 @@ def test_exact_codex_turn_uses_one_admission_and_preserves_phase_failures(
         return original_turn(self, **kwargs)
 
     def observe_router(service, **kwargs):
-        for name in ("relay_runner", "relay_codex_runner"):
+        for name in ("relay_runner", "relay_wake_runner"):
             original = kwargs[name]
 
             async def runner(operation, _name=name, _original=original):
@@ -717,7 +717,7 @@ def test_exact_codex_turn_uses_one_admission_and_preserves_phase_failures(
             if failure in {"snapshot", "turn_callback", "admission", "projection"}:
                 assert any("snapshot unavailable" in r.message or "failed" in r.message for r in caplog.records)
             assert app.state._wait_for_operations(0)
-            assert admissions == [("relay_codex_runner", 0)], admissions
+            assert admissions == [("relay_wake_runner", 0)], admissions
             assert all(p[1] == admissions[0] and p[2] != loop_thread for p in phases), phases
 
     try:
@@ -888,13 +888,13 @@ def test_independent_relay_operations_progress_with_all_codex_callbacks_waiting(
 
     def observe_router(service, **kwargs):
         callback = kwargs["relay_send_callback"]
-        codex_runner = kwargs.get("relay_codex_runner")
+        codex_runner = kwargs.get("relay_wake_runner")
         if codex_runner is not None:
             async def observe_codex_runner(operation):
                 if armed:
                     codex_requests.append(operation)
                 return await codex_runner(operation)
-            kwargs["relay_codex_runner"] = observe_codex_runner
+            kwargs["relay_wake_runner"] = observe_codex_runner
 
         def observe_send(result, scope):
             if armed and result["deliveries"][0]["recipient_runtime"] == "codex":
@@ -1179,12 +1179,12 @@ def test_activation_projection_uses_tracked_relay_runner_after_admission(
             runner_calls.append(operation)
             return await runner(operation)
 
-        codex_runner = kwargs.get("relay_codex_runner")
+        codex_runner = kwargs.get("relay_wake_runner")
         if codex_runner is not None:
             async def observed_codex_runner(operation):
                 runner_calls.append(operation)
                 return await codex_runner(operation)
-            kwargs["relay_codex_runner"] = observed_codex_runner
+            kwargs["relay_wake_runner"] = observed_codex_runner
 
         def observed_admission(*args):
             events.append("admission")
@@ -2064,7 +2064,7 @@ def test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path,
     original_router = dependencies.create_router
 
     def observe_router(service, **kwargs):
-        captured_runners["codex"] = kwargs["relay_codex_runner"]
+        captured_runners["codex"] = kwargs["relay_wake_runner"]
         captured_runners["ordinary"] = kwargs["relay_runner"]
         return original_router(service, **kwargs)
 
@@ -2586,3 +2586,171 @@ def test_standalone_summary_mount_preserves_sqlite_and_unsupported_responses(cli
         unsupported = http.get("/dashboard/api/relay/summary")
         assert unsupported.status_code == 501
         assert unsupported.json() == {"error": "requires SQLite backend"}
+
+
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+@pytest.mark.parametrize("held_phase", ["none", "poll", "projection"])
+def test_shared_wake_admission_preserves_ack_under_poll_and_projection(
+    client, monkeypatch, tmp_path, capsys, relay_admission_clock, held_phase,
+):
+    import contextvars
+    import json
+    import socket
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from core.relay import RelayService
+    from integrations.codex.hooks import common
+    from scripts.live_funnel_smoke import ScratchServer
+    import scripts.live_funnel_smoke as smoke
+
+    held_polls = 0 if held_phase == "none" else 4
+    armed = False
+    all_poll_http = threading.Event()
+    poll_http_entries = []
+    app, storage = client.app, client.app.state.pallium_service._storage
+    release, polls_entered, ack_finished = (threading.Event() for _ in range(3))
+    poll_entries, ack_calls, errors, stamps = [], [], [], {}
+    ack_context = contextvars.ContextVar("wake_ack_observation", default=False)
+    lock = threading.Lock()
+    original_poll, original_ack = RelayService.opencode_wake, RelayService.acknowledge
+    original_projection = RelayService.opencode_wake_active
+    original_runner = anyio.to_thread.run_sync
+
+    def hold():
+        if release.is_set():
+            return
+        with lock:
+            poll_entries.append(time.monotonic())
+            if len(poll_entries) >= 3:
+                polls_entered.set()
+        if not release.wait(6):
+            errors.append("wake phase hold watchdog expired")
+            raise AssertionError(errors[-1])
+
+    def poll(self, **kwargs):
+        if armed and held_phase == "poll" and kwargs["operation"] == "poll":
+            hold()
+        return original_poll(self, **kwargs)
+
+    def projection(self, endpoint_id):
+        if armed and held_phase == "projection":
+            hold()
+        return original_projection(self, endpoint_id)
+
+    def ack(self, **kwargs):
+        ack_calls.append(True)
+        stamps["ack_service_entered"] = time.monotonic()
+        try:
+            return original_ack(self, **kwargs)
+        finally:
+            stamps["ack_service_returned"] = time.monotonic()
+            ack_finished.set()
+
+    async def runner(function, *args, **kwargs):
+        if not ack_context.get() or "ack_runner_submitted" in stamps:
+            return await original_runner(function, *args, **kwargs)
+        stamps["ack_runner_submitted"] = time.monotonic()
+
+        def entered(*values):
+            stamps["ack_worker_entered"] = time.monotonic()
+            return function(*values)
+
+        return await original_runner(entered, *args, **kwargs)
+
+    async def observed(scope, receive, send):
+        if armed and scope.get("type") == "http" and scope.get("path") == "/relay/opencode/wake":
+            with lock:
+                poll_http_entries.append(True)
+                if len(poll_http_entries) == held_polls:
+                    all_poll_http.set()
+        if scope.get("type") != "http" or scope.get("path") != "/relay/deliveries/ack":
+            return await app(scope, receive, send)
+        stamps["ack_http_entered"] = time.monotonic()
+        token = ack_context.set(True)
+
+        async def sent(message):
+            await send(message)
+            if message.get("type") == "http.response.body" and not message.get("more_body", False):
+                stamps["ack_asgi_body_sent"] = time.monotonic()
+
+        try:
+            return await app(scope, receive, sent)
+        finally:
+            ack_context.reset(token)
+
+    def health(url, timeout=10):
+        response = httpx.get(url, timeout=timeout, trust_env=False)
+        response.raise_for_status()
+        return response.json()
+
+    monkeypatch.setattr(RelayService, "opencode_wake", poll)
+    monkeypatch.setattr(RelayService, "acknowledge", ack)
+    monkeypatch.setattr(RelayService, "opencode_wake_active", projection)
+    monkeypatch.setattr(anyio.to_thread, "run_sync", runner)
+    monkeypatch.setattr(smoke, "http_get_json", health)
+    with socket.socket() as port_owner:
+        port_owner.bind(("127.0.0.1", 0))
+        port = port_owner.getsockname()[1]
+    scope = {"container_ref": "git:example.test/poll-ack-capacity"}
+    with ScratchServer(observed, "127.0.0.1", port) as server, ThreadPoolExecutor(max_workers=4) as pool:
+        monkeypatch.setattr(common, "PALLIUM_BASE_URL", server.base_url)
+        with httpx.Client(base_url=server.base_url, timeout=5, trust_env=False) as http:
+            poll_bodies, futures = [], []
+            with relay_admission_clock(storage, expected_admissions=4 + 2 * held_polls):
+                for session in ("sender", "target"):
+                    response = http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **scope})
+                    assert response.status_code == 200, response.text
+                sent_message = http.post("/relay/messages", json={
+                    "sender_runtime": "codex", "sender_session_ref": "sender",
+                    "recipient": "codex:target", "payload": "capacity observation", **scope,
+                })
+                assert sent_message.status_code == 200, sent_message.text
+                claimed = http.post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **scope})
+                assert claimed.status_code == 200, claimed.text
+                delivery, = claimed.json()["deliveries"]
+                for index in range(held_polls):
+                    registration = http.post("/relay/turn", json={"runtime": "opencode", "session_ref": f"poll-{index}", **scope})
+                    assert registration.status_code == 200, registration.text
+                    row = registration.json()["session"]
+                    body = {"session_ref": row["session_ref"], "endpoint_id": row["endpoint_id"],
+                            "scope_generation": row["scope_generation"], "native_location": str(tmp_path),
+                            "owner_id": "opencode-owner-" + f"{index:032x}", **scope}
+                    enrollment = http.post("/relay/opencode/wake", json={"operation": "enroll", **body})
+                    assert enrollment.status_code == 200, enrollment.text
+                    poll_bodies.append({"operation": "poll", **body})
+            armed = True
+            try:
+                futures = [pool.submit(http.post, "/relay/opencode/wake", json=body) for body in poll_bodies]
+                if held_polls:
+                    assert polls_entered.wait(3), "three real wake workers did not enter"
+                    assert all_poll_http.wait(3), "four poll HTTP requests did not arrive"
+                stamps["client_ack_started"] = time.monotonic()
+                confirmed = common.acknowledge_relay([delivery], container_ref=scope["container_ref"])
+                stamps["client_ack_returned"] = time.monotonic()
+                assert confirmed == [delivery] and ack_finished.is_set(), {"phase": held_phase, "stamps": stamps}
+                if held_polls:
+                    assert len(poll_entries) == 3
+                assert not errors and not release.is_set()
+            finally:
+                stamps["polls_released"] = time.monotonic()
+                release.set()
+                for future, body in zip(futures, poll_bodies):
+                    response = future.result(timeout=5)
+                    assert response.status_code == 200, response.text
+                    view = response.json()
+                    assert view["deliveries"] == [] and view["wake"] is None
+                    assert (view["session"]["runtime"], view["session"]["endpoint_id"], view["session"]["scope_generation"]) == (
+                        "opencode", body["endpoint_id"], body["scope_generation"],
+                    )
+            assert ack_finished.wait(3) and ack_calls == [True]
+            snapshot = http.get(f"/relay/messages/{sent_message.json()['message_id']}", params=scope)
+            assert snapshot.status_code == 200, snapshot.text
+            stored, = snapshot.json()["deliveries"]
+            assert (stored["delivery_id"], stored["state"], stored["attempts"]) == (delivery["delivery_id"], "delivered", 1)
+            assert stamps["ack_worker_entered"] < stamps["polls_released"]
+    assert not errors and len(poll_entries) == (3 if held_polls else 0)
+    result = {"held_phase": held_phase, "held_polls": held_polls, "stamps": stamps, "single_ack": len(ack_calls),
+              "hook_confirmed": bool(confirmed), "eventual_state": "delivered", "claim_attempts": 1,
+              "client_stderr": capsys.readouterr().err[-1200:],
+              "limit": "native ACK regression under controlled wake phases, not historical cause"}
+    (tmp_path / "wake-admission-result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")

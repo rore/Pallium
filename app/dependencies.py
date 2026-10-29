@@ -745,7 +745,7 @@ def build_router(
     claude_wake_registry: ClaudeWakeRegistry | None = None,
     codex_wake_registry: CodexWakeRegistry | None = None,
     relay_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
-    relay_codex_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
+    relay_wake_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     diagnostic_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
 ):
     relay_service = None
@@ -907,6 +907,6 @@ def build_router(
         relay_activation_callback=(_relay_activation if relay_service is not None else None),
         relay_activation_callback_factory=(_relay_activation_factory if relay_service is not None else None),
         relay_runner=relay_runner,
-        relay_codex_runner=relay_codex_runner,
+        relay_wake_runner=relay_wake_runner,
         diagnostic_runner=diagnostic_runner,
     )
