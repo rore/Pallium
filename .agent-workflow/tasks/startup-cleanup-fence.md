@@ -1,5 +1,7 @@
 # Fence startup retries after unresolved cleanup
 
+Pull request: https://github.com/rore/Pallium/pull/377
+
 ## Discovery and plan review
 
 The API startup retry helper calls the existing tree cleanup after failed readiness, but can start another generation even when that process remains alive. This is a separate startup safety defect; it does not explain historical service stalls. The health-probe loop and Windows tree termination implementation remain unchanged.
