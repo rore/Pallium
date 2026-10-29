@@ -2892,6 +2892,131 @@ def test_hook_deadline_clamps_requests_and_skips_when_exhausted(
 
 
 @pytest.mark.parametrize(
+    ("kind", "relative"),
+    [
+        ("prompt", "integrations/codex/hooks/user_prompt_submit.py"),
+        ("session-start", "integrations/codex/hooks/session_start.py"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("case", "optional_start", "queries", "emits", "enriched", "times_out"),
+    [
+        ("success", 2.0, True, True, True, False),
+        ("optional-timeout", 2.0, True, True, False, True),
+        ("child-exhausted", 6.0, False, True, False, False),
+        ("parent-exhausted", 7.0, False, False, False, False),
+    ],
+)
+def test_codex_optional_memory_request_preserves_scope_emission_budget(
+    monkeypatch, capsys, tmp_path, kind, relative, case, optional_start, queries, emits, enriched, times_out,
+):
+    hook = _load(f"scope_reserve_{kind}_{case}", relative)
+    common = hook._common
+    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(common, "STATE_DIR", tmp_path / "state")
+    logical_now = [0.0]
+    parent_deadlines = []
+    acknowledgements = []
+    memory_requests = []
+
+    def clock():
+        return logical_now[0]
+
+    def start_deadline(seconds, *, host_reserve=0.0):
+        assert seconds == 8 and host_reserve == 1
+        deadline = common.start_hook_deadline(8, host_reserve=1, clock=clock)
+        parent_deadlines.append(deadline)
+        logical_now[0] = optional_start
+        return deadline
+
+    monkeypatch.setattr(hook, "start_hook_deadline", start_deadline)
+    monkeypatch.setattr(hook, "read_hook_input", lambda: (
+        {"cwd": ".", "session_id": "target-session", "prompt": "Review these migration details carefully."}
+        if kind == "prompt" else
+        {"cwd": ".", "session_id": "target-session", "source": "resume"}
+    ))
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_args: "actor")
+
+    def empty_turn(*_args, **_kwargs):
+        logical_now[0] = optional_start
+        return _turn_response()
+
+    monkeypatch.setattr(hook, "relay_turn", empty_turn)
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda *args, **kwargs: acknowledgements.append(args))
+    if kind == "prompt":
+        monkeypatch.setattr(hook, "record_codex_hook_execution", lambda **_kwargs: None)
+        monkeypatch.setattr(hook, "record_codex_wake_event", lambda **_kwargs: None)
+        monkeypatch.setattr(hook, "check_dedup", lambda *_args: False)
+        monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_args: ([], 0))
+        monkeypatch.setattr(hook, "resolve_container_ref", lambda *_args: "git:example/repo")
+        monkeypatch.setattr(hook, "discover_work_refs", lambda *_args: common.WorkRefDiscovery())
+    else:
+        monkeypatch.setattr(hook, "derive_container_ref", lambda *_args: "git:example/repo")
+        monkeypatch.setattr(hook, "pin_container", lambda *_args, **_kwargs: None)
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "injectable_blocks": [{
+                    "title": "Prior decision", "memory_object_id": "memory-1",
+                    "text": "optional enrichment", "expand_available": False,
+                }],
+            }).encode("utf-8")
+
+    def consume_optional_request(request, *, timeout):
+        memory_requests.append((request, timeout))
+        logical_now[0] += timeout
+        if times_out:
+            raise TimeoutError("controlled optional request timeout")
+        return Response()
+
+    monkeypatch.setattr(common, "_urlopen", consume_optional_request)
+
+    with pytest.raises(SystemExit):
+        hook.main()
+
+    assert common.hook_deadline() is parent_deadlines[0]
+    assert (parent_deadlines[0].deadline, parent_deadlines[0].reserve, parent_deadlines[0].clock) == (
+        8.0, 1.0, clock,
+    )
+    assert acknowledgements == []
+
+    captured = capsys.readouterr()
+    if not emits:
+        assert captured.out == ""
+        assert "hook output unavailable" in captured.err
+    else:
+        lines = captured.out.splitlines()
+        assert len(lines) == 1
+        output = json.loads(lines[0])["hookSpecificOutput"]
+        assert output["hookEventName"] == ("UserPromptSubmit" if kind == "prompt" else "SessionStart")
+        context = output["additionalContext"]
+        scope_line = next(line for line in context.splitlines() if line.startswith("[Pallium scope — "))
+        assert json.loads(scope_line.removeprefix("[Pallium scope — ").removesuffix("]")) == {
+            "container_ref": "git:example/repo", "thread_ref": "target-session",
+            "actor_ref": "actor", "agent_ref": "codex", "visibility": "private",
+        }
+        assert ("optional enrichment" in context) is enriched
+
+    assert bool(memory_requests) is queries
+    if queries:
+        request, timeout = memory_requests[0]
+        expected_path = "/item-and-query" if kind == "prompt" else "/query"
+        assert request.full_url.endswith(expected_path)
+        assert timeout == (0.0 if case == "child-exhausted" else 4.0)
+    if not emits:
+        assert logical_now[0] == optional_start
+    elif queries:
+        assert logical_now[0] == 6.0
+
+
+@pytest.mark.parametrize(
     ("name", "relative", "returns_acknowledged"),
     [
         (

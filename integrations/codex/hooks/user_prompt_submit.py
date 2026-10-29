@@ -323,6 +323,10 @@ def main() -> None:
             agent_ref=AGENT_REF, visibility="private", work_ref=current_work_ref,
         ) if has_session else ""
         if len(content) >= 20:
+            parent_deadline = _common.hook_deadline()
+            child_deadline = _common.HookDeadline(
+                parent_deadline.deadline, parent_deadline.reserve + 1.0, parent_deadline.clock,
+            )
             response = pallium_request("POST", "/item-and-query", {
                 "source_type": SOURCE_TYPE,
                 "source_id": f"cdx-{uuid.uuid4().hex[:12]}",
@@ -343,7 +347,7 @@ def main() -> None:
                 "source_turn_id": source_turn_key(payload.get("turn_id")),
                 "relay_name": relay_name_snapshot(relay_response)[1],
                 "relay_attribution_state": relay_name_snapshot(relay_response)[0],
-            })
+            }, deadline=child_deadline)
             if response:
                 if isinstance(response.get("work_ref_metadata"), dict):
                     warning = work_ref_warning(response["work_ref_metadata"])

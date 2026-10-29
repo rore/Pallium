@@ -35,6 +35,10 @@ RETRIEVAL_FALLBACK_QUERY = "recent decisions, progress, and open tasks"
 
 
 def _fetch_retrieval_fallback(container_ref: str, actor_ref: str) -> list[dict]:
+    parent_deadline = _common.hook_deadline()
+    child_deadline = _common.HookDeadline(
+        parent_deadline.deadline, parent_deadline.reserve + 1.0, parent_deadline.clock,
+    )
     response = pallium_request("POST", "/query", {
         "text": RETRIEVAL_FALLBACK_QUERY,
         "container_ref": container_ref,
@@ -43,7 +47,7 @@ def _fetch_retrieval_fallback(container_ref: str, actor_ref: str) -> list[dict]:
         "limit": 5,
         # Phase 4 (2026-06-28): tag the orientation query for audit-log analysis.
         "trigger_origin": "session_start_orientation",
-    })
+    }, deadline=child_deadline)
     if not response:
         return []
     return response.get("injectable_blocks", []) or []

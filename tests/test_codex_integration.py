@@ -1021,9 +1021,14 @@ def test_codex_injection_scope_is_exact_bounded_and_optional() -> None:
 
 def test_codex_prompt_scope_uses_host_session_and_never_fabricates_unknown(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_hook_transport: list[str],
 ) -> None:
     from integrations.codex.hooks import user_prompt_submit as hook
 
+    monkeypatch.setattr(hook._common, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(hook._common, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(hook, "relay_turn", lambda *_args, **_kwargs: None)
     requests: list[dict] = []
     contexts: list[str] = []
     payload = {"cwd": ".", "session_id": "codex:task:1", "prompt": "Resume the prior implementation work now."}
@@ -1037,7 +1042,7 @@ def test_codex_prompt_scope_uses_host_session_and_never_fabricates_unknown(
         lambda *_args, **_kwargs: {"pallium_work_refs": ["git-branch:feature/demo"]},
     )
 
-    def request(_method: str, _path: str, body: dict) -> dict:
+    def request(_method: str, _path: str, body: dict, *, deadline=None) -> dict:
         requests.append(body)
         return {"source_item_id": "request-codex-1", "injectable_blocks": []}
 
