@@ -8,7 +8,7 @@ Independent non-implementer review approved the narrow direction: recheck the ow
 
 ## Recovery state
 
-Isolated branch based on main revision `447580f6`. No installed changes or publication. Another active branch contains hook repairs and remains subject to its existing publication hold. Private incident evidence is retained outside public artifacts.
+Application baseline is main revision `447580f6`. This change has no installation or live-operation component.
 
 <!-- agent-workflow:start -->
 **Outcome:** API startup never launches a replacement while cleanup leaves its previous owned process alive.
@@ -37,17 +37,29 @@ Isolated branch based on main revision `447580f6`. No installed changes or publi
 
 **Plan:** Add one post-cleanup liveness fence in _start_api_with_retry. Keep the existing cleanup and exception behavior. Add deterministic startup/caller witnesses and correct only fake cleanup state in existing exhaustion fixtures, preserving their assertions. Run focused nodes, both supervisor files, the whole-change selector and required full validation before publication.
 
-**Verification plan:** Deterministic failed/raised cleanup and successful/already-exited controls through _start_api_with_retry and run_supervisor; both existing supervisor files; scripts/test-plan.py --base origin/main and its required checks, including full non-slow suite and workflow compliance. Existing PR test job will verify the caller contract before any merge.
+**Verification plan:** Startup fencing and preserved retries → deterministic _start_api_with_retry and run_supervisor controls plus both supervisor files. Whole-change regression coverage → scripts/test-plan.py --base origin/main and its required full non-slow suite. Policy compliance → boundary report, risk classification and workflow check. Caller contract before merge → existing PR test job.
 
-**Plan review:** Agent technical review: independent non-implementer recovery_diagnostics_review source assessment at main 447580f6, narrowed to the post-cleanup startup fence after rejecting stronger kill machinery and health-counter changes. Reconfirm the recorded plan before source edits.
+**Plan review:** Agent technical review: independent non-implementer recovery_diagnostics_review confirmed PLAN GO for this exact Work Record at main 447580f6 before source edits, narrowed to the post-cleanup startup fence after rejecting stronger kill machinery and health-counter changes.
 
 **Approvals:** Approved by user 2026-10-29: "yes, i approve, and no need to ask every time - i approve all the work to get this bug fixed". This covers necessary bug-fix work; unrelated environment changes remain outside scope. No live operation is planned here.
 
-## Implementation and verification evidence
+**State:** Ready for review
+<!-- agent-workflow:end -->
+
+## Implementation
 
 Implementation: `_start_api_with_retry` now checks the owned process after the existing forced tree cleanup. If `poll()` still reports alive, it logs unresolved cleanup and returns before backoff or another spawn. Cleanup exceptions retain their existing catch behavior and take the same liveness check. Tests cover no-effect and raised cleanup, already-exited retry behavior, startup caller failure before worker helpers, and fake successful cleanup in existing retry-exhaustion/budget cases; their retry-count assertions are preserved.
 
-Verification: the new fence/control and caller/exhaustion focused nodes passed. The requested serial supervisor files passed with local loopback enabled: `tests/test_supervisor.py tests/test_supervisor_kill_tree.py -q -n 0 -p no:cacheprovider` → 74 passed, 6 skipped. An earlier sandboxed attempt had 12 failures because local loopback was denied and the startup-budget fake had not yet been updated; the final elevated local-only run passed. No service, installed app, persistent config, or live database was touched. Whole-change selector/full suite remain with the parent task owner.
+## Evidence
 
-**State:** Ready for review
-<!-- agent-workflow:end -->
+The new fence/control and caller/exhaustion focused nodes passed. The serial supervisor files passed with local loopback enabled: `tests/test_supervisor.py tests/test_supervisor_kill_tree.py -q -n 0 -p no:cacheprovider` → 74 passed, 6 skipped. An earlier sandboxed attempt had 12 failures because local loopback was denied and the startup-budget fake had not yet been updated; the final elevated local-only run passed. No service, installed app, persistent config, or live database was touched.
+
+The whole-change selector required the full non-slow suite. Against unchanged application commit `9ebd4658`, the corrected complete run passed: 8,379 passed, 37 skipped, 2 xfailed. The initial run used temporary directories inside a Git checkout and failed two hook scope tests; both unchanged nodes passed outside the checkout, and the complete corrected run used that isolation. Both reports remain in private evidence. Boundary checks passed, deterministic classification is GRAY with the supervisor path watched, and the workflow check is clean. Current-head CI remains required before merge.
+
+## Result review
+
+Agent technical review: independent non-implementer recovery_diagnostics_review, final RESULT GO for draft publication.
+
+Reviewed revision: 9ebd4658203bc84bac9484230076e421490ae82d
+
+Verification adequacy: Independently inspected the full report (8,379 passed, 37 skipped, 2 xfailed, zero failures/errors), including both supervisor files (74 passed, 6 skipped), unchanged source hashes, clean workflow and GRAY classification with no boundary violations or required checkpoints. The guard and fixture corrections preserve health, reaper, readiness, timing and retry-count behavior. Current-head CI remains required before merge. The fence establishes owned-parent exit only, with no stronger descendant-cleanup claim.
