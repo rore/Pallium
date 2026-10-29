@@ -429,12 +429,12 @@ def test_codex_hooks_use_absolute_commands_without_literal_quotes(
     monkeypatch.setattr(
         setup_codex.sys,
         "executable",
-        r"C:\Dev\rore\Pallium\.venv\Scripts\python.exe",
+        r"C:\Projects\ExampleRepo\.venv\Scripts\python.exe",
     )
     monkeypatch.setattr(
         setup_codex,
         "_hooks_dir",
-        lambda: Path(r"C:\Dev\rore\Pallium\integrations\codex\hooks"),
+        lambda: Path(r"C:\Projects\ExampleRepo\integrations\codex\hooks"),
     )
 
     hooks_data = setup_codex._register_hooks({})
@@ -446,7 +446,7 @@ def test_codex_hooks_use_absolute_commands_without_literal_quotes(
     ]
 
     assert len(commands) == 3
-    assert all(command.startswith("C:/Dev/rore/Pallium/.venv/Scripts/python.exe ") for command in commands)
+    assert all(command.startswith("C:/Projects/ExampleRepo/.venv/Scripts/python.exe ") for command in commands)
     assert all('"' not in command for command in commands)
     assert any(command.endswith("/session_start.py") for command in commands)
     assert any(command.endswith("/user_prompt_submit.py") for command in commands)
@@ -459,12 +459,12 @@ def test_codex_hook_registration_self_heals_stale_pallium_hooks(
     monkeypatch.setattr(
         setup_codex.sys,
         "executable",
-        r"C:\Dev\rore\Pallium\.venv\Scripts\python.exe",
+        r"C:\Projects\ExampleRepo\.venv\Scripts\python.exe",
     )
     monkeypatch.setattr(
         setup_codex,
         "_hooks_dir",
-        lambda: Path(r"C:\Dev\rore\Pallium\integrations\codex\hooks"),
+        lambda: Path(r"C:\Projects\ExampleRepo\integrations\codex\hooks"),
     )
 
     stale_hooks = {
@@ -474,7 +474,7 @@ def test_codex_hook_registration_self_heals_stale_pallium_hooks(
                     "hooks": [
                         {
                             "type": "command",
-                            "command": '"C:/Dev/rore/Pallium/.venv/Scripts/python.exe" "C:/Dev/rore/Pallium/integrations/codex/hooks/stop.py"',
+                            "command": '"C:/Projects/ExampleRepo/.venv/Scripts/python.exe" "C:/Projects/ExampleRepo/integrations/codex/hooks/stop.py"',
                             "timeout": 15,
                         }
                     ]
@@ -502,11 +502,11 @@ def test_codex_hook_registration_self_heals_stale_pallium_hooks(
     ]
     assert "C:/other/tool.exe" in stop_commands
     expected_stop = (
-        "C:/Dev/rore/Pallium/.venv/Scripts/python.exe "
-        "C:/Dev/rore/Pallium/integrations/codex/hooks/stop.py"
+        "C:/Projects/ExampleRepo/.venv/Scripts/python.exe "
+        "C:/Projects/ExampleRepo/integrations/codex/hooks/stop.py"
     )
     assert stop_commands.count(expected_stop) == 1
-    assert all(command.count("stop.py") == 1 for command in stop_commands if "Pallium" in command)
+    assert all(command.count("stop.py") == 1 for command in stop_commands if "ExampleRepo" in command)
 
 
 def test_codex_agents_block_is_replaced_when_setup_runs_again() -> None:
@@ -549,7 +549,7 @@ def test_codex_stop_hook_ingests_quietly(
         stop,
         "read_hook_input",
         lambda: {
-            "cwd": r"C:\Dev\rore\Pallium",
+            "cwd": r"C:\Projects\ExampleRepo",
             "session_id": "session-1",
             "transcript_path": "transcript.jsonl",
             "turn_id": turn_id,
@@ -563,7 +563,7 @@ def test_codex_stop_hook_ingests_quietly(
     monkeypatch.setattr(stop, "build_work_trace_metadata", lambda _: None)
     monkeypatch.setattr(stop, "build_work_refs_metadata", lambda *_, **_kwargs: {})
     monkeypatch.setattr(stop, "resolve_container_ref", lambda _cwd, _session_id: "git:github.com/rore/pallium")
-    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "Rotem")
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "sample-user")
     monkeypatch.setattr(stop._common, "relay_request", lambda *_a, **_k: None)
 
     def fake_request(method: str, path: str, payload: object, *, quiet: bool = False) -> None:
@@ -597,7 +597,7 @@ def test_codex_stop_hook_ingests_quietly(
         "agent_ref": "codex",
         "container_ref": "git:github.com/rore/pallium",
         "thread_ref": "session-1",
-        "actor_ref": "Rotem",
+        "actor_ref": "sample-user",
         "visibility": "private",
         "artifact_kind": "message",
     }
