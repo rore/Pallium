@@ -16,6 +16,7 @@ from pathlib import Path
 
 
 _close_log_lock = threading.Lock()
+_client_worker_id_lock = threading.Lock()
 _client_worker_sequence = 0
 _CLOSE_REASONS = frozenset({
     "idle-ready-deadline", "idle-ready-transport", "unused-ready-retired",
@@ -74,9 +75,12 @@ def _write_client_diagnostic(name, message, args):
 
 def _next_client_worker_id():
     global _client_worker_sequence
-    with _close_log_lock:
-        _client_worker_sequence = _client_worker_sequence % 999999999 + 1
-        return _client_worker_sequence
+    try:
+        with _client_worker_id_lock:
+            _client_worker_sequence = _client_worker_sequence % 999999999 + 1
+            return _client_worker_sequence
+    except Exception:
+        return "unknown"
 
 
 _RECOVERY_DIAGNOSTIC_VALUES = {
@@ -308,7 +312,11 @@ class InventoryWorker:
         self._requests = queue.Queue(maxsize=1)
         self._busy = False
         self._restart_allowed = True
-        self._diagnostic_worker_id = _next_client_worker_id()
+        try:
+            self._diagnostic_worker_id = _next_client_worker_id()
+        except Exception:
+            self._diagnostic_worker_id = "unknown"
+        self._diagnostic_unresolved = "unknown"
         self._fresh_request_retirement = None
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -367,6 +375,7 @@ class InventoryWorker:
                 unresolved = True
             unresolved = unresolved or bool(getattr(client, "unresolved", False))
         self._restart_allowed = restart_allowed and not unresolved
+        self._diagnostic_unresolved = unresolved
         if self._retained and client is not None:
             _client_close_diagnostic(reason, identity, unresolved)
 
@@ -513,32 +522,36 @@ class InventoryWorker:
                         *, retired_context=None):
         started, delay = time.monotonic(), RECONNECT_INITIAL_BACKOFF_SECONDS
         from app.codex_bridge_pipe import ShadowUnavailable
-        worker = getattr(self, "_diagnostic_worker_id", None)
-        if type(worker) is not int:
-            worker = self._diagnostic_worker_id = _next_client_worker_id()
+        worker = getattr(self, "_diagnostic_worker_id", "unknown")
         episode = getattr(self, "_recovery_episode", 0) % 999999 + 1
         self._recovery_episode = episode
         last = ("not-attempted", "not-attempted", "not-attempted")
 
-        def diagnose(attempt, acquisition, ready, register, terminal, unresolved="unknown"):
+        def diagnose(attempt, acquisition, ready, register, terminal, unresolved=None):
+            if unresolved is None:
+                unresolved = getattr(self, "_diagnostic_unresolved", "unknown")
             _client_recovery_diagnostic(worker, episode, attempt, acquisition, ready, register,
                                         terminal, self._restart_allowed, unresolved)
 
+        def not_started(attempt, terminal):
+            diagnose(attempt, "not-attempted", "not-attempted", "not-attempted", terminal, "unknown")
+
         for attempt in range(RECONNECT_MAX_ATTEMPTS):
             if self.stop_event.is_set():
-                diagnose(attempt + 1, *last, "stopped")
+                not_started(attempt + 1, "stopped")
                 return None
             if not self._restart_allowed:
-                diagnose(attempt + 1, *last, "not-eligible")
+                not_started(attempt + 1, "not-eligible")
                 return None
             if time.monotonic() - started >= RECONNECT_WINDOW_SECONDS:
-                diagnose(attempt + 1, *last, "window-exhausted")
+                not_started(attempt + 1, "window-exhausted")
                 return None
             if (os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
                     or not self._valid_continuity(continuity)):
-                diagnose(attempt + 1, *last, "not-eligible")
+                not_started(attempt + 1, "not-eligible")
                 return None
             acquisition, ready_result, register_result = "not-attempted", "not-attempted", "not-attempted"
+            self._diagnostic_unresolved = "unknown"
             try:
                 if retired_context is not None:
                     client = self._retired_candidate(native_type, original_pipe, *retired_context)
@@ -564,6 +577,7 @@ class InventoryWorker:
                 client.continuity = continuity
                 source_io = getattr(client, "io", None)
                 retry_ready = False
+                stopped_for_ready_retry = False
                 try:
                     if time.monotonic() - started >= RECONNECT_WINDOW_SECONDS:
                         self._finish(client)
@@ -573,12 +587,15 @@ class InventoryWorker:
                     manifest = getattr(client, "manifest", None)
                     ready_manifest = dict(manifest) if type(manifest) is dict else None
                     try:
+                        ready_result = "terminal"
                         ready = client.ready()
                     except ShadowUnavailable as exc:
                         ready_result = exc.category if exc.category in {"deadline", "transport-failed"} else "terminal"
                         # READY is read-only; REGISTER failures below must never replay.
+                        # A failing guard must leave the whole retry assignment false.
                         retry_ready = (exc.category in {"deadline", "transport-failed"}
-                            and not self.stop_event.is_set() and self._restart_allowed
+                            and not (stopped_for_ready_retry := self.stop_event.is_set())
+                            and self._restart_allowed
                             and not getattr(client, "unresolved", False)
                             and not getattr(source_io, "unresolved", False)
                             and os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") == original_pipe
@@ -630,10 +647,12 @@ class InventoryWorker:
                         last = (acquisition, ready_result, register_result)
                         diagnose(attempt + 1, *last,
                                  "register-terminal" if register_result != "not-attempted"
-                                 else "ready-terminal")
+                                 else "stopped" if stopped_for_ready_retry else "ready-terminal")
                         return None
+                    stopped_for_safe = False
                     try:
-                        safe = (self._restart_allowed and not self.stop_event.is_set()
+                        safe = (self._restart_allowed
+                            and not (stopped_for_safe := self.stop_event.is_set())
                             and not getattr(source_io, "unresolved", False)
                             and os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") == original_pipe
                             and client.continuity == continuity
@@ -644,7 +663,7 @@ class InventoryWorker:
                     if not safe:
                         self._restart_allowed = False
                         last = (acquisition, ready_result, register_result)
-                        diagnose(attempt + 1, *last, "uncertain")
+                        diagnose(attempt + 1, *last, "stopped" if stopped_for_safe else "uncertain")
                         return None
                     last = (acquisition, ready_result, register_result)
                     diagnose(attempt + 1, *last, "ready-retry", False)
