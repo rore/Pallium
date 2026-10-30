@@ -63,6 +63,8 @@ def _mark_reconnect(diagnostic, *, phase=None, phase_state=None, attempt=None, r
                            ("registration", registration), ("outcome", outcome),
                            ("unresolved", unresolved), ("owner_exited", owner_exited)):
             if value is not None:
+                if key == "unresolved" and diagnostic.get(key) is True:
+                    continue  # An observed ownership hazard remains relevant to this episode.
                 diagnostic[key] = value
     except Exception:
         pass
@@ -410,6 +412,7 @@ class InventoryWorker:
         self._restart_allowed = restart_allowed and not unresolved
         if self._retained and client is not None:
             _client_close_diagnostic(reason, identity, unresolved)
+        return unresolved
 
     def _recover_if_gone(self, client, native_type, original_pipe, metadata, continuity,
                          *, allow_ready_retirement=False, ready_retirement_context="idle"):
@@ -420,6 +423,7 @@ class InventoryWorker:
             _client_reconnect_diagnostic(diagnostic, self._restart_allowed)
             return None, False
         diagnostic = None
+        service_check_pending = False
         try:
             if (self.stop_event.is_set() or getattr(client, "unresolved", False)
                     or getattr(getattr(client, "io", None), "unresolved", False)
@@ -430,7 +434,9 @@ class InventoryWorker:
                 _mark_reconnect(diagnostic, phase="preflight", phase_state="completed",
                                 outcome="preentry-refused")
                 raise RuntimeError("retained continuity unavailable")
+            service_check_pending = True
             if client.service_current():
+                service_check_pending = False
                 try:
                     ready = inventory_status(client.ready())
                 except Exception as exc:
@@ -448,7 +454,6 @@ class InventoryWorker:
                             or getattr(client, "continuity", None) != continuity
                             or type(manifest) is not dict or not client.service_current()
                             or client.bootstrap_unchanged() is not True):
-                        _mark_reconnect(diagnostic, outcome="preentry-refused")
                         raise
                     previous_manifest = dict(manifest)
                     retirement_reason = (
@@ -456,9 +461,10 @@ class InventoryWorker:
                         else f"{ready_retirement_context}-ready-transport")
                     _mark_reconnect(diagnostic, phase="retire", phase_state="entered",
                                     outcome="ready-retired", unresolved="unknown")
-                    self._finish(client, retire=True, reason=(
+                    retired_unresolved = self._finish(client, retire=True, reason=(
                         retirement_reason))
-                    _mark_reconnect(diagnostic, phase="retire", phase_state="completed")
+                    _mark_reconnect(diagnostic, phase="retire", phase_state="completed",
+                                    unresolved=True if retired_unresolved is True else None)
                     _mark_reconnect(diagnostic, phase="owner-check", phase_state="entered")
                     exit_witness = getattr(client, "retired_service_exited", None)
                     owner_exited = callable(exit_witness) and exit_witness() is True
@@ -479,6 +485,7 @@ class InventoryWorker:
                         _mark_reconnect(diagnostic, unresolved=False)
                     if ready_retirement_context == "idle":
                         replacement = None
+                        old_cleanup_unresolved = None
                         try:
                             if self._restart_allowed:
                                 replacement = self._auto_reconnect(
@@ -490,20 +497,33 @@ class InventoryWorker:
                         finally:
                             # The episode borrows the old authenticated exit witness.
                             if callable(getattr(client, "retire", None)):
-                                self._finish(client)
+                                old_cleanup_unresolved = self._finish(client)
+                                if old_cleanup_unresolved is True:
+                                    _mark_reconnect(diagnostic, phase="cleanup", phase_state="completed",
+                                                    outcome="safety-refused", unresolved=True)
+                        replacement_unresolved = replacement_io_unresolved = None
+                        _mark_reconnect(diagnostic, unresolved="unknown")
                         if (not self._restart_allowed or self.stop_event.is_set()
                                 or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
                                 or replacement is not None and (
                                     replacement.continuity != continuity
-                                    or getattr(replacement, "unresolved", False)
-                                    or getattr(getattr(replacement, "io", None), "unresolved", False))):
+                                    or (replacement_unresolved := getattr(replacement, "unresolved", False))
+                                    or (replacement_io_unresolved := getattr(
+                                        getattr(replacement, "io", None), "unresolved", False)))):
+                            if replacement_unresolved is True or replacement_io_unresolved is True:
+                                _mark_reconnect(diagnostic, unresolved=True)
                             if replacement is not None:
-                                self._finish(replacement)
-                            _mark_reconnect(diagnostic, outcome="safety-refused")
+                                replacement_cleanup_unresolved = self._finish(replacement)
+                                _mark_reconnect(diagnostic, unresolved=(
+                                    True if replacement_cleanup_unresolved is True else None))
+                            if (old_cleanup_unresolved is True or diagnostic is None
+                                    or diagnostic.get("outcome") not in {
+                                        "postregister-fence-refused", "candidate-fence-refused"}):
+                                _mark_reconnect(diagnostic, outcome="safety-refused")
                             _client_reconnect_diagnostic(diagnostic, self._restart_allowed)
                             return None, True
                         if replacement is not None:
-                            _mark_reconnect(diagnostic, outcome="reconnected")
+                            _mark_reconnect(diagnostic, outcome="reconnected", unresolved=False)
                         _client_reconnect_diagnostic(diagnostic, self._restart_allowed)
                         return replacement, True
                     # Foreground failure still requires a new real caller.
@@ -546,20 +566,26 @@ class InventoryWorker:
                             _mark_reconnect(diagnostic, outcome="register-busy")
                         _mark_reconnect(diagnostic, phase="postregister", phase_state="entered",
                                         unresolved="unknown")
-                if (self.stop_event.is_set() or getattr(client, "unresolved", False)
-                        or getattr(getattr(client, "io", None), "unresolved", False)
+                caller_unresolved = caller_io_unresolved = None
+                if (self.stop_event.is_set()
+                        or (caller_unresolved := getattr(client, "unresolved", False))
+                        or (caller_io_unresolved := getattr(
+                            getattr(client, "io", None), "unresolved", False))
                         or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
                         or getattr(client, "continuity", None) != continuity):
                     if diagnostic is None:
                         diagnostic = _new_reconnect_diagnostic(ready_retirement_context)
-                    _mark_reconnect(diagnostic, outcome="safety-refused")
+                    _mark_reconnect(diagnostic, outcome=(
+                        "postregister-fence-refused" if diagnostic is not None
+                        and diagnostic.get("phase") == "postregister" else "safety-refused"),
+                        unresolved=True if caller_unresolved is True or caller_io_unresolved is True else None)
                     raise RuntimeError("retained continuity changed")
                 if busy and diagnostic is None:
                     diagnostic = _new_reconnect_diagnostic(ready_retirement_context)
                     _mark_reconnect(diagnostic, phase="ready", phase_state="completed",
                                     outcome="ready-busy")
                 if diagnostic is not None:
-                    _mark_reconnect(diagnostic, phase_state="completed")
+                    _mark_reconnect(diagnostic, phase_state="completed", unresolved=False)
                     if diagnostic.get("outcome") == "unclassified":
                         _mark_reconnect(diagnostic, outcome="ready-busy" if busy else "ready-available")
                     _client_reconnect_diagnostic(diagnostic, self._restart_allowed)
@@ -568,6 +594,9 @@ class InventoryWorker:
             self._restart_allowed = False
             if diagnostic is None:
                 diagnostic = _new_reconnect_diagnostic(ready_retirement_context)
+                if service_check_pending:
+                    _mark_reconnect(diagnostic, phase="service-check", phase_state="raised",
+                                    outcome="reconnect-error")
             outcome = diagnostic.get("outcome") if type(diagnostic) is dict else None
             if outcome == "unclassified":
                 if (diagnostic is not None and diagnostic.get("phase") == "register"
@@ -597,7 +626,8 @@ class InventoryWorker:
                         outcome="service-not-current")
         try:
             previous_manifest = getattr(client, "manifest", None)
-            self._finish(client)
+            cleanup_unresolved = self._finish(client)
+            _mark_reconnect(diagnostic, unresolved=True if cleanup_unresolved is True else None)
             if not self._restart_allowed:
                 _mark_reconnect(diagnostic, outcome="safety-refused")
                 return None, True
@@ -612,7 +642,8 @@ class InventoryWorker:
         finally:
             _client_reconnect_diagnostic(diagnostic, self._restart_allowed)
 
-    def _retired_candidate(self, native_type, original_pipe, retired_client, retired_manifest):
+    def _retired_candidate(self, native_type, original_pipe, retired_client, retired_manifest,
+                           *, diagnostic=None):
         from app.codex_bridge_pipe import ShadowUnavailable
         candidate = None
         try:
@@ -640,7 +671,8 @@ class InventoryWorker:
             return candidate
         except Exception as exc:
             if candidate is not None:
-                self._finish(candidate)
+                cleanup_unresolved = self._finish(candidate)
+                _mark_reconnect(diagnostic, unresolved=True if cleanup_unresolved is True else None)
             if not (candidate is None and isinstance(exc, ShadowUnavailable)
                     and exc.category == "startup-unavailable"):
                 self._restart_allowed = False
@@ -651,19 +683,22 @@ class InventoryWorker:
         started, delay = time.monotonic(), RECONNECT_INITIAL_BACKOFF_SECONDS
         from app.codex_bridge_pipe import ShadowUnavailable
         for attempt in range(RECONNECT_MAX_ATTEMPTS):
+            window_expired = None
             if (self.stop_event.is_set() or not self._restart_allowed
-                    or time.monotonic() - started >= RECONNECT_WINDOW_SECONDS
+                    or (window_expired := time.monotonic() - started >= RECONNECT_WINDOW_SECONDS)
                     or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
                     or not self._valid_continuity(continuity)):
                 _mark_reconnect(diagnostic, phase="preflight", phase_state="completed",
-                                outcome="reconnect-guard-refused")
+                                outcome="window-exhausted" if window_expired is True
+                                else "reconnect-guard-refused")
                 return None
             _mark_reconnect(diagnostic, phase="constructor", phase_state="entered",
                             attempt=attempt + 1, registration="not-attempted", unresolved="unknown",
                             outcome="unclassified")
             try:
                 if retired_context is not None:
-                    client = self._retired_candidate(native_type, original_pipe, *retired_context)
+                    client = self._retired_candidate(native_type, original_pipe, *retired_context,
+                                                     diagnostic=diagnostic)
                 elif previous_manifest is None:
                     client = native_type(self._path, self.stop_event, retained=True)
                 else:
@@ -691,8 +726,9 @@ class InventoryWorker:
                                         outcome="window-exhausted")
                         _mark_reconnect(diagnostic, phase="cleanup", phase_state="entered",
                                         unresolved="unknown")
-                        self._finish(client)
-                        _mark_reconnect(diagnostic, phase_state="completed")
+                        cleanup_unresolved = self._finish(client)
+                        _mark_reconnect(diagnostic, phase_state="completed",
+                                        unresolved=True if cleanup_unresolved is True else None)
                         return None
                     manifest = getattr(client, "manifest", None)
                     ready_manifest = dict(manifest) if type(manifest) is dict else None
@@ -725,18 +761,23 @@ class InventoryWorker:
                     if result["status"] == "ready":
                         _mark_reconnect(diagnostic, phase="candidate-fence", phase_state="entered",
                                         unresolved="unknown")
+                        candidate_unresolved = candidate_io_unresolved = None
                         if (self.stop_event.is_set()
                                 or time.monotonic() - started >= RECONNECT_WINDOW_SECONDS
                                 or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
                                 or client.continuity != continuity
-                                or getattr(client, "unresolved", False)
-                                or getattr(getattr(client, "io", None), "unresolved", False)):
+                                or (candidate_unresolved := getattr(client, "unresolved", False))
+                                or (candidate_io_unresolved := getattr(
+                                    getattr(client, "io", None), "unresolved", False))):
                             _mark_reconnect(diagnostic, phase_state="completed",
-                                            outcome="candidate-fence-refused")
+                                            outcome="candidate-fence-refused", unresolved=(
+                                                True if candidate_unresolved is True
+                                                or candidate_io_unresolved is True else None))
                             _mark_reconnect(diagnostic, phase="cleanup", phase_state="entered",
                                             unresolved="unknown")
-                            self._finish(client)
-                            _mark_reconnect(diagnostic, phase_state="completed")
+                            cleanup_unresolved = self._finish(client)
+                            _mark_reconnect(diagnostic, phase_state="completed",
+                                            unresolved=True if cleanup_unresolved is True else None)
                             return None
                         _mark_reconnect(diagnostic, phase_state="completed", unresolved=False)
                         _mark_reconnect(diagnostic, phase="register", phase_state="entered",
@@ -748,24 +789,29 @@ class InventoryWorker:
                         if result["status"] == "registered":
                             _mark_reconnect(diagnostic, phase="postregister", phase_state="entered",
                                             unresolved="unknown")
+                            registered_unresolved = registered_io_unresolved = None
                             if (client.continuity == continuity and not self.stop_event.is_set()
                                     and time.monotonic() - started < RECONNECT_WINDOW_SECONDS
                                     and os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") == original_pipe
-                                    and not getattr(client, "unresolved", False)
-                                    and not getattr(getattr(client, "io", None), "unresolved", False)):
+                                    and not (registered_unresolved := getattr(client, "unresolved", False))
+                                    and not (registered_io_unresolved := getattr(
+                                        getattr(client, "io", None), "unresolved", False))):
                                 _mark_reconnect(diagnostic, phase_state="completed",
                                                 outcome="reconnected", unresolved=False)
                                 return client
                             _mark_reconnect(diagnostic, phase_state="completed",
-                                            outcome="postregister-fence-refused")
+                                            outcome="postregister-fence-refused", unresolved=(
+                                                True if registered_unresolved is True
+                                                or registered_io_unresolved is True else None))
                         elif result["status"] == "unavailable" and result.get("reason") == "busy":
                             _mark_reconnect(diagnostic, outcome="register-busy-retry")
                         else:
                             _mark_reconnect(diagnostic, outcome="register-unconfirmed")
                     _mark_reconnect(diagnostic, phase="cleanup", phase_state="entered",
                                     unresolved="unknown")
-                    self._finish(client)
-                    _mark_reconnect(diagnostic, phase_state="completed")
+                    cleanup_unresolved = self._finish(client)
+                    _mark_reconnect(diagnostic, phase_state="completed",
+                                    unresolved=True if cleanup_unresolved is True else None)
                     # Explicit busy rejects admission before mutation; uncertain replies never retry.
                     if (result["status"] != "unavailable" or result.get("reason") != "busy"
                             or not self._restart_allowed or client.continuity != continuity):
@@ -799,8 +845,9 @@ class InventoryWorker:
                                      if diagnostic is not None else None)
                     _mark_reconnect(diagnostic, phase="cleanup", phase_state="entered",
                                     unresolved="unknown")
-                    self._finish(client)
-                    _mark_reconnect(diagnostic, phase_state="completed")
+                    cleanup_unresolved = self._finish(client)
+                    _mark_reconnect(diagnostic, phase_state="completed",
+                                    unresolved=True if cleanup_unresolved is True else None)
                     if failure_trace is not None and failure_trace[0] != "cleanup":
                         _mark_reconnect(diagnostic, phase=failure_trace[0],
                                         phase_state=failure_trace[1], outcome=failure_trace[2])

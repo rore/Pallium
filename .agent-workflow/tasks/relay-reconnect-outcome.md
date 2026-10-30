@@ -36,13 +36,13 @@
 - Whole-change validation and independent adequacy -> scripts/test-plan.py --base origin/main, reported required checks, one required non-slow suite, import boundaries, workflow/Redline and independent result review.
 - No installed recovery claim -> source-only evidence clearly separated from unperformed loaded-client rollout and installed acceptance.
 
-**Plan review:** Agent technical review: independent recovery_diagnostics_review, initial PLAN GO for decb746bfb12b8e82d581ad6c947589c1ec88bec. Correction plan review is pending; application edits remain blocked until it passes.
+**Plan review:** Agent technical review: independent recovery_diagnostics_review, initial PLAN GO for decb746bfb12b8e82d581ad6c947589c1ec88bec and CORRECTION PLAN GO for a7a22e782886049b5014f86703d8e0b21277ee61. See Correction plan below.
 
 **Approvals:** Not required at Elevated risk. Standing user authorization covers isolated bug work; the task owner explicitly authorized completing the demonstrated diagnostic and episode-oracle corrections in the existing three-file scope. Installed changes and new runtime machinery are excluded.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -51,9 +51,13 @@ Plan reviewed before implementation. Base is current main `9d01176483d7a353d1f88
 
 The existing bounded client log now records one fixed terminal row for an observed recovery episode, with a process-local episode ordinal, phase, attempt, registration status, fixed outcome, and already-evaluated safety state. Healthy READY polling remains silent. IDs are allocated independently of the file-sink lock; invalid metadata and sink failures remain contained. Independent source review accepted preservation of native operations, predicates, retry budgets and cleanup decisions at `4a41ffae`. Synchronous file logging adds timing overhead; this is not a guarantee against filesystem stalls. The installed client was not changed.
 
+The authorized correction carries `_finish`'s existing unresolved result through cleanup, retains already-observed True, and preserves specific post-registration outcomes. Guard values and the window comparison are captured at their original evaluation positions; healthy polling remains silent. The MCP journey now synchronizes its existing teardown and requires exactly two distinct episodes, one written terminal row per episode, while retaining native-call and disposal assertions. Independent source review returned SOURCE GO for SHA256 `513d8b6262ab253fc03e555d9816df7c17283e23162a23992f725deb2bed8ba2`; corrected test adequacy and coherent full validation remain separate gates.
+
 ## Plan review
 
 ## Correction plan
+
+Independent technical review returned CORRECTION PLAN GO for `a7a22e782886049b5014f86703d8e0b21277ee61`. Implementation review must verify unchanged read/truth-test/exception order, unknown handling for unevaluated values, known-True retention, healthy-poll silence, and reliable release of test synchronization on failure. This does not waive the separate Windows CI failure or authorize installed changes.
 
 Current-head CI results are terminal and preserved before further edits. Risk remains Elevated and complexity Moderate: the same gray/watch client file, blue reconnect tests and Work Record are the only intended paths. No API, schema, persistence, locking, dependency or runtime-configuration surface is added. Requirement baseline and caller-visible behavior stay unchanged.
 
@@ -69,6 +73,10 @@ Agent technical review: independent recovery_diagnostics_review, PLAN GO for `de
 
 ## Evidence
 
+Correction checks: the first focused draft reported 55 passed and one failed because its expected log literal used lowercase `true` instead of Python's `True`; that failed run is preserved. After correcting the literal and covering two cleanup omissions, 14 focused cases passed in 1.92s. The affected reconnect file passed all 196 cases in 46.83s. After restoring real-file readback and checking the emitting worker in the MCP journey, all four affected journey cases passed in 1.24s. These results precede coherent full validation and do not supersede the preserved platform failures below.
+
+Bounded Windows diagnosis: the raw failure shows `late_begin` during acquisition, before the replacement-gate test body. Acquisition error cleanup calls the fixture's session-close callback while the original gate is held; that callback's unlocked-gate assertion then fails. The outer finalizer releases the captured original gate. The intended admitted-body settlement and replacement-gate scenario was not exercised. The adjacent controlled-clock acquisition-cleanup test explicitly expects the gate to remain held for `late_begin`. The physical delay remains unexplained; no independence from this change is claimed. A deterministic normal-settlement fixture would require a fourth file outside this correction's scope. No Windows assertion, production gate semantics or deadline was changed.
+
 Final-source validation at `4a41ffaed2d8a38c96ec5dab1635cf3b60183387`: the one full non-slow validation used the existing Windows serial/remainder split. Serial: 70 passed, two skipped, nine slow cases deselected in 94.39s. Remainder: 8,354 passed, 35 skipped, two xfailed in 632.06s. Combined: 8,424 passed, 37 skipped, two xfailed; 8,463 distinct XML cases, zero overlap and zero failures/errors. All 191 reconnect-file cases passed on the final source. Application/test hashes were identical before and after the run. Runtime: Python 3.13.14, SQLite 3.53.1, SQLAlchemy 2.0.48, pytest 8.4.2 and xdist 3.8.0. Whole-change selection chose full; import boundaries, fresh gray/watch Redline classification, whitespace, private-identifier scan and the current implementation-state workflow check passed. Final result review and platform CI remain separate gates. Evidence is retained in ignored qualification records; no installed host was used.
 
 Earlier drafting checks remain separate from final validation: 48 focused passes in 2.71s; 187 reconnect-file passes in 47.45s on a preceding draft; and seven changed-node passes in 0.77s after its first refinements. Those passes do not substitute for the final-source full run above. All runs used a process-local isolated home and fresh temp directory. Coverage includes healthy-poll silence, sanitization and rotation, sink/allocation failure, distinct worker episodes, exhaustion and early-stop reporting, registration uncertainty, post-REGISTER fences, unresolved state mutation, and preservation of an exception during candidate setup. MCP journeys used isolated test peers; no installed host was exercised.
@@ -81,7 +89,7 @@ Current qualification is held at published head `d54e2500948ef0838116146eb8201fa
 
 Windows smoke failed `test_cleanup_cannot_release_a_replaced_provider_gate` (one failed, 534 passed, seven skipped): `late_begin` acquisition failure preceded the intended body, then the fixture's cleanup assertion found the original gate still locked. The physical delay and causal relationship to this change remain unestablished. Redline, selection and workflow compliance passed. CodeRabbit posted eight comments across seven unresolved threads.
 
-Independent follow-up technical review holds the previous source/result GO: old-client cleanup can discover unresolved ownership after candidate success recorded False, leaving an inaccurate terminal flag. Other valid precision gaps concern service-check exceptions, window exhaustion and retaining known state or specific outcomes. Synchronous sink overhead was an explicitly accepted limitation; a writer framework is outside the approved slice. No extra/reordered clock or property probes are authorized. The next source correction and any further CI require the task owner's bounded disposition; current assignment is final-head verification only. This local bookkeeping is not pushed while preserving the completed published-head evidence.
+Independent follow-up technical review held the previous source/result GO: old-client cleanup could discover unresolved ownership after candidate success recorded False, leaving an inaccurate terminal flag. Other valid precision gaps concerned service-check exceptions, window exhaustion and retaining known state or specific outcomes. The task owner subsequently authorized completing these corrections in the existing three-file scope after correction-plan review. Synchronous sink overhead remains an explicitly accepted limitation; a writer framework is outside the approved slice. No extra/reordered clock or property probes are authorized. The original published-head failures remain preserved; corrected-source qualification is pending.
 
 Earlier agent technical review: independent recovery_diagnostics_review returned RESULT GO after inspecting the local XML, commands, log summaries and matching source/test hashes. That earlier approval is retained as history and is superseded by the current qualification hold above.
 

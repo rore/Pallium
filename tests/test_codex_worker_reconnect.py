@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import queue
 import threading
 import time
 from types import SimpleNamespace
@@ -666,7 +667,7 @@ async def test_fresh_caller_after_retirement_requires_trusted_old_owner_exit(mon
     assert len(operations) == (2 if case in {"cancel", "shutdown"} else 3)
 
 
-@pytest.mark.parametrize("case", ["healthy", "ready-busy", "register-busy", "register-malformed", "unresolved",
+@pytest.mark.parametrize("case", ["healthy", "ready-busy", "register-success", "register-busy", "register-malformed", "unresolved",
     "invalid-continuity", "pipe-changed", "source-exited", "ready-malformed",
     "ready-refused", "register-refused", "register-uncertain", "continuity-changed",
     "pipe-changed-after", "stopped-after", "ready-pipe-changed", "ready-continuity-changed",
@@ -682,14 +683,30 @@ def test_same_epoch_recovery_preserves_admission_and_identity_fences(monkeypatch
     calls = []
 
     class Native:
-        unresolved = case == "unresolved"
         continuity = "a" * 64
+        def __init__(self):
+            self._unresolved = case == "unresolved"
+            self.check_order = []
+
+        @property
+        def unresolved(self):
+            if case == "register-success":
+                self.check_order.append("unresolved")
+            return self._unresolved
+
+        @unresolved.setter
+        def unresolved(self, value):
+            self._unresolved = value
 
         def service_current(self):
+            if case == "register-success":
+                self.check_order.append("service-current")
             return True
 
         def ready(self):
             calls.append("ready")
+            if case == "register-success":
+                self.check_order.append("ready")
             if case == "ready-pipe-changed":
                 monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
             if case == "ready-continuity-changed":
@@ -709,6 +726,8 @@ def test_same_epoch_recovery_preserves_admission_and_identity_fences(monkeypatch
 
         def register(self, metadata):
             calls.append("register")
+            if case == "register-success":
+                self.check_order.append("register")
             assert metadata == {"thread_ref": "actual-runtime", "turn_ref": "first"}
             if case == "register-busy":
                 return {"status": "unavailable", "reason": "busy"}
@@ -736,13 +755,16 @@ def test_same_epoch_recovery_preserves_admission_and_identity_fences(monkeypatch
     result, disposed = worker._recover_if_gone(client, Native, "original-capability",
         {"thread_ref": "actual-runtime", "turn_ref": "first"}, proof)
     assert not disposed
-    accepted = case in {"healthy", "ready-busy", "register-busy"}
+    accepted = case in {"healthy", "ready-busy", "register-success", "register-busy"}
     assert (result is client) == accepted
     expected = [] if case in {"unresolved", "invalid-continuity", "pipe-changed"} else ["ready"]
-    if case in {"register-busy", "register-refused", "register-malformed", "register-uncertain", "continuity-changed",
+    if case in {"register-success", "register-busy", "register-refused", "register-malformed", "register-uncertain", "continuity-changed",
                 "pipe-changed-after", "stopped-after"}:
         expected.append("register")
     assert calls == expected
+    if case == "register-success":
+        assert client.check_order == [
+            "unresolved", "service-current", "ready", "unresolved", "register", "unresolved"]
     log_path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
     if case == "healthy":
         assert not log_path.exists(), "healthy READY polling must stay silent"
@@ -754,6 +776,10 @@ def test_same_epoch_recovery_preserves_admission_and_identity_fences(monkeypatch
             assert "registration=completed" in terminal[0] and "outcome=register-unconfirmed" in terminal[0]
         elif case == "register-uncertain":
             assert "registration=attempted" in terminal[0] and "outcome=register-uncertain" in terminal[0]
+        elif case == "register-success":
+            assert "phase=postregister" in terminal[0] and "phase_state=completed" in terminal[0]
+            assert "registration=completed" in terminal[0] and "outcome=ready-available" in terminal[0]
+            assert "unresolved=False" in terminal[0] and "restart_allowed=True" in terminal[0]
         elif case == "ready-refused":
             assert "phase=ready" in terminal[0] and "registration=not-attempted" in terminal[0]
 
@@ -1411,11 +1437,39 @@ async def test_busy_auto_reconnect_recovers_without_a_fresh_call(monkeypatch, tm
     workers = []
     dispose_started, release_dispose = threading.Event(), threading.Event()
     recovered = threading.Event()
+    reconnected_written, idle_get_entered = threading.Event(), threading.Event()
+    terminal_lock, terminal_rows = threading.Lock(), []
     proof = "8" * 64
+
+    original_terminal_writer = lifecycle._client_reconnect_diagnostic
+
+    def observe_terminal(diagnostic, restart_allowed):
+        original_terminal_writer(diagnostic, restart_allowed)
+        if type(diagnostic) is dict:
+            row = dict(diagnostic)
+            row["restart_allowed"] = restart_allowed
+            row["owned_worker"] = bool(workers and threading.current_thread() is workers[0]._thread)
+            with terminal_lock:
+                terminal_rows.append(row)
+            if row["outcome"] == "reconnected":
+                reconnected_written.set()
+
+    monkeypatch.setattr(lifecycle, "_client_reconnect_diagnostic", observe_terminal)
 
     class ObservedWorker(lifecycle.InventoryWorker):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
+            original_get = self._requests.get
+
+            def wait_for_teardown(*get_args, **get_kwargs):
+                if reconnected_written.is_set():
+                    idle_get_entered.set()
+                    self.stop_event.wait()
+                    if self.stop_event.is_set():
+                        raise queue.Empty
+                return original_get(*get_args, **get_kwargs)
+
+            self._requests.get = wait_for_teardown
             workers.append(self)
 
     class Native:
@@ -1472,6 +1526,8 @@ async def test_busy_auto_reconnect_recovers_without_a_fresh_call(monkeypatch, tm
         assert await asyncio.to_thread(recovered.wait, 1), "busy admission stranded accepted worker"
         assert worker._thread.is_alive() and not worker.stop_event.is_set()
         assert worker._restart_allowed
+        assert await asyncio.to_thread(reconnected_written.wait, 1)
+        assert await asyncio.to_thread(idle_get_entered.wait, 1)
 
     try:
         await _serve_protocol(server, exercise)
@@ -1483,13 +1539,27 @@ async def test_busy_auto_reconnect_recovers_without_a_fresh_call(monkeypatch, tm
                for _, metadata in calls)
     assert all(client.continuity == proof and client.disposals == 1 for client in clients)
     assert len(operations) == 1
+    assert not workers[0]._thread.is_alive()
+    assert len(terminal_rows) == 2, terminal_rows
+    assert len({row["episode"] for row in terminal_rows}) == 2, terminal_rows
+    assert all(row["owned_worker"] for row in terminal_rows), terminal_rows
     log_path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
-    terminal = [line for line in log_path.read_text(encoding="utf-8").splitlines()
-                if "reconnect_terminal" in line]
-    assert len(terminal) == 1
-    assert "phase=postregister" in terminal[0] and "phase_state=completed" in terminal[0]
-    assert f"attempt={busy_count + 1}" in terminal[0]
-    assert "registration=completed" in terminal[0] and "outcome=reconnected" in terminal[0]
+    written = [line for line in log_path.read_text(encoding="utf-8").splitlines()
+               if "reconnect_terminal" in line]
+    assert len(written) == 2, "\n".join(written)
+    for row, line in zip(terminal_rows, written, strict=True):
+        for field in ("episode", "context", "phase", "phase_state", "attempt", "registration",
+                      "outcome", "restart_allowed", "unresolved", "owner_exited"):
+            assert f"{field}={row[field]}" in line.split(), "\n".join(written)
+    successful, shutdown_refusal = terminal_rows
+    assert successful["outcome"] == "reconnected", terminal_rows
+    assert successful["phase"] == "postregister" and successful["phase_state"] == "completed", terminal_rows
+    assert successful["attempt"] == busy_count + 1, terminal_rows
+    assert successful["registration"] == "completed" and successful["restart_allowed"] is True, terminal_rows
+    assert shutdown_refusal["outcome"] == "preentry-refused", terminal_rows
+    assert shutdown_refusal["phase"] == "preflight" and shutdown_refusal["phase_state"] == "completed", terminal_rows
+    assert shutdown_refusal["attempt"] == 0 and shutdown_refusal["registration"] == "not-attempted", terminal_rows
+    assert shutdown_refusal["restart_allowed"] is False, terminal_rows
 
 
 def _automatic_recovery_worker(monkeypatch):
@@ -1563,6 +1633,10 @@ def test_reconnect_early_guard_keeps_last_entered_attempt(monkeypatch, tmp_path)
     monkeypatch.setattr(lifecycle, "RECONNECT_MAX_ATTEMPTS", 3)
     worker = _automatic_recovery_worker(monkeypatch)
     worker._retained = True
+    real_monotonic = time.monotonic
+    clock_reads = []
+    monkeypatch.setattr(lifecycle, "time", SimpleNamespace(
+        monotonic=lambda: (clock_reads.append(None), real_monotonic())[1]))
     proof = "a" * 64
 
     class Old:
@@ -1589,6 +1663,7 @@ def test_reconnect_early_guard_keeps_last_entered_attempt(monkeypatch, tmp_path)
     assert len(terminal) == 1
     assert "phase=preflight" in terminal[0] and "attempt=1" in terminal[0]
     assert "outcome=reconnect-guard-refused" in terminal[0]
+    assert len(clock_reads) == 3, "stop must short-circuit the next window clock read"
 
 
 def test_reconnect_raise_is_logged_without_changing_exception(monkeypatch, tmp_path):
@@ -1631,10 +1706,11 @@ def test_reconnect_raise_is_logged_without_changing_exception(monkeypatch, tmp_p
 
 @pytest.mark.parametrize(("case", "expected_outcome", "expected_unresolved"), [
     ("register-proof", "postregister-fence-refused", "unknown"),
-    ("register-unresolved", "safety-refused", "unknown"),
+    ("register-unresolved", "postregister-fence-refused", "True"),
     ("ready-refused", "ready-refused", "unknown"),
     ("register-exception", "register-uncertain", "unknown"),
     ("register-malformed", "register-unconfirmed", "unknown"),
+    ("service-check-raises", "reconnect-error", "unknown"),
 ])
 def test_reconnect_episode_records_truthful_stage_and_last_known_state(
         monkeypatch, tmp_path, case, expected_outcome, expected_unresolved):
@@ -1650,6 +1726,8 @@ def test_reconnect_episode_records_truthful_stage_and_last_known_state(
         manifest, continuity, unresolved = {"epoch": "old"}, proof, False
         io = SimpleNamespace(unresolved=False)
         def service_current(self):
+            if case == "service-check-raises":
+                raise RuntimeError("service-check-sentinel")
             return True
         def ready(self):
             raise bridge.ShadowUnavailable("transport-failed")
@@ -1691,14 +1769,17 @@ def test_reconnect_episode_records_truthful_stage_and_last_known_state(
     replacement, disposed = worker._recover_if_gone(
         old, Native, "original-capability", {"thread_ref": "runtime", "turn_ref": "turn"}, proof,
         allow_ready_retirement=True)
-    assert replacement is None and disposed
+    assert replacement is None and (disposed is (case != "service-check-raises"))
     path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
     terminal = [line for line in path.read_text(encoding="utf-8").splitlines()
                 if "reconnect_terminal" in line]
     assert len(terminal) == 1
     assert f"outcome={expected_outcome}" in terminal[0]
     assert f"unresolved={expected_unresolved}" in terminal[0]
-    assert register_calls == ([] if case == "ready-refused" else [case])
+    assert register_calls == ([] if case in {"ready-refused", "service-check-raises"} else [case])
+    if case == "service-check-raises":
+        assert "phase=service-check" in terminal[0] and "phase_state=raised" in terminal[0]
+        assert "service-check-sentinel" not in terminal[0]
     if case == "ready-refused":
         assert "registration=not-attempted" in terminal[0]
     elif case == "register-exception":
@@ -1710,6 +1791,7 @@ def test_reconnect_episode_records_truthful_stage_and_last_known_state(
     "old-witness-error", "old-bootstrap-after", "new-bootstrap", "capability-after",
     "retire-unresolved", "old-cleanup-error", "old-cleanup-unresolved", "old-cleanup-capability",
     "ready-proof", "ready-unresolved", "ready-stop", "ready-refused", "ready-exception",
+    "register-stop-cleanup-unresolved", "rejected-candidate-cleanup-unresolved",
     "register-proof", "register-unresolved", "register-exception", "ready-fence-error",
 ])
 def test_idle_retired_episode_fences_identity_and_cleanup(monkeypatch, tmp_path, case):
@@ -1754,7 +1836,7 @@ def test_idle_retired_episode_fences_identity_and_cleanup(monkeypatch, tmp_path,
             assert (previous_manifest == old.manifest) == (case in {"exited-owner", "same-epoch-after-exit"})
             self.manifest = {"epoch": "new" if case in {"exited-owner", "unproved-epoch"} else "old"}
             self._continuity, self.raise_continuity_read = None, False
-            self.unresolved, self.disposals = False, 0
+            self._unresolved, self.unresolved_reads, self.disposals = False, [], 0
             self.io = SimpleNamespace(unresolved=False)
             clients.append(self)
             if case == "old-bootstrap-after":
@@ -1769,8 +1851,16 @@ def test_idle_retired_episode_fences_identity_and_cleanup(monkeypatch, tmp_path,
         @continuity.setter
         def continuity(self, value):
             self._continuity = value
+        @property
+        def unresolved(self):
+            if case == "register-stop-cleanup-unresolved":
+                self.unresolved_reads.append(self._unresolved)
+            return self._unresolved
+        @unresolved.setter
+        def unresolved(self, value):
+            self._unresolved = value
         def bootstrap_unchanged(self):
-            return case != "new-bootstrap"
+            return case not in {"new-bootstrap", "rejected-candidate-cleanup-unresolved"}
         def ready(self):
             if case == "ready-proof":
                 self.continuity = "b" * 64
@@ -1785,6 +1875,9 @@ def test_idle_retired_episode_fences_identity_and_cleanup(monkeypatch, tmp_path,
             return {"status": "unavailable", "reason": "peer-mismatch"} if case == "ready-refused" else {"status": "ready"}
         def register(self, metadata):
             registrations.append(dict(metadata))
+            if case == "register-stop-cleanup-unresolved":
+                worker.stop_event.set()
+                return {"status": "registered", "reason": "ok"}
             if case == "register-proof":
                 self.continuity = "b" * 64
             if case == "register-unresolved":
@@ -1794,6 +1887,8 @@ def test_idle_retired_episode_fences_identity_and_cleanup(monkeypatch, tmp_path,
             return {"status": "registered", "reason": "ok"}
         def dispose(self):
             self.disposals += 1
+            if case in {"register-stop-cleanup-unresolved", "rejected-candidate-cleanup-unresolved"}:
+                self.unresolved = True
             self.io = None
 
     metadata = {"thread_ref": "actual-runtime", "turn_ref": "admitted"}
@@ -1818,6 +1913,29 @@ def test_idle_retired_episode_fences_identity_and_cleanup(monkeypatch, tmp_path,
         assert "phase=candidate-fence" in terminal[0] and "phase_state=raised" in terminal[0]
         assert "outcome=safety-refused" in terminal[0]
         assert "private-fence-sentinel" not in terminal[0]
+    if case in {"old-cleanup-error", "old-cleanup-unresolved"}:
+        path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
+        terminal = [line for line in path.read_text(encoding="utf-8").splitlines()
+                    if "reconnect_terminal" in line]
+        assert len(terminal) == 1
+        assert "phase=cleanup" in terminal[0] and "phase_state=completed" in terminal[0]
+        assert "outcome=safety-refused" in terminal[0] and "unresolved=True" in terminal[0]
+    if case == "register-stop-cleanup-unresolved":
+        assert len(clients) == 1 and clients[0].unresolved_reads == [False, False, True]
+        path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
+        terminal = [line for line in path.read_text(encoding="utf-8").splitlines()
+                    if "reconnect_terminal" in line]
+        assert len(terminal) == 1
+        assert "outcome=postregister-fence-refused" in terminal[0]
+        assert "unresolved=True" in terminal[0]
+    if case == "rejected-candidate-cleanup-unresolved":
+        assert len(clients) == 1 and clients[0].disposals == 1 and registrations == []
+        path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
+        terminal = [line for line in path.read_text(encoding="utf-8").splitlines()
+                    if "reconnect_terminal" in line]
+        assert len(terminal) == 1
+        assert "phase=constructor" in terminal[0] and "outcome=safety-refused" in terminal[0]
+        assert "unresolved=True" in terminal[0] and "restart_allowed=False" in terminal[0]
 
 
 @pytest.mark.parametrize("bound", ["attempts", "window", "shutdown"])
@@ -1826,8 +1944,11 @@ def test_idle_retired_episode_shares_one_budget_across_acquisition_and_busy(monk
     worker = _automatic_recovery_worker(monkeypatch)
     worker._fresh_request_retirement = None
     monkeypatch.setattr(lifecycle, "RECONNECT_MAX_ATTEMPTS", 3)
-    clock, attempts, clients, registrations = [0.0], [], [], []
-    monkeypatch.setattr(lifecycle, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    clock, attempts, clients, registrations, clock_reads = [0.0], [], [], [], []
+    def monotonic():
+        clock_reads.append(clock[0])
+        return clock[0]
+    monkeypatch.setattr(lifecycle, "time", SimpleNamespace(monotonic=monotonic))
     monkeypatch.setattr(lifecycle, "RECONNECT_WINDOW_SECONDS", .02)
     def backoff(timeout):
         if bound == "window":
@@ -1881,6 +2002,67 @@ def test_idle_retired_episode_shares_one_budget_across_acquisition_and_busy(monk
     assert old.disposals == 1 and worker._fresh_request_retirement is None
     assert all(client.disposals == 1 for client in clients)
     assert worker._restart_allowed
+    if bound == "window":
+        path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
+        terminal = [line for line in path.read_text(encoding="utf-8").splitlines()
+                    if "reconnect_terminal" in line]
+        assert len(terminal) == 1
+        assert "phase=preflight" in terminal[0] and "outcome=window-exhausted" in terminal[0]
+        assert clock_reads == [0.0, 0.0, 0.0, .02]
+
+
+def test_constructor_finishing_after_window_records_cleanup_unresolved(monkeypatch, tmp_path):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "original-capability")
+    worker = _automatic_recovery_worker(monkeypatch)
+    worker._retained = True
+    monkeypatch.setattr(lifecycle, "RECONNECT_WINDOW_SECONDS", .02)
+    clock, clock_reads, clients, native_calls = [0.0], [], [], []
+
+    def monotonic():
+        clock_reads.append(clock[0])
+        return clock[0]
+    monkeypatch.setattr(lifecycle, "time", SimpleNamespace(monotonic=monotonic))
+
+    class Old:
+        continuity, unresolved, manifest = "a" * 64, False, {"epoch": "old"}
+        io = SimpleNamespace(unresolved=False)
+        def service_current(self):
+            return False
+        def dispose(self):
+            pass
+
+    class Native:
+        def __init__(self, *_args, **_kwargs):
+            self.manifest = {"epoch": "new"}
+            self.continuity, self.unresolved = None, False
+            self.io = SimpleNamespace(unresolved=False)
+            self.disposals = 0
+            clients.append(self)
+            clock[0] = .02
+        def ready(self):
+            native_calls.append("ready")
+            pytest.fail("expired candidate must be disposed before READY")
+        def register(self, _metadata):
+            native_calls.append("register")
+            pytest.fail("expired candidate must not REGISTER")
+        def dispose(self):
+            self.disposals += 1
+            self.unresolved = True
+
+    assert worker._recover_if_gone(
+        Old(), Native, "original-capability", {"thread_ref": "runtime", "turn_ref": "turn"},
+        "a" * 64) == (None, True)
+    assert native_calls == [] and len(clients) == 1
+    assert clients[0].disposals == 1 and clients[0].unresolved is True
+    assert worker._restart_allowed is False
+    assert clock_reads == [0.0, 0.0, .02]
+    path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
+    terminal = [line for line in path.read_text(encoding="utf-8").splitlines()
+                if "reconnect_terminal" in line]
+    assert len(terminal) == 1
+    assert "phase=cleanup" in terminal[0] and "phase_state=completed" in terminal[0]
+    assert "outcome=window-exhausted" in terminal[0] and "unresolved=True" in terminal[0]
 
 
 @pytest.mark.parametrize("stage", ["ready", "register"])
