@@ -68,6 +68,10 @@ Scope and validation requirements -> exact diff/privacy check, Redline, Agent Wo
 - All four application/test hashes still match f2b05e4ddba508238cb4975a7541bc45cd59fb86. Runtime remains Python 3.13.14, SQLite 3.53.1, SQLAlchemy 2.0.48, pytest 8.4.2 and xdist 3.8.0 with matching interpreter flags and process-local UTF-8/no-bytecode semantics. The corrected remainder used narrowly elevated isolated-file execution; no environment persistence, ACL, policy, dependency or installed change occurred. The Work Record's different hash from the older serial preflight matches the already-committed metadata checkpoint at 55d3e4cd, not an application/test change during validation. Combined reports, exact commands, contexts, controls, artifact hashes and earlier failures remain private and recoverable.
 - Required independent result review now follows this completed local validation. Human result review, platform CI and API/persistence publication gates remain pending. No push, CI, installed rollout, service restart or physical-stall resolution is claimed. Trigger 1 dropped: the repeated qualification-runner and temporary-filesystem issues are outside agent-workflow ownership; no upstream skill defect report is warranted.
 
+## Draft publication phase
+
+The initial no-push/no-platform-CI constraint above governed the completed local implementation step. After accepting the validated local result, the task owner authorized a separate draft-publication continuation under the user's standing authorization for assigned bug work and PRs. This continuation preserves the same five paths and reviewed application/test hashes: refresh applicability and publication checks against current main, inspect public content for private details, create only a draft PR if permitted, and run required platform CI. It grants no merge, checkpoint satisfaction, installed update or restart authority. Separate human High result review and API/persistence attention remain required. No local full-suite repeat is planned for unchanged application.
+
 ## Result review
 
 Agent technical review: build/expiry-detection-review/result-review.txt.
