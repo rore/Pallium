@@ -33,13 +33,13 @@ Safe fixed values, unknown/none fallback, invalid/failing metadata and unchanged
 Expired-then-fresh claim/ACK lifecycle, Unicode and unchanged durable attempts/token/scope state -> existing HTTP rollback and lifecycle readback assertions.
 Scope and validation requirements -> exact diff/privacy check, Redline, Agent Workflow and scripts/test-plan.py over the complete change. Required full-suite/CI/formal result acceptance remain a later gate, not claimed by focused evidence.
 
-**Plan review:** Pending independent technical plan review; no implementation may start before it is recorded.
+**Plan review:** Agent technical review: build/expiry-detection-review/plan-review.txt, reviewing c7de1be0. PLAN GO for the five-path local implementation and focused verification; preserve annotation/extraction fallbacks and raise the original exception outside metadata handling. Publication and full result acceptance remain pending.
 
 **Approvals:** Approved by user 2026-10-29: "yes, i approve, and no need to ask every time - i approve all the work to get this bug fixed". Reused standing bug-fix implementation authority and the task-owner's explicit diagnostic-only scope; no new human review, publication or live-change approval is claimed.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -47,3 +47,12 @@ Scope and validation requirements -> exact diff/privacy check, Redline, Agent Wo
 - Context and exact canonical feature relationship recorded before application/test edits.
 - Scope is diagnostic coverage for a future genuine occurrence; it does not resolve physical delay or waive broader feature/refactor gates.
 - The existing canonical roadmap item remains active. Its broader state is unchanged by this local preparation.
+- Independent technical plan review approved the scoped implementation before application edits. The import-boundary check is clean; Redline confirms the existing API and persistence review checkpoints remain open for publication.
+
+## Checkpoint: api-review
+
+Only an allowlisted diagnostic field is appended to the existing exact-wake timing log. HTTP status, detail body, response schema, error conversion and existing timing fields remain unchanged. Focused real HTTP/log journeys and unsafe-metadata controls verify the boundary.
+
+## Checkpoint: persistence-review
+
+Only best-effort metadata on the existing expiry exception changes. Every expiry check, claim mutation, flush, commit, rollback, clock and fence stays in its original position. Existing complete durable-state snapshots and four exact-wake variants verify no mutation survives a rejected request.
