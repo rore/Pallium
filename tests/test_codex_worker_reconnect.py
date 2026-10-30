@@ -191,6 +191,38 @@ def test_reconnect_diagnostic_sink_failure_is_contained(monkeypatch, tmp_path, c
     assert "private-diagnostic-sink-sentinel" not in str(diagnostic)
 
 
+def test_reconnect_allocator_failure_preserves_existing_recovery_result(monkeypatch, tmp_path):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "original-capability")
+    monkeypatch.setattr(lifecycle, "_new_reconnect_diagnostic", lambda _context: None)
+    worker = object.__new__(lifecycle.InventoryWorker)
+    worker.stop_event = threading.Event()
+    worker._retained = True
+    worker._restart_allowed = True
+    calls = []
+
+    class Native:
+        continuity, unresolved = "a" * 64, False
+        io = SimpleNamespace(unresolved=False)
+        def service_current(self):
+            calls.append("service-current")
+            return True
+        def ready(self):
+            calls.append("ready")
+            raise RuntimeError("existing-ready-failure")
+        def register(self, _metadata):
+            calls.append("register")
+        def dispose(self):
+            calls.append("dispose")
+
+    result = worker._recover_if_gone(Native(), Native, "original-capability",
+        {"thread_ref": "runtime", "turn_ref": "turn"}, "a" * 64)
+    assert result == (None, False)
+    assert not worker._restart_allowed
+    assert calls == ["service-current", "ready"]
+    assert not (tmp_path / "logs").exists()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("journey", ["idle-transport", "unused-ready", "caller-thread", "lifespan-stop"])
 async def test_actual_mcp_close_branch_has_durable_marker(monkeypatch, tmp_path, journey):
@@ -634,7 +666,7 @@ async def test_fresh_caller_after_retirement_requires_trusted_old_owner_exit(mon
     assert len(operations) == (2 if case in {"cancel", "shutdown"} else 3)
 
 
-@pytest.mark.parametrize("case", ["healthy", "ready-busy", "register-busy", "unresolved",
+@pytest.mark.parametrize("case", ["healthy", "ready-busy", "register-busy", "register-malformed", "unresolved",
     "invalid-continuity", "pipe-changed", "source-exited", "ready-malformed",
     "ready-refused", "register-refused", "register-uncertain", "continuity-changed",
     "pipe-changed-after", "stopped-after", "ready-pipe-changed", "ready-continuity-changed",
@@ -682,6 +714,8 @@ def test_same_epoch_recovery_preserves_admission_and_identity_fences(monkeypatch
                 return {"status": "unavailable", "reason": "busy"}
             if case == "register-refused":
                 return {"status": "unavailable", "reason": "peer-mismatch"}
+            if case == "register-malformed":
+                return None
             if case == "register-uncertain":
                 self.unresolved = True
                 raise bridge.ShadowUnavailable("transport-failed")
@@ -705,7 +739,7 @@ def test_same_epoch_recovery_preserves_admission_and_identity_fences(monkeypatch
     accepted = case in {"healthy", "ready-busy", "register-busy"}
     assert (result is client) == accepted
     expected = [] if case in {"unresolved", "invalid-continuity", "pipe-changed"} else ["ready"]
-    if case in {"register-busy", "register-refused", "register-uncertain", "continuity-changed",
+    if case in {"register-busy", "register-refused", "register-malformed", "register-uncertain", "continuity-changed",
                 "pipe-changed-after", "stopped-after"}:
         expected.append("register")
     assert calls == expected
@@ -716,8 +750,8 @@ def test_same_epoch_recovery_preserves_admission_and_identity_fences(monkeypatch
         terminal = [line for line in log_path.read_text(encoding="utf-8").splitlines()
                     if "reconnect_terminal" in line]
         assert len(terminal) == 1
-        if case == "register-refused":
-            assert "registration=completed" in terminal[0] and "outcome=register-refused" in terminal[0]
+        if case in {"register-refused", "register-malformed"}:
+            assert "registration=completed" in terminal[0] and "outcome=register-unconfirmed" in terminal[0]
         elif case == "register-uncertain":
             assert "registration=attempted" in terminal[0] and "outcome=register-uncertain" in terminal[0]
         elif case == "ready-refused":
@@ -1371,7 +1405,8 @@ async def test_retained_worker_preserves_admission_after_busy_reregister(monkeyp
 @pytest.mark.asyncio
 @pytest.mark.parametrize("busy_stage", ["ready", "register"])
 @pytest.mark.parametrize("busy_count", [1, 2])
-async def test_busy_auto_reconnect_recovers_without_a_fresh_call(monkeypatch, busy_stage, busy_count):
+async def test_busy_auto_reconnect_recovers_without_a_fresh_call(monkeypatch, tmp_path, busy_stage, busy_count):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
     epochs, clients, calls = [1], [], []
     workers = []
     dispose_started, release_dispose = threading.Event(), threading.Event()
@@ -1448,6 +1483,13 @@ async def test_busy_auto_reconnect_recovers_without_a_fresh_call(monkeypatch, bu
                for _, metadata in calls)
     assert all(client.continuity == proof and client.disposals == 1 for client in clients)
     assert len(operations) == 1
+    log_path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
+    terminal = [line for line in log_path.read_text(encoding="utf-8").splitlines()
+                if "reconnect_terminal" in line]
+    assert len(terminal) == 1
+    assert "phase=postregister" in terminal[0] and "phase_state=completed" in terminal[0]
+    assert f"attempt={busy_count + 1}" in terminal[0]
+    assert "registration=completed" in terminal[0] and "outcome=reconnected" in terminal[0]
 
 
 def _automatic_recovery_worker(monkeypatch):
@@ -1592,6 +1634,7 @@ def test_reconnect_raise_is_logged_without_changing_exception(monkeypatch, tmp_p
     ("register-unresolved", "safety-refused", "unknown"),
     ("ready-refused", "ready-refused", "unknown"),
     ("register-exception", "register-uncertain", "unknown"),
+    ("register-malformed", "register-unconfirmed", "unknown"),
 ])
 def test_reconnect_episode_records_truthful_stage_and_last_known_state(
         monkeypatch, tmp_path, case, expected_outcome, expected_unresolved):
@@ -1601,6 +1644,7 @@ def test_reconnect_episode_records_truthful_stage_and_last_known_state(
     worker._fresh_request_retirement = None
     worker._retained = True
     proof = "a" * 64
+    register_calls = []
 
     class Old:
         manifest, continuity, unresolved = {"epoch": "old"}, proof, False
@@ -1630,12 +1674,15 @@ def test_reconnect_episode_records_truthful_stage_and_last_known_state(
                 return {"status": "unavailable", "reason": "peer-mismatch"}
             return {"status": "ready"}
         def register(self, _metadata):
+            register_calls.append(case)
             if case == "register-proof":
                 self.continuity = "b" * 64
             elif case == "register-unresolved":
                 self.unresolved = True
             elif case == "register-exception":
                 raise bridge.ShadowUnavailable("transport-failed")
+            elif case == "register-malformed":
+                return None
             return {"status": "registered", "reason": "ok"}
         def dispose(self):
             pass
@@ -1651,6 +1698,7 @@ def test_reconnect_episode_records_truthful_stage_and_last_known_state(
     assert len(terminal) == 1
     assert f"outcome={expected_outcome}" in terminal[0]
     assert f"unresolved={expected_unresolved}" in terminal[0]
+    assert register_calls == ([] if case == "ready-refused" else [case])
     if case == "ready-refused":
         assert "registration=not-attempted" in terminal[0]
     elif case == "register-exception":
@@ -1662,7 +1710,7 @@ def test_reconnect_episode_records_truthful_stage_and_last_known_state(
     "old-witness-error", "old-bootstrap-after", "new-bootstrap", "capability-after",
     "retire-unresolved", "old-cleanup-error", "old-cleanup-unresolved", "old-cleanup-capability",
     "ready-proof", "ready-unresolved", "ready-stop", "ready-refused", "ready-exception",
-    "register-proof", "register-unresolved", "register-exception",
+    "register-proof", "register-unresolved", "register-exception", "ready-fence-error",
 ])
 def test_idle_retired_episode_fences_identity_and_cleanup(monkeypatch, tmp_path, case):
     monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
@@ -1705,13 +1753,22 @@ def test_idle_retired_episode_fences_identity_and_cleanup(monkeypatch, tmp_path,
             assert retained
             assert (previous_manifest == old.manifest) == (case in {"exited-owner", "same-epoch-after-exit"})
             self.manifest = {"epoch": "new" if case in {"exited-owner", "unproved-epoch"} else "old"}
-            self.continuity, self.unresolved, self.disposals = None, False, 0
+            self._continuity, self.raise_continuity_read = None, False
+            self.unresolved, self.disposals = False, 0
             self.io = SimpleNamespace(unresolved=False)
             clients.append(self)
             if case == "old-bootstrap-after":
                 old.changed = True
             if case == "capability-after":
                 monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
+        @property
+        def continuity(self):
+            if self.raise_continuity_read:
+                raise RuntimeError("private-fence-sentinel")
+            return self._continuity
+        @continuity.setter
+        def continuity(self, value):
+            self._continuity = value
         def bootstrap_unchanged(self):
             return case != "new-bootstrap"
         def ready(self):
@@ -1723,6 +1780,8 @@ def test_idle_retired_episode_fences_identity_and_cleanup(monkeypatch, tmp_path,
                 worker.stop_event.set()
             if case == "ready-exception":
                 raise bridge.ShadowUnavailable("deadline")
+            if case == "ready-fence-error":
+                self.raise_continuity_read = True
             return {"status": "unavailable", "reason": "peer-mismatch"} if case == "ready-refused" else {"status": "ready"}
         def register(self, metadata):
             registrations.append(dict(metadata))
@@ -1750,6 +1809,15 @@ def test_idle_retired_episode_fences_identity_and_cleanup(monkeypatch, tmp_path,
     if replacement is not None:
         worker._finish(replacement)
     assert all(client.disposals == 1 and client.io is None for client in clients)
+    if case == "ready-fence-error":
+        assert registrations == []
+        path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
+        terminal = [line for line in path.read_text(encoding="utf-8").splitlines()
+                    if "reconnect_terminal" in line]
+        assert len(terminal) == 1
+        assert "phase=candidate-fence" in terminal[0] and "phase_state=raised" in terminal[0]
+        assert "outcome=safety-refused" in terminal[0]
+        assert "private-fence-sentinel" not in terminal[0]
 
 
 @pytest.mark.parametrize("bound", ["attempts", "window", "shutdown"])

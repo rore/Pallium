@@ -28,7 +28,8 @@ _CLOSE_REASONS = frozenset({
     "worker-error", "worker-finished", "lifespan-stop", "cleanup",
 })
 _RECONNECT_PHASES = frozenset({"preflight", "service-check", "ready", "retire", "owner-check",
-                               "constructor", "candidate-ready", "register", "postregister", "backoff"})
+                               "constructor", "candidate-ready", "candidate-fence", "register",
+                               "postregister", "cleanup", "backoff"})
 _RECONNECT_STATES = frozenset({"entered", "completed", "raised"})
 _RECONNECT_REGISTRATION = frozenset({"not-attempted", "attempted", "completed"})
 _RECONNECT_OUTCOMES = frozenset({
@@ -36,7 +37,7 @@ _RECONNECT_OUTCOMES = frozenset({
     "fresh-request-required", "safety-refused", "service-not-current", "reconnected",
     "constructor-retry", "constructor-refused", "constructor-error", "reconnect-error", "ready-retry",
     "ready-refused", "ready-busy-retry", "register-busy", "register-busy-retry",
-    "register-refused", "register-uncertain",
+    "register-unconfirmed", "register-uncertain", "cleanup-error",
     "postregister-fence-refused", "candidate-fence-refused", "attempts-exhausted",
     "window-exhausted", "reconnect-stopped", "reconnect-guard-refused",
 })
@@ -532,18 +533,19 @@ class InventoryWorker:
                             diagnostic = _new_reconnect_diagnostic(ready_retirement_context)
                         _mark_reconnect(diagnostic, phase="register", phase_state="entered",
                                         registration="attempted", unresolved="unknown")
-                        registered = inventory_status(client.register(metadata))
+                        registration_reply = client.register(metadata)
                         _mark_reconnect(diagnostic, phase="register", phase_state="completed",
                                         registration="completed")
-                        _mark_reconnect(diagnostic, phase="postregister", phase_state="entered",
-                                        unresolved="unknown")
+                        registered = inventory_status(registration_reply)
                         if not (registered.get("status") == "registered"
                                 or registered.get("status") == "unavailable"
                                 and registered.get("reason") == "busy"):
-                            _mark_reconnect(diagnostic, outcome="register-refused")
+                            _mark_reconnect(diagnostic, outcome="register-unconfirmed")
                             raise RuntimeError("retained registration unavailable")
                         if registered.get("status") == "unavailable":
                             _mark_reconnect(diagnostic, outcome="register-busy")
+                        _mark_reconnect(diagnostic, phase="postregister", phase_state="entered",
+                                        unresolved="unknown")
                 if (self.stop_event.is_set() or getattr(client, "unresolved", False)
                         or getattr(getattr(client, "io", None), "unresolved", False)
                         or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
@@ -566,12 +568,16 @@ class InventoryWorker:
             self._restart_allowed = False
             if diagnostic is None:
                 diagnostic = _new_reconnect_diagnostic(ready_retirement_context)
-            outcome = diagnostic.get("outcome")
+            outcome = diagnostic.get("outcome") if type(diagnostic) is dict else None
             if outcome == "unclassified":
-                if (diagnostic.get("phase") == "register"
-                        and diagnostic.get("registration") in {"attempted", "completed"}):
+                if (diagnostic is not None and diagnostic.get("phase") == "register"
+                        and diagnostic.get("registration") == "attempted"):
                     outcome = "register-uncertain"
-                elif diagnostic.get("phase") == "postregister":
+                    _mark_reconnect(diagnostic, phase_state="raised")
+                elif (diagnostic is not None and diagnostic.get("phase") == "register"
+                      and diagnostic.get("registration") == "completed"):
+                    outcome = "register-unconfirmed"
+                elif diagnostic is not None and diagnostic.get("phase") == "postregister":
                     outcome = "postregister-fence-refused"
                 else:
                     outcome = "safety-refused"
@@ -653,7 +659,8 @@ class InventoryWorker:
                                 outcome="reconnect-guard-refused")
                 return None
             _mark_reconnect(diagnostic, phase="constructor", phase_state="entered",
-                            attempt=attempt + 1, registration="not-attempted", unresolved="unknown")
+                            attempt=attempt + 1, registration="not-attempted", unresolved="unknown",
+                            outcome="unclassified")
             try:
                 if retired_context is not None:
                     client = self._retired_candidate(native_type, original_pipe, *retired_context)
@@ -682,7 +689,10 @@ class InventoryWorker:
                     if time.monotonic() - started >= RECONNECT_WINDOW_SECONDS:
                         _mark_reconnect(diagnostic, phase="backoff", phase_state="completed",
                                         outcome="window-exhausted")
+                        _mark_reconnect(diagnostic, phase="cleanup", phase_state="entered",
+                                        unresolved="unknown")
                         self._finish(client)
+                        _mark_reconnect(diagnostic, phase_state="completed")
                         return None
                     manifest = getattr(client, "manifest", None)
                     ready_manifest = dict(manifest) if type(manifest) is dict else None
@@ -713,16 +723,22 @@ class InventoryWorker:
                             "ready-busy-retry" if result["status"] == "unavailable"
                             and result.get("reason") == "busy" else "ready-refused"))
                     if result["status"] == "ready":
+                        _mark_reconnect(diagnostic, phase="candidate-fence", phase_state="entered",
+                                        unresolved="unknown")
                         if (self.stop_event.is_set()
                                 or time.monotonic() - started >= RECONNECT_WINDOW_SECONDS
                                 or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
                                 or client.continuity != continuity
                                 or getattr(client, "unresolved", False)
                                 or getattr(getattr(client, "io", None), "unresolved", False)):
-                            _mark_reconnect(diagnostic, outcome="candidate-fence-refused")
+                            _mark_reconnect(diagnostic, phase_state="completed",
+                                            outcome="candidate-fence-refused")
+                            _mark_reconnect(diagnostic, phase="cleanup", phase_state="entered",
+                                            unresolved="unknown")
                             self._finish(client)
+                            _mark_reconnect(diagnostic, phase_state="completed")
                             return None
-                        _mark_reconnect(diagnostic, unresolved=False)
+                        _mark_reconnect(diagnostic, phase_state="completed", unresolved=False)
                         _mark_reconnect(diagnostic, phase="register", phase_state="entered",
                                         registration="attempted", unresolved="unknown")
                         registration_result = client.register(metadata)
@@ -745,8 +761,11 @@ class InventoryWorker:
                         elif result["status"] == "unavailable" and result.get("reason") == "busy":
                             _mark_reconnect(diagnostic, outcome="register-busy-retry")
                         else:
-                            _mark_reconnect(diagnostic, outcome="register-refused")
+                            _mark_reconnect(diagnostic, outcome="register-unconfirmed")
+                    _mark_reconnect(diagnostic, phase="cleanup", phase_state="entered",
+                                    unresolved="unknown")
                     self._finish(client)
+                    _mark_reconnect(diagnostic, phase_state="completed")
                     # Explicit busy rejects admission before mutation; uncertain replies never retry.
                     if (result["status"] != "unavailable" or result.get("reason") != "busy"
                             or not self._restart_allowed or client.continuity != continuity):
@@ -757,17 +776,34 @@ class InventoryWorker:
                         return None
                 except Exception:
                     if diagnostic is not None:
-                        if (diagnostic.get("phase") == "register"
-                                and diagnostic.get("registration") in {"attempted", "completed"}):
-                            outcome = "register-uncertain"
-                        elif diagnostic.get("phase") == "postregister":
-                            outcome = "postregister-fence-refused"
-                        elif retry_ready:
-                            outcome = "ready-retry"
-                        else:
-                            outcome = "ready-refused"
-                        _mark_reconnect(diagnostic, phase_state="raised", outcome=outcome)
+                        phase = diagnostic.get("phase")
+                        phase_state = diagnostic.get("phase_state")
+                        outcome = diagnostic.get("outcome")
+                        if phase == "cleanup":
+                            outcome = "cleanup-error"
+                        elif outcome == "unclassified":
+                            if phase == "register" and diagnostic.get("registration") == "attempted":
+                                outcome = "register-uncertain"
+                            elif phase == "register" and diagnostic.get("registration") == "completed":
+                                outcome = "register-unconfirmed"
+                            elif phase == "postregister":
+                                outcome = "postregister-fence-refused"
+                            elif phase == "candidate-ready":
+                                outcome = "ready-refused"
+                            else:
+                                outcome = "safety-refused"
+                        if phase_state == "entered":
+                            phase_state = "raised"
+                        _mark_reconnect(diagnostic, phase_state=phase_state, outcome=outcome)
+                    failure_trace = ((phase, phase_state, outcome)
+                                     if diagnostic is not None else None)
+                    _mark_reconnect(diagnostic, phase="cleanup", phase_state="entered",
+                                    unresolved="unknown")
                     self._finish(client)
+                    _mark_reconnect(diagnostic, phase_state="completed")
+                    if failure_trace is not None and failure_trace[0] != "cleanup":
+                        _mark_reconnect(diagnostic, phase=failure_trace[0],
+                                        phase_state=failure_trace[1], outcome=failure_trace[2])
                     if not retry_ready:
                         return None
                     try:
