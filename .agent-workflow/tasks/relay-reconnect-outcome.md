@@ -5,7 +5,7 @@
 
 **Target:** Pallium Codex retained MCP client.
 
-**Scope:** app/mcp/codex_desktop_bridge.py, tests/test_codex_worker_reconnect.py, and this Work Record.
+**Scope:** app/mcp/codex_desktop_bridge.py, tests/test_codex_worker_reconnect.py, tests/test_sqlite_write_retry.py, and this Work Record. The task owner authorized the fourth path solely for deterministic timing in the existing normal-settlement gate test; see the scope amendment below. The initial requirement baseline remains unchanged.
 
 **Constraints:** Preserve caller-visible results, protocol operations and their order, finite retry/deadline budgets, registration no-replay rules, cleanup and identity/I/O fences. No raw exceptions, payloads, tokens, paths or session identifiers in the new diagnostic. No new dependencies, settings, generic observer framework, installed changes, connection recreation, service restart, synthetic traffic or changes to parked work.
 
@@ -16,6 +16,9 @@
 
 **Relationships:**
 {"schema_version":1,"sources":[{"provider":"minimap","scope_ref":"roadmap:v1:git:github.com/rore/pallium#roadmap","local_ref":"item:v1:add-wake-first-relay-delivery"}],"pull_requests":["https://github.com/rore/Pallium/pull/381"]}
+
+**Behavior changes:**
+[{"target":"task-context.scope","classification":"coverage-only","before":"app/mcp/codex_desktop_bridge.py, tests/test_codex_worker_reconnect.py, and this Work Record.","after":"app/mcp/codex_desktop_bridge.py, tests/test_codex_worker_reconnect.py, tests/test_sqlite_write_retry.py, and this Work Record. The task owner authorized the fourth path solely for deterministic timing in the existing normal-settlement gate test; see the scope amendment below. The initial requirement baseline remains unchanged.","reason":"The authorized test-fixture amendment makes the existing ownership contract deterministic; all ownership assertions, adjacent acquisition-deadline controls and production behavior remain unchanged."}]
 
 **Risk:** Elevated
 
@@ -38,11 +41,11 @@
 
 **Plan review:** Agent technical review: independent recovery_diagnostics_review, initial PLAN GO for decb746bfb12b8e82d581ad6c947589c1ec88bec and CORRECTION PLAN GO for a7a22e782886049b5014f86703d8e0b21277ee61. See Correction plan below.
 
-**Approvals:** Not required at Elevated risk. Standing user authorization covers isolated bug work; the task owner explicitly authorized completing the demonstrated diagnostic and episode-oracle corrections in the existing three-file scope. Installed changes and new runtime machinery are excluded.
+**Approvals:** Not required at Elevated risk. Standing user authorization covers isolated bug work; the task owner explicitly authorized the diagnostic and episode-oracle corrections, then the bounded fourth-file test-fixture correction described below. Installed changes and new runtime machinery are excluded.
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -69,11 +72,21 @@ Current-head CI results are terminal and preserved before further edits. Risk re
 
 The separate Windows gate-test failure remains preserved evidence with unknown physical cause. Do not edit its assertions, production acquisition budgets or locking behavior as part of this three-file correction.
 
+### Authorized scope amendment
+
+After the bounded diagnosis, the task owner authorized one additional blue test path, `tests/test_sqlite_write_retry.py`. Risk remains Elevated and complexity Moderate. Independent technical review returned PLAN GO for replacing only that test's module-local clock binding with the copied `SimpleNamespace` pattern already used nearby. Wait for the current full run to finish; preserve its result. In the mocked normal-settlement replacement-gate case, freeze monotonic time so scheduling delay cannot redirect execution into acquisition-failure cleanup. Preserve all original/replacement lock identities, locked-state assertions, the close-time replacement and final release. Leave adjacent deliberate `late_begin` coverage and production acquisition/deadline semantics unchanged. Run the changed and adjacent nodes, then their owning file; recompute selection and reuse only unaffected full-suite evidence under the testing conventions. Required current-head platform checks remain mandatory. This amendment changes test determinism, not caller requirements, and does not explain the physical scheduling delay.
+
 Agent technical review: independent recovery_diagnostics_review, PLAN GO for `decb746bfb12b8e82d581ad6c947589c1ec88bec`. The reviewer inspected the exact record and existing recovery/test surfaces, accepted the three-file scope, safeguards and verification plan, and found no blocker. Implementation review must verify exception-path predicate semantics, native call/disposal counts and containment of diagnostic allocation/logging failures. This does not approve installed rollout or establish broader recovery qualification.
 
 ## Evidence
 
 Correction checks: the first focused draft reported 55 passed and one failed because its expected log literal used lowercase `true` instead of Python's `True`; that failed run is preserved. After correcting the literal and covering two cleanup omissions, 14 focused cases passed in 1.92s. The affected reconnect file passed all 196 cases in 46.83s. After restoring real-file readback and checking the emitting worker in the MCP journey, all four affected journey cases passed in 1.24s. These results precede coherent full validation and do not supersede the preserved platform failures below.
+
+The coherent corrected-source run at `0406e0f6fdae6f31e8a24f90aa3930f22721ed5a` failed and stopped without retry. Serial: 70 passed, two skipped, nine slow cases deselected in 83.05s. Remainder: 6,882 passed, nine skipped, two xfailed and one setup error in 574.67s. `test_observes_actual_recovery_task_without_claiming_progress[foreign-None-/status]` failed because the health fixture's wake-registry initialization returned False; its log records `ImmediateTransactionBusyError` without an acquisition stage. This precedes the fixture's existing logical-clock enrollment context. The physical cause is unknown, and independence from this change is not claimed. Application and reconnect-test hashes stayed unchanged. The stopped run is incomplete full-suite coverage, not a successful union. The task owner was notified of the precise additional fixture scope; that fifth path has not been edited.
+
+After this failed run, the authorized fourth-file timing correction passed its changed/adjacent nodes (three passed in 0.62s) and owning file (70 passed in 13.92s). Independent technical review returned SOURCE GO for that exact module-local clock substitution with ownership assertions and adjacent acquisition-failure controls unchanged. Production source stayed unchanged. Final result review remains held by the new setup error and incomplete full validation; these targeted passes do not waive it.
+
+The task owner directed no fifth-file edit or further full run. Only a bounded read-only assessment of the health fixture's initialization contract and separate initialization failure coverage is authorized. Full selection still applies; completed unchanged-case evidence is retained, with failed and unexecuted coverage explicit. The four-file scope amendment is recorded as coverage-only against the immutable initial baseline. Workflow compliance, whitespace and added-diff privacy checks pass; refreshed Redline remains gray/watch with no boundary, API, schema, security or runtime-configuration change. These checks do not override the validation blocker.
 
 Bounded Windows diagnosis: the raw failure shows `late_begin` during acquisition, before the replacement-gate test body. Acquisition error cleanup calls the fixture's session-close callback while the original gate is held; that callback's unlocked-gate assertion then fails. The outer finalizer releases the captured original gate. The intended admitted-body settlement and replacement-gate scenario was not exercised. The adjacent controlled-clock acquisition-cleanup test explicitly expects the gate to remain held for `late_begin`. The physical delay remains unexplained; no independence from this change is claimed. A deterministic normal-settlement fixture would require a fourth file outside this correction's scope. No Windows assertion, production gate semantics or deadline was changed.
 
@@ -99,4 +112,4 @@ Earlier verification-adequacy assessment: the local full validation included 191
 
 Earlier source review returned SOURCE NO-GO for `b4a6ff9f71bc57323aef006f5ff9e7392562e1e3`: optional allocation failure, overconfident registration labels, later-failure attribution and missing caller-surface assertions. Those bounded findings were corrected and accepted by SOURCE GO at `4a41ffae`. The review-fix run also exposed a transient outcome surviving into a new attempt. A diagnostic-only reset at actual attempt entry corrected it; the two exact failed cases passed in 0.70s before the successful final full run. No behavioral assertion was weakened.
 
-The source implementation and prior local validation are retained, but [PR #381](https://github.com/rore/Pallium/pull/381) is blocked by required platform CI and unresolved diagnostic correctness findings. No installed rollout, connection recreation or service restart occurred. This task does not establish installed recovery reliability or identify the physical claim-deadline cause; synchronous filesystem logging retains timing overhead.
+The corrected source and test assertions have independent technical approval, but [PR #381](https://github.com/rore/Pallium/pull/381) remains blocked by the failed/incomplete corrected full run and required platform CI. The previously identified diagnostic correctness findings are corrected; final result qualification is held. No installed rollout, connection recreation or service restart occurred. This task does not establish installed recovery reliability or identify the physical claim-deadline cause; synchronous filesystem logging retains timing overhead.
