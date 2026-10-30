@@ -39,7 +39,7 @@ Scope and validation requirements -> exact diff/privacy check, Redline, Agent Wo
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -48,6 +48,11 @@ Scope and validation requirements -> exact diff/privacy check, Redline, Agent Wo
 - Scope is diagnostic coverage for a future genuine occurrence; it does not resolve physical delay or waive broader feature/refactor gates.
 - The existing canonical roadmap item remains active. Its broader state is unchanged by this local preparation.
 - Independent technical plan review approved the scoped implementation before application edits. The import-boundary check is clean; Redline confirms the existing API and persistence review checkpoints remain open for publication.
+- Baseline RED witness: the original eight HTTP rollback variants passed; the four new exact-wake variants failed only on the absent expiry_detected_at field after the existing status/body/complete rollback assertions passed. The focused run finished with eight passes/four expected failures in 7.22s; evidence is in build/expiry-red/red.xml. This demonstrates missing attribution, not the physical cause of a delay.
+- Implemented only the fixed server-origin metadata, cause validation and existing log suffix. Metadata failures preserve the original exception; no check, clock or transaction operation moved. The existing competent worker edited the two production files; the owner retained tests and workflow bookkeeping.
+- Focused GREEN: 43 passed, 309 deselected in 21.16s across the owning HTTP/log/expiry cases; build/expiry-focused/focused.xml retains every case. This includes the eight unchanged rollback variants, four exact-wake variants, all fixed labels, missing/invalid metadata, failed writes/reads, original error class/args/cause/context, public error and complete durable snapshots.
+- The whole-change selector requires the full lane: python -m pytest tests/ -x -q. This bounded step stops at a local diff and focused evidence as assigned. Required full non-slow validation, formal result review, human result review and API/persistence publication gates remain pending; no qualification waiver or release claim is made.
+- Blocked at the requested manager-assessment/full-validation boundary, not by a demonstrated code failure. No push, full CI, installation, live instrumentation, restart or capture occurred. The separate privacy checkpoint remains intact.
 
 ## Checkpoint: api-review
 
