@@ -36,23 +36,29 @@
 - Whole-change validation and independent adequacy -> scripts/test-plan.py --base origin/main, reported required checks, one required non-slow suite, import boundaries, workflow/Redline and independent result review.
 - No installed recovery claim -> source-only evidence clearly separated from unperformed loaded-client rollout and installed acceptance.
 
-**Plan review:** Pending independent technical review of this exact record; proposal review alone is not plan approval.
+**Plan review:** Agent technical review: independent recovery_diagnostics_review, PLAN GO for decb746bfb12b8e82d581ad6c947589c1ec88bec; see Plan review below.
 
 **Approvals:** Not required at Elevated risk. Standing user authorization covers isolated bug work; manager authorized this bounded source diagnostic. Installed changes are excluded.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-Planning only. Base is current main `9d01176483d7a353d1f88de7830a31e409c5959b`; branch `feat/relay-reconnect-outcome`. The separate expiry-detection pull request remains parked and is not part of this diff. Manager owns the shared roadmap; contribution reconciliation is pending a source result.
+Plan reviewed before implementation. Base is current main `9d01176483d7a353d1f88de7830a31e409c5959b`; branch `feat/relay-reconnect-outcome`. The separate expiry-detection pull request remains parked and is not part of this diff. Manager owns the shared roadmap; contribution reconciliation is pending a source result.
+
+The existing bounded client log now records one fixed terminal row for an observed recovery episode, with a process-local episode ordinal, phase, attempt, registration status, fixed outcome, and already-evaluated safety state. Healthy READY polling remains silent. IDs are allocated independently of the file-sink lock; invalid metadata and sink failures remain contained. Native operations, predicates, retry budgets and cleanup decisions are intended to remain equivalent; independent source review and whole-change validation remain pending. The installed client was not changed.
+
+## Plan review
+
+Agent technical review: independent recovery_diagnostics_review, PLAN GO for `decb746bfb12b8e82d581ad6c947589c1ec88bec`. The reviewer inspected the exact record and existing recovery/test surfaces, accepted the three-file scope, safeguards and verification plan, and found no blocker. Implementation review must verify exception-path predicate semantics, native call/disposal counts and containment of diagnostic allocation/logging failures. This does not approve installed rollout or establish broader recovery qualification.
 
 ## Evidence
 
-Source inspection and independent proposal assessment are complete. No new source code, tests, runtime protocol calls or installed changes have been performed for this implementation task. Private incident evidence is retained outside public artifacts.
+Focused reconnect diagnostic/recovery checks passed: 48 passed in 2.71s. The complete `tests/test_codex_worker_reconnect.py` file passed: 187 passed in 47.45s on the preceding draft, before the final terminal-phase and exception-path logging refinements; it is not final-source file coverage. After those refinements, the exact affected diagnostic nodes passed: 7 passed in 0.77s. All runs used the trusted qualification Python with a process-local isolated home and fresh temp directory. Coverage includes healthy-poll silence, fixed-field sanitization and rotation, sink failure, allocator independence, distinct concurrent worker episodes, exhaustion and early-stop attempt reporting, registration refusal/uncertainty, post-REGISTER fence refusal, unresolved state mutation, and preservation of an exception raised during candidate setup. No installed client, service, or protocol operation was used. The parent owns remaining whole-change validation and independent result review.
 
 ## Result review
 
-Pending implementation and validation. This task is observability only and does not establish recovery reliability or identify the physical claim-deadline cause.
+Implementation exists; whole-change validation and independent result review remain pending. This task is observability only and does not establish recovery reliability or identify the physical claim-deadline cause.

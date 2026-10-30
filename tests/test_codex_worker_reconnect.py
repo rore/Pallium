@@ -131,6 +131,66 @@ def test_client_close_identity_is_captured_before_cleanup(monkeypatch, tmp_path,
     assert f"unresolved={failure == 'dispose'}" in text and "private-" not in text
 
 
+def test_reconnect_diagnostic_sanitizes_and_rotates_without_escaping(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("private-diagnostic-value-stringified")
+        __repr__ = __str__
+
+    for _ in range(120):
+        diagnostic = lifecycle._new_reconnect_diagnostic("idle")
+        lifecycle._mark_reconnect(diagnostic, phase=Hostile(), phase_state=Hostile(),
+            attempt=Hostile(), registration=Hostile(), outcome=Hostile(),
+            unresolved=Hostile(), owner_exited=Hostile())
+        lifecycle._client_reconnect_diagnostic(diagnostic, Hostile())
+
+    paths = sorted((tmp_path / "logs").glob(f"codex-retained-client-{os.getpid()}.log*"))
+    assert len(paths) == 2 and all(0 < path.stat().st_size <= 4096 for path in paths)
+    records = [line for path in paths for line in path.read_text(encoding="utf-8").splitlines()]
+    assert records and all("reconnect_terminal" in line and "phase=unknown" in line
+                           and "phase_state=unknown" in line and "attempt=unknown" in line
+                           and "registration=unknown" in line and "outcome=unknown" in line
+                           and "restart_allowed=unknown" in line and "unresolved=unknown" in line
+                           and "owner_exited=unknown" in line for line in records)
+    assert "private-diagnostic-value" not in "\n".join(records)
+    assert capsys.readouterr() == ("", "")
+
+
+def test_reconnect_episode_allocator_does_not_wait_for_sink_lock(monkeypatch, tmp_path):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    ready = threading.Event()
+    allocated = []
+    started = False
+    lifecycle._close_log_lock.acquire()
+    try:
+        thread = threading.Thread(target=lambda: (allocated.append(
+            lifecycle._new_reconnect_diagnostic("idle")), ready.set()))
+        thread.start()
+        started = True
+        assert ready.wait(1), "episode allocation waited on the file sink lock"
+    finally:
+        lifecycle._close_log_lock.release()
+        if started:
+            thread.join(1)
+    assert not thread.is_alive() and allocated[0]["episode"] is not None
+
+
+def test_reconnect_diagnostic_sink_failure_is_contained(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+
+    def fail(*_args, **_kwargs):
+        raise OSError("private-diagnostic-sink-sentinel")
+
+    diagnostic = lifecycle._new_reconnect_diagnostic("idle")
+    lifecycle._mark_reconnect(diagnostic, outcome="constructor-error")
+    monkeypatch.setattr(lifecycle, "_QuietCloseHandler", fail)
+    lifecycle._client_reconnect_diagnostic(diagnostic, True)
+    assert capsys.readouterr() == ("", "")
+    assert "private-diagnostic-sink-sentinel" not in str(diagnostic)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("journey", ["idle-transport", "unused-ready", "caller-thread", "lifespan-stop"])
 async def test_actual_mcp_close_branch_has_durable_marker(monkeypatch, tmp_path, journey):
@@ -579,10 +639,12 @@ async def test_fresh_caller_after_retirement_requires_trusted_old_owner_exit(mon
     "ready-refused", "register-refused", "register-uncertain", "continuity-changed",
     "pipe-changed-after", "stopped-after", "ready-pipe-changed", "ready-continuity-changed",
     "ready-unresolved", "ready-stopped"])
-def test_same_epoch_recovery_preserves_admission_and_identity_fences(monkeypatch, case):
+def test_same_epoch_recovery_preserves_admission_and_identity_fences(monkeypatch, tmp_path, case):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
     worker = object.__new__(lifecycle.InventoryWorker)
     worker.stop_event = threading.Event()
     worker._restart_allowed = True
+    worker._retained = True
     worker._auto_reconnect = lambda *a: pytest.fail("same epoch replaced the source channel")
     monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "original-capability")
     calls = []
@@ -647,6 +709,19 @@ def test_same_epoch_recovery_preserves_admission_and_identity_fences(monkeypatch
                 "pipe-changed-after", "stopped-after"}:
         expected.append("register")
     assert calls == expected
+    log_path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
+    if case == "healthy":
+        assert not log_path.exists(), "healthy READY polling must stay silent"
+    else:
+        terminal = [line for line in log_path.read_text(encoding="utf-8").splitlines()
+                    if "reconnect_terminal" in line]
+        assert len(terminal) == 1
+        if case == "register-refused":
+            assert "registration=completed" in terminal[0] and "outcome=register-refused" in terminal[0]
+        elif case == "register-uncertain":
+            assert "registration=attempted" in terminal[0] and "outcome=register-uncertain" in terminal[0]
+        elif case == "ready-refused":
+            assert "phase=ready" in terminal[0] and "registration=not-attempted" in terminal[0]
 
 
 @pytest.mark.asyncio
@@ -1386,6 +1461,200 @@ def _automatic_recovery_worker(monkeypatch):
     monkeypatch.setattr(lifecycle, "RECONNECT_INITIAL_BACKOFF_SECONDS", .001)
     monkeypatch.setattr(lifecycle, "RECONNECT_MAX_BACKOFF_SECONDS", .001)
     return worker
+
+
+def test_reconnect_terminal_rows_correlate_real_workers_and_episodes(monkeypatch, tmp_path):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "original-capability")
+    monkeypatch.setattr(lifecycle, "RECONNECT_MAX_ATTEMPTS", 1)
+    proof = "a" * 64
+    invocations = [(0, 0), (0, 1), (1, 0)]
+
+    class Old:
+        continuity, unresolved, manifest = proof, False, {"epoch": "retired"}
+        io = SimpleNamespace(unresolved=False)
+        def service_current(self):
+            return False
+        def dispose(self):
+            pass
+
+    class Native:
+        def __init__(self, *_args, **_kwargs):
+            raise bridge.ShadowUnavailable("startup-unavailable")
+
+    workers = [_automatic_recovery_worker(monkeypatch) for _ in range(2)]
+    for worker in workers:
+        worker._retained = True
+
+    def run(item):
+        worker_index, _episode_index = item
+        result = workers[worker_index]._recover_if_gone(
+            Old(), Native, "original-capability", {"thread_ref": "runtime", "turn_ref": "turn"}, proof)
+        assert result == (None, True)
+
+    threads = [threading.Thread(target=run, args=(item,)) for item in invocations]
+    for thread in threads:
+        thread.start()
+    try:
+        for thread in threads:
+            thread.join(2)
+            assert not thread.is_alive()
+    finally:
+        for thread in threads:
+            thread.join(1)
+
+    path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
+    records = [line for line in path.read_text(encoding="utf-8").splitlines()
+               if "reconnect_terminal" in line]
+    assert len(records) == len(invocations)
+    episodes = [int(line.split("episode=", 1)[1].split()[0]) for line in records]
+    assert len(set(episodes)) == len(invocations)
+    assert all("phase=backoff" in line and "attempt=1" in line
+               and "registration=not-attempted" in line
+               and "outcome=attempts-exhausted" in line
+               and "owner_exited=unknown" in line for line in records)
+
+
+def test_reconnect_early_guard_keeps_last_entered_attempt(monkeypatch, tmp_path):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "original-capability")
+    monkeypatch.setattr(lifecycle, "RECONNECT_MAX_ATTEMPTS", 3)
+    worker = _automatic_recovery_worker(monkeypatch)
+    worker._retained = True
+    proof = "a" * 64
+
+    class Old:
+        continuity, unresolved, manifest = proof, False, {"epoch": "retired"}
+        io = SimpleNamespace(unresolved=False)
+        def service_current(self):
+            return False
+        def dispose(self):
+            pass
+
+    class Native:
+        def __init__(self, *_args, **_kwargs):
+            raise bridge.ShadowUnavailable("startup-unavailable")
+
+    def stop_after_first_attempt(_timeout):
+        worker.stop_event.set()
+        return False
+    worker.stop_event.wait = stop_after_first_attempt
+    assert worker._recover_if_gone(Old(), Native, "original-capability",
+        {"thread_ref": "runtime", "turn_ref": "turn"}, proof) == (None, True)
+    path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
+    terminal = [line for line in path.read_text(encoding="utf-8").splitlines()
+                if "reconnect_terminal" in line]
+    assert len(terminal) == 1
+    assert "phase=preflight" in terminal[0] and "attempt=1" in terminal[0]
+    assert "outcome=reconnect-guard-refused" in terminal[0]
+
+
+def test_reconnect_raise_is_logged_without_changing_exception(monkeypatch, tmp_path):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "original-capability")
+    worker = _automatic_recovery_worker(monkeypatch)
+    worker._retained = True
+    failure = RuntimeError("sentinel recovery failure")
+
+    class Old:
+        continuity, unresolved, manifest = "a" * 64, False, {"epoch": "retired"}
+        io = SimpleNamespace(unresolved=False)
+        def service_current(self):
+            return False
+        def dispose(self):
+            pass
+
+    class Candidate:
+        @property
+        def continuity(self):
+            return None
+        @continuity.setter
+        def continuity(self, _value):
+            raise failure
+
+    class Native:
+        def __new__(cls, *_args, **_kwargs):
+            return Candidate()
+
+    with pytest.raises(RuntimeError) as raised:
+        worker._recover_if_gone(Old(), Native, "original-capability",
+            {"thread_ref": "runtime", "turn_ref": "turn"}, "a" * 64)
+    assert raised.value is failure
+    path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
+    terminal = [line for line in path.read_text(encoding="utf-8").splitlines()
+                if "reconnect_terminal" in line]
+    assert len(terminal) == 1 and "outcome=reconnect-error" in terminal[0]
+    assert "sentinel recovery failure" not in terminal[0]
+
+
+@pytest.mark.parametrize(("case", "expected_outcome", "expected_unresolved"), [
+    ("register-proof", "postregister-fence-refused", "unknown"),
+    ("register-unresolved", "safety-refused", "unknown"),
+    ("ready-refused", "ready-refused", "unknown"),
+    ("register-exception", "register-uncertain", "unknown"),
+])
+def test_reconnect_episode_records_truthful_stage_and_last_known_state(
+        monkeypatch, tmp_path, case, expected_outcome, expected_unresolved):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "original-capability")
+    worker = _automatic_recovery_worker(monkeypatch)
+    worker._fresh_request_retirement = None
+    worker._retained = True
+    proof = "a" * 64
+
+    class Old:
+        manifest, continuity, unresolved = {"epoch": "old"}, proof, False
+        io = SimpleNamespace(unresolved=False)
+        def service_current(self):
+            return True
+        def ready(self):
+            raise bridge.ShadowUnavailable("transport-failed")
+        def bootstrap_unchanged(self):
+            return True
+        def retired_service_exited(self):
+            return False
+        def retire(self):
+            pass
+        def dispose(self):
+            pass
+
+    class Native:
+        def __init__(self, *_args, **_kwargs):
+            self.manifest = {"epoch": "old"}
+            self.continuity, self.unresolved = None, False
+            self.io = SimpleNamespace(unresolved=False)
+        def bootstrap_unchanged(self):
+            return True
+        def ready(self):
+            if case == "ready-refused":
+                return {"status": "unavailable", "reason": "peer-mismatch"}
+            return {"status": "ready"}
+        def register(self, _metadata):
+            if case == "register-proof":
+                self.continuity = "b" * 64
+            elif case == "register-unresolved":
+                self.unresolved = True
+            elif case == "register-exception":
+                raise bridge.ShadowUnavailable("transport-failed")
+            return {"status": "registered", "reason": "ok"}
+        def dispose(self):
+            pass
+
+    old = Old()
+    replacement, disposed = worker._recover_if_gone(
+        old, Native, "original-capability", {"thread_ref": "runtime", "turn_ref": "turn"}, proof,
+        allow_ready_retirement=True)
+    assert replacement is None and disposed
+    path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
+    terminal = [line for line in path.read_text(encoding="utf-8").splitlines()
+                if "reconnect_terminal" in line]
+    assert len(terminal) == 1
+    assert f"outcome={expected_outcome}" in terminal[0]
+    assert f"unresolved={expected_unresolved}" in terminal[0]
+    if case == "ready-refused":
+        assert "registration=not-attempted" in terminal[0]
+    elif case == "register-exception":
+        assert "registration=attempted" in terminal[0]
 
 
 @pytest.mark.parametrize("case", [
