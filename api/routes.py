@@ -827,6 +827,7 @@ def create_router(
         snapshot_ms: int | None = None
         error_status: int | None = None
         error_category = "none"
+        expiry_detected_at = "none"
         outcome = "error"
         request_data = request.model_dump()
         if request.claim_expires_at_ms is None:
@@ -925,6 +926,21 @@ def create_router(
             error_status = status if type(status) is int and 400 <= status <= 599 else None
             if error_status == 409 and type(exc.detail) is str and exc.detail == "Relay claim request expired":
                 error_category = "claim_expired"
+                expiry_detected_at = "unknown"
+                try:
+                    cause = exc.__cause__
+                    if isinstance(cause, RelayConflictError):
+                        detected_at = getattr(cause, "expiry_detected_at", None)
+                        if type(detected_at) is str and detected_at in {
+                            "before_acquisition",
+                            "after_acquisition",
+                            "pre_claim_mutation",
+                            "post_flush_precommit",
+                        }:
+                            expiry_detected_at = detected_at
+                except BaseException:
+                    # Preserve the primary HTTP error when metadata fails.
+                    pass
             else:
                 error_category = {409: "conflict", 503: "busy"}.get(error_status, "http_error")
             raise
@@ -936,7 +952,7 @@ def create_router(
                 logger.info(
                     "relay_turn_timing delivery_ref=%s service_ms=%s "
                     "route_ready_ms=%d outcome=%s worker_start_ms=%s snapshot_ms=%s "
-                    "error_status=%s error_category=%s",
+                    "error_status=%s error_category=%s expiry_detected_at=%s",
                     request.wake_delivery_id,
                     service_ms if service_ms is not None else "none",
                     int((time.monotonic() - started) * 1000),
@@ -945,6 +961,7 @@ def create_router(
                     snapshot_ms if snapshot_ms is not None else "none",
                     error_status if error_status is not None else "none",
                     error_category,
+                    expiry_detected_at,
                 )
 
     @router.get("/relay/pending-candidate", response_model=RelayPendingCandidateResponse | None)
