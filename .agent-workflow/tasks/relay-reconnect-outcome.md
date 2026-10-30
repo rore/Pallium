@@ -42,7 +42,7 @@
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -65,12 +65,18 @@ Independent source review `b4a6ff9f` identified optional-diagnostic allocation f
 
 ## Result review
 
-Agent technical review: independent recovery_diagnostics_review returned RESULT GO for the source candidate after inspecting the primary XML, commands, log summaries and matching source/test hashes. The previous SOURCE GO remains applicable to the unchanged code.
+Current qualification is held at published head `d54e2500948ef0838116146eb8201fa207042928`. Required CI run `41100874464` failed in both Linux versions and Windows smoke; there was no rerun. Linux 3.12 failed `test_busy_auto_reconnect_recovers_without_a_fresh_call[1-ready]` (one failed, 5,601 passed, 37 skipped, two xfailed); Linux 3.13 failed its `[1-register]` case (one failed, 5,771 passed, 37 skipped, two xfailed). Both new assertions expected one terminal row across the whole protocol journey but observed two. Source permits a separate refusal episode during shutdown; retained row truncation does not establish that complete correlation. Preserve one-record-per-episode and native/disposal assertions rather than weakening the count without explanation.
+
+Windows smoke failed `test_cleanup_cannot_release_a_replaced_provider_gate` (one failed, 534 passed, seven skipped): `late_begin` acquisition failure preceded the intended body, then the fixture's cleanup assertion found the original gate still locked. The physical delay and causal relationship to this change remain unestablished. Redline, selection and workflow compliance passed. CodeRabbit posted eight comments across seven unresolved threads.
+
+Independent follow-up technical review holds the previous source/result GO: old-client cleanup can discover unresolved ownership after candidate success recorded False, leaving an inaccurate terminal flag. Other valid precision gaps concern service-check exceptions, window exhaustion and retaining known state or specific outcomes. Synchronous sink overhead was an explicitly accepted limitation; a writer framework is outside the approved slice. No extra/reordered clock or property probes are authorized. The next source correction and any further CI require the task owner's bounded disposition; current assignment is final-head verification only. This local bookkeeping is not pushed while preserving the completed published-head evidence.
+
+Earlier agent technical review: independent recovery_diagnostics_review returned RESULT GO after inspecting the local XML, commands, log summaries and matching source/test hashes. That earlier approval is retained as history and is superseded by the current qualification hold above.
 
 Reviewed revision: `4a41ffaed2d8a38c96ec5dab1635cf3b60183387`.
 
-Verification adequacy: all completion criteria are covered by the final-source full validation, including 191 reconnect cases and the existing MCP caller-surface recovery journeys. The 8,463 XML cases have no duplicates, partition overlap, failures or errors. Privacy, correlation, terminal outcomes and diagnostic-failure containment are covered. Earlier failed draft evidence remains failed and separate. Final record-only updates do not create a newly tested application candidate.
+Earlier verification-adequacy assessment: the local full validation included 191 reconnect cases and existing MCP caller-surface journeys; its 8,463 XML cases have no duplicates, partition overlap, failures or errors. Subsequent platform failures and follow-up source review identified missing edge-case precision and an unresolved episode-correlation oracle, so that local evidence does not establish current completion criteria. Earlier failed evidence remains failed and separate. Record-only updates do not create a newly tested application candidate.
 
 Earlier source review returned SOURCE NO-GO for `b4a6ff9f71bc57323aef006f5ff9e7392562e1e3`: optional allocation failure, overconfident registration labels, later-failure attribution and missing caller-surface assertions. Those bounded findings were corrected and accepted by SOURCE GO at `4a41ffae`. The review-fix run also exposed a transient outcome surviving into a new attempt. A diagnostic-only reset at actual attempt entry corrected it; the two exact failed cases passed in 0.70s before the successful final full run. No behavioral assertion was weakened.
 
-Source implementation and local validation are complete. [PR #381](https://github.com/rore/Pallium/pull/381) is open; platform CI and review conversations remain merge gates. No installed rollout, connection recreation or service restart occurred. This task does not establish installed recovery reliability or identify the physical claim-deadline cause; synchronous filesystem logging retains timing overhead.
+The source implementation and prior local validation are retained, but [PR #381](https://github.com/rore/Pallium/pull/381) is blocked by required platform CI and unresolved diagnostic correctness findings. No installed rollout, connection recreation or service restart occurred. This task does not establish installed recovery reliability or identify the physical claim-deadline cause; synchronous filesystem logging retains timing overhead.
