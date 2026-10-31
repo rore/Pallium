@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 from core.codex_wake import CodexWakeRegistry, CodexWakeReservation
+from core.errors import ImmediateTransactionBusyError
 from core.relay import RELAY_CLAIM_LEASE_SECONDS, RelayService
 from storage.sqlite import SQLiteStorageProvider
 from app import codex_wake
@@ -2660,6 +2661,112 @@ def test_import_rows_and_marker_rollback_together_on_transaction_failure(
     _assert_uninitialized_database(database)
     assert reopened.initialize(old_owner_drained=True)
     assert reopened.reservations() == (item,)
+
+
+@pytest.mark.parametrize("committed", [False, True], ids=["refused", "committed-return-error"])
+@pytest.mark.parametrize("metadata", [
+    *sorted(ImmediateTransactionBusyError.ACQUISITION_STAGES),
+    "absent", "other-error", "bad-stage", "stage-subclass", "empty", "not-map", "map-subclass",
+    "unknown-phase", "phase-subclass", "too-many", "boolean", "float", "negative", "over-max",
+    "broken-stage", "broken-phases",
+])
+def test_initialization_failure_log_preserves_only_safe_metadata(caplog, committed, metadata):
+    calls = []
+    initialized = False
+    phases = {"setup_pragma": 60_000, "session_factory": 0, "begin_immediate": 2, "session_connection": 1}
+    stage = metadata if metadata in ImmediateTransactionBusyError.ACQUISITION_STAGES else "late_begin"
+    expected_stage, expected_phases = stage, phases
+    if metadata in {"absent", "other-error"}:
+        stage, phases, expected_stage, expected_phases = None, None, "unknown", None
+    elif metadata == "bad-stage":
+        stage, expected_stage = "private diagnostic text", "unknown"
+    elif metadata == "stage-subclass":
+        stage, expected_stage = type("Stage", (str,), {})(stage), "unknown"
+    elif metadata not in ImmediateTransactionBusyError.ACQUISITION_STAGES and not metadata.startswith("broken-"):
+        phases = {
+            "empty": {}, "not-map": [], "map-subclass": type("Phases", (dict,), {})(phases),
+            "unknown-phase": {"private diagnostic text": 1},
+            "phase-subclass": {type("Phase", (str,), {})("setup_pragma"): 1},
+            "too-many": {**phases, "private diagnostic text": 1},
+            "boolean": {"setup_pragma": True}, "float": {"setup_pragma": 1.0},
+            "negative": {"setup_pragma": -1}, "over-max": {"setup_pragma": 60_001},
+        }[metadata]
+        expected_phases = None
+
+    class MetadataError(ImmediateTransactionBusyError):
+        def __getattribute__(self, name):
+            if ((metadata == "broken-stage" and name == "acquisition_stage")
+                    or (metadata == "broken-phases" and name == "acquisition_phase_ms")):
+                raise RuntimeError("private diagnostic text")
+            return super().__getattribute__(name)
+
+    error = RuntimeError("private diagnostic text") if metadata == "other-error" else MetadataError(
+        "private diagnostic text", acquisition_stage=stage, acquisition_phase_ms=phases,
+    )
+    if metadata == "other-error":
+        error.acquisition_stage, error.acquisition_phase_ms = "late_begin", {"setup_pragma": 7}
+    if metadata == "broken-stage":
+        expected_stage = "unknown"
+    elif metadata == "broken-phases":
+        expected_phases = None
+
+    def snapshot():
+        calls.append("snapshot")
+        return initialized, ()
+
+    def initialize(items):
+        nonlocal initialized
+        calls.append(("initialize", items))
+        initialized = committed
+        raise error
+
+    registry = CodexWakeRegistry(relay_service=SimpleNamespace(
+        codex_wake_snapshot=snapshot, codex_wake_initialize=initialize,
+    ))
+    calls.clear()
+    with caplog.at_level(logging.WARNING, logger="core.codex_wake"):
+        assert registry.initialize(old_owner_drained=True) is committed
+    assert calls == ["snapshot", ("initialize", ()), "snapshot"]
+    assert registry._usable is committed
+    records = [record for record in caplog.records if record.name == "core.codex_wake"]
+    assert len(records) == 1
+    assert records[0].args == (type(error).__name__, expected_stage,
+                               expected_phases if expected_phases is not None else "unknown")
+    if expected_phases is not None:
+        assert list(records[0].args[2]) == sorted(expected_phases)
+    assert "codex_wake_initialization_failed error_type=" in caplog.text
+    assert "private diagnostic text" not in caplog.text
+
+
+def test_initialization_warning_failure_preserves_existing_order(monkeypatch):
+    from core import codex_wake
+
+    calls = []
+    error = ImmediateTransactionBusyError("private diagnostic text", acquisition_stage="late_begin")
+
+    def snapshot():
+        calls.append("snapshot")
+        return False, ()
+
+    def initialize(items):
+        calls.append(("initialize", items))
+        raise error
+
+    warning_error = RuntimeError("warning unavailable")
+
+    def warning(*_args):
+        calls.append("warning")
+        raise warning_error
+
+    registry = CodexWakeRegistry(relay_service=SimpleNamespace(
+        codex_wake_snapshot=snapshot, codex_wake_initialize=initialize,
+    ))
+    calls.clear()
+    monkeypatch.setattr(codex_wake.logger, "warning", warning)
+    with pytest.raises(RuntimeError) as caught:
+        registry.initialize(old_owner_drained=True)
+    assert caught.value is warning_error
+    assert calls == ["snapshot", ("initialize", ()), "warning"]
 
 
 def test_database_busy_defers_reserve_without_disabling_later_attempts(relay_store, tmp_path):
