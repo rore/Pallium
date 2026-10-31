@@ -2,7 +2,7 @@
 
 ## Current publication checkpoint
 
-An independent clone now contains the selected exact-claim, compact-scope and vector-save corrections, plus the original diagnostic acceptance correction and user-requested shared developer guidance. Intervening diagnostic experiments are excluded. Combined source review is GO. The required full non-slow attempt failed on a directly affected timing-test runner fixture; that fixture is corrected with all assertions preserved. Complete disjoint validation is in progress; current-head platform checks remain required. Earlier failed local and CI evidence is preserved. Publication does not change the installed environment or establish sustained incident recovery.
+An independent clone now contains the selected exact-claim, compact-scope and vector-save corrections, plus the original diagnostic acceptance correction and user-requested shared developer guidance. Intervening diagnostic experiments are excluded. Combined source review is GO. The required full non-slow attempt failed on a directly affected timing-test runner fixture; that fixture is corrected with all assertions preserved. Local disjoint validation covers all 8,555 final non-slow cases: 8,516 passed, 37 skipped and two xfailed, with no gaps or overlap. Independent local result review is GO; current-head platform checks remain required. Earlier failed local and CI evidence is preserved. Publication does not change the installed environment or establish sustained incident recovery.
 
 <!-- agent-workflow:start -->
 **Outcome:** A failed or completed retained Codex reconnect can be distinguished from retry exhaustion, uncertain registration and safety refusal through one bounded private terminal diagnostic, without changing recovery behavior.
@@ -53,7 +53,7 @@ An independent clone now contains the selected exact-claim, compact-scope and ve
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -187,3 +187,17 @@ The required full non-slow attempt terminated with one failure, 3,157 passes, th
 Agent technical review: independent publication_review returned SOURCE GO for this one-line owning-fixture correction and the final assignment-neutral developer guide. It accepted disjoint evidence reuse under the repository testing conventions, subject to exact final collection coverage, unchanged dependencies/source, preserved failed evidence and final result review. The final guide SHA256 is `6722fbbb7e27886b59be209352a5936499fbf2595348b567d6c10a7b877cff09`.
 
 The final non-slow collection contains 8,555 cases. The private ledger selects 3,008 terminal unaffected cases for reuse, 234 cases from the complete corrected module, and 5,313 remaining cases for one new run, including the protected-test importer of unchanged helpers from that module. No protected contract file changed. The original failed full and earlier sandbox fixture errors remain separate failed evidence. This is complete-coverage qualification in disjoint runs if all checks succeed, never a claim that the original full run passed. Qualification remains pending.
+
+## Local publication validation
+
+Complete final non-slow coverage is established across disjoint evidence: 3,008 reusable unaffected terminal cases, all 234 cases in the corrected module, and 5,313 cases in the single remainder run. The remainder passed 5,278, skipped 34 and xfailed one. Combined results are 8,516 passes, 37 skips and two xfails over 8,555 distinct collected cases. The actual XML identities equal the final collection exactly, with no duplicate cases, cohort overlap or coverage gaps. All four workers collected the same final set and selected exactly the requested remainder. Source/config hashes stayed unchanged during both executions; the only intervening code/test change was the reviewed timing-fixture runner correction. Dependencies and qualification runtime stayed unchanged. The original full run remains failed; this is complete coverage in disjoint runs, not a single passing full run.
+
+The committed source and tested working files are identical after normal Git CRLF normalization. Vector working-file SHA256 remains `29a453b271f97ed24dc9f54a8d68568d259ef761757e30a8c4a91c7714ff6bec`; its normalized committed blob SHA256 is `9129e0bb6312cc55221d85861e09f9b4e146b3b40cf7b47c3c9d0dc97b80ba41`. No extra content changes accompany normalization. The explicit slow private READY regression and focused evidence remain separate from non-slow coverage.
+
+Reviewed source revision: `42ce36835c00a7657c8e16254fb89c0461fcd507`. Current-head platform CI, inline-thread disposition, API checkpoint and manager-owned roadmap reconciliation remain pending. No installed synchronization, service action, host restart or live acceptance test was performed by publication.
+
+## Result review
+
+Agent technical review: independent publication_review returned LOCAL RESULT GO after independently recomputing the raw XML and collection cohorts, source/config hashes, actual worker selection and normalized committed identities. Reviewed revision: `42ce36835c00a7657c8e16254fb89c0461fcd507`. Verification adequacy: the final 8,555-case non-slow set is fully covered by disjoint terminal evidence with 8,516 passes, 37 skips and two xfails; all 924 tracked code/config hashes and 16 selected working/blob content identities were verified. The protected-test importer is included in the remainder, and the explicit slow native vector READY regression passed. No completion criterion or protected assertion was weakened. This is sufficient for publication to the existing PR for fresh platform qualification, not permission to bypass failed CI or a claim of installed acceptance.
+
+The task owner already authorized validating, publishing and merging the demonstrated corrections once gates pass. The independent local review does not replace user authority or the PR API checkpoint. Current-head platform CI and inline findings must be settled before merge. The manager owns canonical roadmap reconciliation and any separately authorized installed synchronization; publication never holds incident work for those steps. A later known-busy hook retry correction is outside this frozen snapshot and requires its own reviewed follow-up snapshot.
