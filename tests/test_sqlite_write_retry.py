@@ -388,7 +388,12 @@ class TestImmediateTransactionRetry:
             if actual.locked():
                 actual.release()
 
-    def test_cleanup_cannot_release_a_replaced_provider_gate(self, storage):
+    def test_cleanup_cannot_release_a_replaced_provider_gate(self, storage, monkeypatch):
+        from storage import sqlite_queue
+
+        monkeypatch.setattr(sqlite_queue, "time", SimpleNamespace(
+            **{**vars(time), "monotonic": lambda: 0.0},
+        ))
         original, replacement = storage._relay_writer_lock, threading.Lock()
         replacement.acquire()
         session, connection = MagicMock(), MagicMock()
