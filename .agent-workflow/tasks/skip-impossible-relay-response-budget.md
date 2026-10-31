@@ -38,16 +38,18 @@
 - Structural and privacy obligations -> import boundaries, Redline, Agent Workflow and review of added public content.
 - Final acceptance -> independent result review, explicit persistence checkpoint and settled inline findings; no installed acceptance inference.
 
-**Plan review:** Pending independent publication_review assessment of the exact packet, target port and verification plan before source/test edits.
+**Plan review:** Agent technical review: independent publication_review returned PLAN GO at 0fc66871 on main 9382b95b. The empty-response bound holds because count-digit savings are at most one per added delivery and every delivery envelope costs substantially more; false has_more is longer. The target check_claim_expiry() and finalize() preserve pre-mutation and flush-expiry rollback. Earlier OpenCode replay and absent/inactive no-registration returns remain unchanged; structural enrichment stays after storage transaction exit. No PR #381 or unpublished diagnostic dependency exists. Test-only thread-local observation is accepted when set after acquisition and its prior value is restored in finally; it observes transaction-body work, not lock duration. Require the four-runtime red controls, 11 new cases, affected file, selected full validation, normal CI and final review. High/Moderate and the separate persistence checkpoint remain binding.
 
 **Approvals:** Approved by user in the standing incident directive (timestamp unavailable): "yes, i approve, and no need to ask every time - i approve all the work to get this bug fixed". The task owner separately authorized publication validation, push and merge of demonstrated fixes; the stable packet explicitly carries manager-authorized separate publication. This bounded optimization preserves the accepted caller contract and excludes every live environment action. Independent technical review and the separate persistence result checkpoint remain required; implementation authority is not checkpoint satisfaction.
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 Captured only the immutable patch, installed candidate and frozen E2E test packet with matching SHA256 identities and unchanged source bytes before/after capture. An isolated branch was created from current main. No production or test edit has occurred; plan/target review is pending. No current owner workspace or installed-only diagnostic is used as the publication source.
+
+Independent plan review is GO before source/test edits. The test observer will restore its prior thread-local value on every exit. Standing human implementation authorization remains separate from the final persistence checkpoint.
 
 ## Prior evidence and limits
 
