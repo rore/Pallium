@@ -44,4 +44,6 @@ An isolated worktree was created from current main. Independent plan/destination
 
 ## Saved evidence
 
+Implementation: copied exactly the three immutable files after independent plan approval; each destination SHA256 matches the captured snapshot. No probe or workflow delta is included. One destination full non-slow run is next; source/config hashes will be compared before and after. Earlier focused evidence is reused without rerunning its controls.
+
 The immutable captured source identities are Codex helper SHA256 `4a531a56fae99f3cfd48175e0e1a71f687460c25d4666b712a91a3e0ce90c83b`, Claude parity helper `acb52e5c93c0d70f8ec67878ca7641422624af8f603ab0d7dfd7ecd7f71cd8ac`, and tests `8b6606e0e6d65c411052e487b4c2a2beaa63b775d6086b9ac1528c16454cf553`. Earlier focused evidence passed 84 cases. The affected run passed 439 of 441 with two WinError 206 fixture failures; the exact same two cases passed in a saved short-path control. This is disjoint evidence over 441 cases, not a single clean affected run. No destination or platform qualification is inferred solely from source identity.
