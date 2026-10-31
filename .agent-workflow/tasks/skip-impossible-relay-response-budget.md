@@ -1,0 +1,54 @@
+# Skip Relay candidate work when no response can fit
+
+<!-- agent-workflow:start -->
+**Outcome:** A Relay turn whose positive response budget cannot fit even the empty response skips candidate selection and rendering while preserving its existing empty response and transactional fences.
+
+**Target:** SQLite Relay turn response-budget admission.
+
+**Scope:** storage/sqlite_relay.py, tests/test_agent_relay_e2e.py and this Work Record. Port only the demonstrated seven-line generic correction and its tests onto current main. Exclude installed-only timing, expiry-label, writer-owner and body-observation diagnostics.
+
+**Constraints:** Preserve response/schema, eligible counts, registration/scope effects, claim-expiry checks, rollback, token/lease/attempt ownership, runtime behavior, structural enrichment and later claim/ACK. No budgets, assertions, protected tests, workflow configuration, dependencies, live installation, service, owner source/index or model/account settings change. Keep private paths, operational pointers and identity out of public artifacts. No historical cause or overall recovery claim.
+
+**Completion criteria:** Positive budgets of one, below and equal to the empty response size execute no candidate scan or delivery render; above-boundary and unlimited budgets retain existing behavior. Four runtimes, Unicode/long payloads, unchanged pending state and later claim/ACK are covered through HTTP/read paths. Expiry at the new early return and flush rolls back existing/new/scope-change state. Structural reference refresh remains outside the claim transaction. Independent target review, required local/full/platform validation and the persistence checkpoint precede merge.
+
+**Requirement baseline:**
+{"source":"stable-impossible-budget-publication-handoff","outcome":"A Relay turn whose positive response budget cannot fit even the empty response skips candidate selection and rendering while preserving its existing empty response and transactional fences.","scope":"storage/sqlite_relay.py, tests/test_agent_relay_e2e.py and this Work Record. Port only the demonstrated seven-line generic correction and its tests onto current main. Exclude installed-only timing, expiry-label, writer-owner and body-observation diagnostics.","constraints":"Preserve response/schema, eligible counts, registration/scope effects, claim-expiry checks, rollback, token/lease/attempt ownership, runtime behavior, structural enrichment and later claim/ACK. No budgets, assertions, protected tests, workflow configuration, dependencies, live installation, service, owner source/index or model/account settings change. Keep private paths, operational pointers and identity out of public artifacts. No historical cause or overall recovery claim.","completion_criteria":"Positive budgets of one, below and equal to the empty response size execute no candidate scan or delivery render; above-boundary and unlimited budgets retain existing behavior. Four runtimes, Unicode/long payloads, unchanged pending state and later claim/ACK are covered through HTTP/read paths. Expiry at the new early return and flush rolls back existing/new/scope-change state. Structural reference refresh remains outside the claim transaction. Independent target review, required local/full/platform validation and the persistence checkpoint precede merge."}
+
+**Relationships:**
+{"schema_version":1,"sources":[{"provider":"minimap","scope_ref":"roadmap:v1:git:github.com/rore/pallium#roadmap","local_ref":"item:v1:add-wake-first-relay-delivery"}],"pull_requests":["https://github.com/rore/Pallium/pull/381"]}
+
+**Risk:** High
+
+**Complexity:** Moderate
+
+**Reason:** storage/sqlite_relay.py is red-zone persisted Relay lifecycle code with a persistence-review checkpoint. The production change is small, but early returns must preserve expiry and transaction rollback. Public-target and test-observer adaptation require independent assessment.
+
+**Discovery:** Current main is 9382b95b6496967c043269c8bee832eefafccc97. The target already supplies zero-argument check_claim_expiry() and finalize() with in-transaction flush/expiry validation. The seven-line handoff uses a diagnostic stage argument absent here; omit only that argument. The frozen test file differs from main only by three new test definitions, but its work counters depend on an unpublished diagnostic attribute. Replace that test-only ownership check with a thread-local marker around the existing transaction context. Keep every behavioral assertion and original test body otherwise unchanged. RelayService.turn and the HTTP route remain existing callers; no export or API change is needed.
+
+**Material assumptions:** The empty response size is a conservative lower bound: any added delivery envelope costs more than fewer remaining-count digits can save. The guard runs after existing registration/scope/expiry bookkeeping and eligible-count calculation, before candidate execution. If target review finds a response/fence difference or requires prior unpublished diagnostics, stop and return to planning.
+
+**Plan:** First invoke Agent Workflow and record this classification before source/test edits. Obtain independent plan/target review. Add only the captured tests, adapting their ownership observer to the existing transaction context without production hooks, extra storage reads, clocks or locks. Run the four-runtime counter cases before the production edit and preserve the expected red result. Add the seven-line early return using the target's zero-argument expiry helper and existing finalizer. Run the new controls and affected E2E file, then the complete change selector and one required full non-slow suite in the existing isolated runtime with temporary fixtures outside Git ancestry. Reuse only source-compatible prior evidence, preserving overlap and limits. Run import/workflow/Redline checks and independent result review. Publish a separate reviewable PR, resolve every finding, satisfy the persistence checkpoint and merge only after current-head gates pass. No standalone diagnostic campaign or owner/local incident dependency.
+
+**Verification plan:**
+- Demonstrated needless work -> four-runtime pre-fix counter cases assert candidate/render 1/10 where the fixed contract requires 0/0; preserve the red outcome.
+- Budget/lifecycle boundaries -> new HTTP cases for one/below/equal/above/unlimited, four runtimes, Unicode, maximum payload, readback of unchanged claims and later ACK.
+- Transaction fences -> new early-return/flush expiry cases across existing, new and moved-scope sessions; compare full persisted state before and after refusal.
+- Structural separation -> HTTP structural-reference mutation/readback and later claim/ACK controls.
+- Target regressions and complete coverage -> affected E2E file, whole-change selector, required full non-slow suite once and normal current-head Linux/Windows CI.
+- Structural and privacy obligations -> import boundaries, Redline, Agent Workflow and review of added public content.
+- Final acceptance -> independent result review, explicit persistence checkpoint and settled inline findings; no installed acceptance inference.
+
+**Plan review:** Pending independent publication_review assessment of the exact packet, target port and verification plan before source/test edits.
+
+**Approvals:** Approved by user in the standing incident directive (timestamp unavailable): "yes, i approve, and no need to ask every time - i approve all the work to get this bug fixed". The task owner separately authorized publication validation, push and merge of demonstrated fixes; the stable packet explicitly carries manager-authorized separate publication. This bounded optimization preserves the accepted caller contract and excludes every live environment action. Independent technical review and the separate persistence result checkpoint remain required; implementation authority is not checkpoint satisfaction.
+
+**State:** Blocked
+<!-- agent-workflow:end -->
+
+## Implementation
+
+Captured only the immutable patch, installed candidate and frozen E2E test packet with matching SHA256 identities and unchanged source bytes before/after capture. An isolated branch was created from current main. No production or test edit has occurred; plan/target review is pending. No current owner workspace or installed-only diagnostic is used as the publication source.
+
+## Prior evidence and limits
+
+Installed candidate SHA256 `66631801e5f44232fb179f2e1332f0fafa76136720151784e049798109776442`; frozen tests `5ac43437cea8c6c93611b4f18a7f5cc2df4324e116e17a3116633e717f0a1c55`; normalized patch `6fff6faf36025be4f6dd53904fba28d2c584d2232e50f231ef0fac0a8342f3c2`. The handoff reports 34 affected HTTP passes and 15 exact-installed-dependency passes that overlap those 34. These are not 49 distinct cases or complete public-target qualification. The port changes test observation and the target helper call, so destination validation is required. The source demonstration establishes unnecessary candidate work under an impossible budget, not historical writer ownership, latency cause or overall recovery.
