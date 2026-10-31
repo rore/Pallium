@@ -42,18 +42,28 @@
 
 **Approvals:** Approved by user in the standing incident directive (timestamp unavailable): "yes, i approve, and no need to ask every time - i approve all the work to get this bug fixed". The task owner separately authorized publication validation, push and merge of demonstrated fixes; the stable packet explicitly carries manager-authorized separate publication. This bounded optimization preserves the accepted caller contract and excludes every live environment action. Independent technical review and the separate persistence result checkpoint remain required; implementation authority is not checkpoint satisfaction.
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-Captured only the immutable patch, installed candidate and frozen E2E test packet with matching SHA256 identities and unchanged source bytes before/after capture. An isolated branch was created from current main. No production or test edit has occurred; plan/target review is pending. No current owner workspace or installed-only diagnostic is used as the publication source.
+Captured only the immutable patch, installed candidate and frozen E2E test packet with matching SHA256 identities and unchanged source bytes before/after capture. The port was implemented in an isolated branch after independent plan approval. No current owner workspace or installed-only diagnostic is used as the publication source.
 
 Independent plan review is GO before source/test edits. The test observer will restore its prior thread-local value on every exit. Standing human implementation authorization remains separate from the final persistence checkpoint.
 
 The three captured test definitions were ported with only the reviewed transaction-body observer adaptation. Before the production change, all four runtime cases failed at the expected counter assertion: one candidate scan and ten delivery renders instead of zero, with the production file unchanged. The seven-line guard is now ported using the existing zero-argument expiry check and finalizer. No installed diagnostic or other production line is included. The red evidence is preserved separately from subsequent validation.
 
 All 11 new controls passed in 8.06 seconds. The affected E2E file then passed 117 with one existing skip in 60.36 seconds. Independent source review is GO for production SHA256 `cb48f616a194ec0d5115d86fb82fa048ddd24f91b9b8082f82531c2df71e405f` and tests `dcf631896a80dd9966666ffb58a9e368967a376e07faf8b93130959235eb0181`. The reviewer independently confirmed that all existing test-module AST nodes are unchanged after removing exactly the three new definitions. The test observer covers transaction-body work only. Whole-change selection requires the full lane; one full non-slow execution is next, preserving all results and source/config identity.
+
+The single required full non-slow run completed normally with exit zero: 8,505 passed, 37 skipped and two xfailed over 8,544 unique cases in 625.78 seconds. All 11 new controls passed within that run. Before/after/current hashes match for all 976 source/config files; temporary fixtures were outside Git ancestry. The affected-file skip is the existing Hermes process-boundary case requiring a disposable GitHub runner, not new feature coverage. Import boundaries and the added-content privacy scan passed. Local workflow checks report only the unsatisfied persistence checkpoint as advisory under current policy. State remains Blocked on current-head platform qualification, final findings and the separate human persistence result review; passing local tests do not satisfy those gates.
+
+## Result review
+
+Agent technical review: independent publication_review returned LOCAL RESULT GO after independently checking the final raw XML, manifest, source identities and focused/full coverage relationships.
+
+Reviewed revision: `88f5a3e6afe2910c8ce8fb597bb0f7c63b000968`.
+
+Verification adequacy: normal termination and exit zero are verified; raw XML contains 8,544 unique terminal cases with 8,505 passes, 37 skips and two xfails. All 11 new cases pass and the focused/affected/full identity sets nest without duplicate cases. All 976 source/config hashes match the full run's before/after maps. Four preserved pre-fix failures show exactly one candidate scan and ten renders where the fixed contract requires zero. The seven production lines and test-only observer adaptation are source-reviewed; no protected test or prior assertion changed. This is adequate for separate PR/current-head platform qualification. Final platform CI, findings and human persistence checkpoint remain mandatory; no installed recovery or historical-cause claim follows.
 
 ## Prior evidence and limits
 
