@@ -1568,11 +1568,72 @@ def relay_request(
     if request_timeout <= 0:
         return None
     started = time.monotonic()
+    retry_exact_claim = (
+        method == "POST" and path == "/relay/turn" and type(payload) is dict
+        and payload.get("runtime") == "codex"
+        and isinstance(payload.get("wake_delivery_id"), str)
+        and re.fullmatch(r"relay-delivery-[0-9a-f]{32}", payload["wake_delivery_id"]) is not None
+        and type(payload.get("claim_expires_at_ms")) is int
+        and 1 <= payload["claim_expires_at_ms"] <= 2**53 - 1
+        and isinstance(deadline, HookDeadline) and 0 < request_timeout <= 2.0
+    )
+
+    def retry_remaining():
+        return min(
+            request_timeout - (time.monotonic() - started),
+            remaining_safe_time(deadline), remaining_safe_time(),
+            payload["claim_expires_at_ms"] / 1000 - time.time(),
+        )
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate busy-response key")
+            result[key] = value
+        return result
+
     try:
         def request_json():
-            with _urlopen(req, timeout=request_timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-
+            for attempt in range(2 if retry_exact_claim else 1):
+                attempt_timeout = request_timeout if attempt == 0 else retry_remaining()
+                if attempt_timeout <= 0:
+                    raise TimeoutError("claim deadline expired")
+                try:
+                    with _urlopen(req, timeout=attempt_timeout) as resp:
+                        return json.loads(resp.read().decode("utf-8"))
+                except urllib.error.HTTPError as exc:
+                    try:
+                        if (not retry_exact_claim or attempt or exc.code != 503
+                                or exc.geturl() != req.full_url or getattr(req, "redirect_dict", None)):
+                            raise
+                        lengths = exc.headers.get_all("Content-Length", [])
+                        if (exc.headers.get_all("Retry-After", []) != ["1"]
+                                or exc.headers.get("Transfer-Encoding") is not None
+                                or len(lengths) != 1
+                                or re.fullmatch(r"[0-9]{1,4}", lengths[0]) is None):
+                            raise
+                        length = int(lengths[0])
+                        if not 0 < length <= 1024:
+                            raise
+                        raw = exc.read(length + 1)
+                        if len(raw) != length:
+                            raise
+                        busy = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_object)
+                        if (type(busy) is not dict or set(busy) != {"detail"}
+                                or type(busy["detail"]) is not dict
+                                or set(busy["detail"]) != {"code", "retryable"}
+                                or busy["detail"]["code"] != "relay_busy"
+                                or busy["detail"]["retryable"] is not True):
+                            raise
+                    finally:
+                        exc.close()
+                    # Only a complete pre-admission rejection permits replaying these same bytes.
+                    if retry_remaining() <= 1:
+                        raise
+                    time.sleep(1)
+                    if retry_remaining() <= 0:
+                        raise TimeoutError("claim deadline expired")
         return _run_before_deadline(request_json, deadline)
     except Exception as exc:
         print(
