@@ -31,16 +31,16 @@
 
 **Verification plan:** Exact snapshot SHA256 and three-file diff; existing 84 focused and 441 distinct affected case evidence; real HTTP lifecycle controls against current main; whole-change scripts/test-plan.py selection and one required full non-slow run; import/workflow checks; independent result review and fresh platform CI; public-content privacy inspection.
 
-**Plan review:** Pending independent publication_review destination/scope assessment before source integration.
+**Plan review:** Agent technical review: independent publication_review returned PLAN GO at e6c5aec3 on main 9d011764. Both helper diffs contain only the same bounded retry hunk; all three snapshot hashes match. Existing main already provides typed pre-admission 503, exact claim atomicity and post-admission exception containment; no PR #381 dependency was found. Elevated/Moderate is appropriate. Reuse exact focused evidence within its limits; require destination full validation and normal platform CI. The new HTTP E2E proves claim recovery, a single claimed attempt, formatting one delivery and acknowledged read state; it does not directly observe native hook emission or count wire ACKs. Existing unchanged hook coverage supplies that separate contract evidence.
 
 **Approvals:** User's standing separate-developer publication directive authorizes normal isolated implementation, review, push and merge once gates pass. Manager explicitly directed this stable snapshot's separate follow-up publication; no further routine scope permission is pending. No live environment change is authorized here.
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-An isolated worktree was created from current main. No source files have been copied yet. Plan/destination review is pending. PR #381 remains separately held at e7ee020bfd2a6fa9fbc207d3190887cee1cc64eb with failed platform CI. The private observation-workflow option is unexecuted and superseded by the next-required-run disposition.
+An isolated worktree was created from current main. Independent plan/destination review is GO before source integration. PR #381 remains separately held at e7ee020bfd2a6fa9fbc207d3190887cee1cc64eb with failed platform CI. The private observation-workflow option is unexecuted and superseded by the next-required-run disposition.
 
 ## Saved evidence
 
