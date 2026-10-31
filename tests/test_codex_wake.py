@@ -3611,7 +3611,7 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
         client.app.state.pallium_service,
         relay_service=relay,
         relay_turn_callback=delayed_callback,
-        relay_wake_runner=runner,
+        relay_runner=runner,
     ))
     route = TestClient(app)
     delivery_id = "relay-delivery-" + "b" * 32
