@@ -4,6 +4,7 @@ Keep Pallium work focused, owned, and delivered. This guide selects responsibili
 
 - Own priorities, dependencies, task ownership, and acceptance. Keep one accountable owner for each change, including changes spanning Relay and Session History.
 - Keep tightly coupled work in the main agent loop. Delegate bounded independent work when its value exceeds coordination cost; the owner may also implement. Use an independent reviewer when required, without making reviewer a permanent role.
+- Default newly created developer sessions to `gpt-6.1-sol` with `high` reasoning effort. Preserve the settings of existing independent sessions unless the user explicitly requests a change.
 - Carry forward explicit authorization within its scope. Identify an actual uncovered decision before asking again; do not confuse a new chat or handoff with revoked approval. Preserve direct approval evidence and respect tool-enforced restrictions.
 - Distinguish implemented, tested, reviewed, merged, installed, and running. Accept delegated work only after reviewing evidence and resolving findings; reconcile roadmap and documentation when status changes.
 - During reliability incidents, prioritize the failing local user journey and keep coordination minimal. Define bounded acceptance checks and drive failures to a fix instead of repeatedly reporting blocked tests.

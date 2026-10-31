@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -64,13 +65,10 @@ class VectorIndex:
     Metadata file {index_path}.meta.json stores model_name, dimensions,
     and entry_count.
 
-    Thread safety: usearch.Index is concurrent by design (add/search/remove
-    can run simultaneously). The Python-side dicts (_id_to_key, _key_to_id)
-    are individually thread-safe under CPython's GIL, but compound operations
-    (e.g., add's read-then-write sequence) are not atomic. In practice this
-    means a concurrent search may briefly see an incomplete state — at worst
-    a single result is missed for one query. If Pallium moves to free-threaded
-    Python (PEP 703), these operations will need a lock.
+    Mutations and saves share a per-instance reentrant lock so persistence
+    cannot mix generations while file writes release the GIL. Searches remain
+    concurrent and may briefly miss an entry during an add or remove. Separate
+    instances writing the same path require external coordination.
     """
 
     def __init__(self, index_path: Path, dimensions: int, model_name: str, embedding_schema_version: int = 1) -> None:
@@ -80,6 +78,7 @@ class VectorIndex:
         self._model_name = model_name
         self._embedding_schema_version = embedding_schema_version
         self._index = Index(ndim=dimensions, metric="cos", dtype="f32")
+        self._mutation_lock = threading.RLock()
         self._id_to_key: dict[str, int] = {}
         self._key_to_id: dict[int, str] = {}
         self._next_key: int = 0
@@ -88,21 +87,23 @@ class VectorIndex:
         """Add or replace a vector for the given entry_id."""
         import numpy as np
 
-        if entry_id in self._id_to_key:
-            self.remove(entry_id)
-        key = self._next_key
-        self._next_key += 1
-        self._id_to_key[entry_id] = key
-        self._key_to_id[key] = entry_id
-        self._index.add(key, np.array(vector, dtype=np.float32))
+        with self._mutation_lock:
+            if entry_id in self._id_to_key:
+                self.remove(entry_id)
+            key = self._next_key
+            self._next_key += 1
+            self._id_to_key[entry_id] = key
+            self._key_to_id[key] = entry_id
+            self._index.add(key, np.array(vector, dtype=np.float32))
 
     def remove(self, entry_id: str) -> None:
         """Remove a vector by entry_id. Raises KeyError if not found."""
-        if entry_id not in self._id_to_key:
-            raise KeyError(entry_id)
-        key = self._id_to_key.pop(entry_id)
-        del self._key_to_id[key]
-        self._index.remove(key)
+        with self._mutation_lock:
+            if entry_id not in self._id_to_key:
+                raise KeyError(entry_id)
+            key = self._id_to_key.pop(entry_id)
+            del self._key_to_id[key]
+            self._index.remove(key)
 
     def search(self, query_vector: list[float], k: int) -> list[tuple[str, float]]:
         """Returns (entry_id, cosine_similarity) sorted descending by similarity.
@@ -170,31 +171,33 @@ class VectorIndex:
         JSON sidecar files are written atomically via temp file + os.replace.
         meta.json is written LAST so its mtime serves as the change indicator.
         """
-        self._index_path.parent.mkdir(parents=True, exist_ok=True)
-        # 1. Binary index (atomic via temp + replace)
-        tmp_index = self._index_path.with_suffix(f".{uuid.uuid4().hex[:8]}.tmp")
-        try:
-            self._index.save(str(tmp_index))
-            _replace_with_retry(str(tmp_index), str(self._index_path))
-        except BaseException:
-            tmp_index.unlink(missing_ok=True)
-            raise
-        # 2. ID map (atomic)
-        idmap_path = Path(f"{self._index_path}.idmap.json")
-        idmap_data = {
-            "id_to_key": self._id_to_key,
-            "next_key": self._next_key,
-        }
-        _atomic_write_json(idmap_path, idmap_data)
-        # 3. Meta LAST (atomic — its mtime is the freshness signal)
-        meta_path = Path(f"{self._index_path}.meta.json")
-        meta_data = {
-            "model_name": self._model_name,
-            "dimensions": self._dimensions,
-            "entry_count": len(self._id_to_key),
-            "embedding_schema_version": self._embedding_schema_version,
-        }
-        _atomic_write_json(meta_path, meta_data)
+        with self._mutation_lock:
+            self._index_path.parent.mkdir(parents=True, exist_ok=True)
+            # 1. Binary index (atomic via temp + replace)
+            tmp_index = self._index_path.with_suffix(f".{uuid.uuid4().hex[:8]}.tmp")
+            try:
+                # Native path saving holds the GIL during disk I/O; Python writing releases it.
+                tmp_index.write_bytes(self._index.save())
+                _replace_with_retry(str(tmp_index), str(self._index_path))
+            except BaseException:
+                tmp_index.unlink(missing_ok=True)
+                raise
+            # 2. ID map (atomic)
+            idmap_path = Path(f"{self._index_path}.idmap.json")
+            idmap_data = {
+                "id_to_key": self._id_to_key,
+                "next_key": self._next_key,
+            }
+            _atomic_write_json(idmap_path, idmap_data)
+            # 3. Meta LAST (atomic — its mtime is the freshness signal)
+            meta_path = Path(f"{self._index_path}.meta.json")
+            meta_data = {
+                "model_name": self._model_name,
+                "dimensions": self._dimensions,
+                "entry_count": len(self._id_to_key),
+                "embedding_schema_version": self._embedding_schema_version,
+            }
+            _atomic_write_json(meta_path, meta_data)
 
     @classmethod
     def load(cls, index_path: Path) -> VectorIndex:

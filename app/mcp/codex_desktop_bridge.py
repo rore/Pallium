@@ -610,6 +610,8 @@ class InventoryWorker:
                     outcome = "postregister-fence-refused"
                 else:
                     outcome = "safety-refused"
+            if type(diagnostic) is dict and diagnostic.get("phase_state") == "entered":
+                _mark_reconnect(diagnostic, phase_state="raised")
             _mark_reconnect(diagnostic, outcome=outcome)
             _client_reconnect_diagnostic(diagnostic, self._restart_allowed)
             return None, False

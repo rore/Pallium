@@ -885,7 +885,7 @@ def create_router(
                     return _relay_sync_call("activation_projection", project_response)
 
                 try:
-                    projected = await _run_relay_operation(exact_turn_operation, wake_admission=True)
+                    projected = await _run_relay_operation(exact_turn_operation)
                 except relay_errors as exc:
                     raise _relay_http_error(exc) from exc
                 outcome = "ready"

@@ -717,7 +717,7 @@ def test_exact_codex_turn_uses_one_admission_and_preserves_phase_failures(
             if failure in {"snapshot", "turn_callback", "admission", "projection"}:
                 assert any("snapshot unavailable" in r.message or "failed" in r.message for r in caplog.records)
             assert app.state._wait_for_operations(0)
-            assert admissions == [("relay_wake_runner", 0)], admissions
+            assert admissions == [("relay_runner", 0)], admissions
             assert all(p[1] == admissions[0] and p[2] != loop_thread for p in phases), phases
 
     try:
@@ -2633,8 +2633,9 @@ def test_standalone_summary_mount_preserves_sqlite_and_unsupported_responses(cli
 
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("held_phase", ["none", "poll", "projection"])
+@pytest.mark.parametrize("claim_before_ack", [False, True])
 def test_shared_wake_admission_preserves_ack_under_poll_and_projection(
-    client, monkeypatch, tmp_path, capsys, relay_admission_clock, held_phase,
+    client, monkeypatch, tmp_path, capsys, relay_admission_clock, held_phase, claim_before_ack,
 ):
     import contextvars
     import json
@@ -2739,7 +2740,7 @@ def test_shared_wake_admission_preserves_ack_under_poll_and_projection(
         monkeypatch.setattr(common, "PALLIUM_BASE_URL", server.base_url)
         with httpx.Client(base_url=server.base_url, timeout=5, trust_env=False) as http:
             poll_bodies, futures = [], []
-            with relay_admission_clock(storage, expected_admissions=4 + 2 * held_polls):
+            with relay_admission_clock(storage, expected_admissions=(3 if claim_before_ack else 4) + 2 * held_polls):
                 for session in ("sender", "target"):
                     response = http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **scope})
                     assert response.status_code == 200, response.text
@@ -2748,9 +2749,11 @@ def test_shared_wake_admission_preserves_ack_under_poll_and_projection(
                     "recipient": "codex:target", "payload": "capacity observation", **scope,
                 })
                 assert sent_message.status_code == 200, sent_message.text
-                claimed = http.post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **scope})
-                assert claimed.status_code == 200, claimed.text
-                delivery, = claimed.json()["deliveries"]
+                delivery, = sent_message.json()["deliveries"]
+                if not claim_before_ack:
+                    claimed = http.post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **scope})
+                    assert claimed.status_code == 200, claimed.text
+                    delivery, = claimed.json()["deliveries"]
                 for index in range(held_polls):
                     registration = http.post("/relay/turn", json={"runtime": "opencode", "session_ref": f"poll-{index}", **scope})
                     assert registration.status_code == 200, registration.text
@@ -2767,10 +2770,33 @@ def test_shared_wake_admission_preserves_ack_under_poll_and_projection(
                 if held_polls:
                     assert polls_entered.wait(3), "three real wake workers did not enter"
                     assert all_poll_http.wait(3), "four poll HTTP requests did not arrive"
+                if claim_before_ack:
+                    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "hook-sessions")
+                    stamps["client_claim_started"] = time.monotonic()
+                    claimed = common.relay_turn(
+                        "codex", "target", scope["container_ref"],
+                        wake_delivery_id=delivery["delivery_id"], max_chars=2000, timeout=2,
+                        deadline=common.HookDeadline(time.monotonic() + 2),
+                    )
+                    stamps["client_claim_returned"] = time.monotonic()
+                    assert isinstance(claimed, dict), {"phase": held_phase, "stamps": stamps}
+                    received, = claimed["deliveries"]
+                    assert received["delivery_id"] == delivery["delivery_id"]
+                    assert received["payload"] == "capacity observation"
+                    assert received["attempts"] == 1 and received["claim_token"]
+                    delivery = received
+                    assert not release.is_set()
                 stamps["client_ack_started"] = time.monotonic()
                 confirmed = common.acknowledge_relay([delivery], container_ref=scope["container_ref"])
                 stamps["client_ack_returned"] = time.monotonic()
                 assert confirmed == [delivery] and ack_finished.is_set(), {"phase": held_phase, "stamps": stamps}
+                if claim_before_ack:
+                    duplicate = common.relay_turn(
+                        "codex", "target", scope["container_ref"],
+                        wake_delivery_id=delivery["delivery_id"], max_chars=2000, timeout=2,
+                        deadline=common.HookDeadline(time.monotonic() + 2),
+                    )
+                    assert isinstance(duplicate, dict) and duplicate["deliveries"] == []
                 if held_polls:
                     assert len(poll_entries) == 3
                 assert not errors and not release.is_set()
@@ -2792,7 +2818,7 @@ def test_shared_wake_admission_preserves_ack_under_poll_and_projection(
             assert (stored["delivery_id"], stored["state"], stored["attempts"]) == (delivery["delivery_id"], "delivered", 1)
             assert stamps["ack_worker_entered"] < stamps["polls_released"]
     assert not errors and len(poll_entries) == (3 if held_polls else 0)
-    result = {"held_phase": held_phase, "held_polls": held_polls, "stamps": stamps, "single_ack": len(ack_calls),
+    result = {"held_phase": held_phase, "held_polls": held_polls, "claim_before_ack": claim_before_ack, "stamps": stamps, "single_ack": len(ack_calls),
               "hook_confirmed": bool(confirmed), "eventual_state": "delivered", "claim_attempts": 1,
               "client_stderr": capsys.readouterr().err[-1200:],
               "limit": "native ACK regression under controlled wake phases, not historical cause"}

@@ -1786,6 +1786,75 @@ def test_reconnect_episode_records_truthful_stage_and_last_known_state(
         assert "registration=attempted" in terminal[0]
 
 
+@pytest.mark.parametrize(("case", "phase", "state", "outcome"), [
+    ("postregister-refused", "postregister", "raised", "postregister-fence-refused"),
+    ("postregister-getter", "postregister", "raised", "postregister-fence-refused"),
+    ("connected-refused", "preflight", "raised", "safety-refused"),
+    ("connected-getter", "preflight", "raised", "safety-refused"),
+    ("register-unconfirmed", "register", "completed", "register-unconfirmed"),
+    ("preentry-refused", "preflight", "completed", "preentry-refused"),
+    ("register-raised", "register", "raised", "register-uncertain"),
+    ("connected-unknown", "preflight", "unknown", "safety-refused"),
+])
+def test_reconnect_outer_refusal_records_terminal_phase_without_extra_probes(
+        monkeypatch, tmp_path, case, phase, state, outcome):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "original-capability")
+    worker = _automatic_recovery_worker(monkeypatch)
+    worker._retained = True
+    events = []
+    proof = "a" * 64
+    connected = case.startswith("connected")
+    if case == "connected-unknown":
+        original = lifecycle._new_reconnect_diagnostic
+        def unknown(context):
+            return {**original(context), "phase_state": "unknown"}
+        monkeypatch.setattr(lifecycle, "_new_reconnect_diagnostic", unknown)
+
+    class Client:
+        unresolved = False
+        io = SimpleNamespace(unresolved=False)
+        refused = False
+        @property
+        def continuity(self):
+            events.append("continuity")
+            if self.refused and case.endswith("getter"):
+                raise RuntimeError("private-guard-sentinel")
+            return "b" * 64 if self.refused else proof
+        def service_current(self):
+            events.append("service")
+            return True
+        def ready(self):
+            events.append("ready")
+            self.refused = connected or case == "preentry-refused"
+            return {"status": "ready", "connected": connected, "source_exited": False}
+        def register(self, metadata):
+            events.append("register")
+            assert metadata == {"thread_ref": "runtime", "turn_ref": "turn"}
+            if case == "register-raised":
+                raise RuntimeError("private-register-sentinel")
+            if case == "register-unconfirmed":
+                return None
+            self.refused = True
+            return {"status": "registered"}
+
+    result = worker._recover_if_gone(Client(), None, "original-capability",
+        {"thread_ref": "runtime", "turn_ref": "turn"}, proof)
+    assert result == (None, False) and worker._restart_allowed is False
+    expected = ["continuity", "service", "ready", "continuity"]
+    if not connected and case != "preentry-refused":
+        expected.append("register")
+        if case not in {"register-raised", "register-unconfirmed"}:
+            expected.append("continuity")
+    assert events == expected
+    path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
+    terminal = [line for line in path.read_text(encoding="utf-8").splitlines()
+                if "reconnect_terminal" in line]
+    assert len(terminal) == 1
+    assert f"phase={phase} " in terminal[0] and f"phase_state={state} " in terminal[0]
+    assert f"outcome={outcome} " in terminal[0] and "private-" not in terminal[0]
+
+
 @pytest.mark.parametrize("case", [
     "live-owner", "exited-owner", "unproved-epoch", "same-epoch-after-exit",
     "old-witness-error", "old-bootstrap-after", "new-bootstrap", "capability-after",

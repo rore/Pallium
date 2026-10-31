@@ -448,11 +448,18 @@ an enrolled/eligible status as delivered. Live activation remains separately gat
 
 | Aspect | Claude Code | Codex |
 |--------|-------------|-------|
-| Hook events | SessionStart, UserPromptSubmit, Stop, PreCompact | SessionStart, UserPromptSubmit, Stop |
-| PreCompact | Re-injects before context compaction | Not available (no equivalent event) |
+| Hook events used by Pallium | SessionStart, UserPromptSubmit, Stop, PreCompact | SessionStart, UserPromptSubmit, Stop |
+| Compaction restoration | PreCompact re-injects context | SessionStart with `source=compact` restores the existing session's exact pinned scope without receiving or ACKing messages |
 | Config files | `~/.claude/settings.json`, `~/.claude/CLAUDE.md` | `~/.codex/config.toml`, `~/.codex/hooks.json`, `~/.codex/AGENTS.md` |
 | MCP transport | stdio (local process) | stdio (local process) |
 | Setup command | `pallium setup claude-code` | `pallium setup codex` |
+
+Codex runs matching `SessionStart` hooks after manual or automatic compaction,
+including during a turn, and delivers their context to the immediate continuation.
+Pallium restores scope from the runtime-supplied session's existing pin. A missing
+or invalid pin produces no scope; the compact path does not derive a project from
+the working directory, mutate the pin, retrieve memory or replay deliveries.
+See the [official Codex hook contract](https://learn.chatgpt.com/docs/hooks).
 
 ### Concurrent Sessions
 

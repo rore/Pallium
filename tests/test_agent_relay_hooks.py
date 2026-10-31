@@ -1861,6 +1861,137 @@ def test_codex_session_start_clear_skips_relay(monkeypatch):
     assert exited.value.code == 0
 
 
+def test_codex_session_start_compact_restores_only_pinned_scope(monkeypatch, capsys):
+    hook = _load("codex_session_start_compact", "integrations/codex/hooks/session_start.py")
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "source": "compact", "session_id": "current-runtime-session", "cwd": "/different-project",
+    })
+    monkeypatch.setattr(hook._common, "get_pinned_container", lambda sid: (
+        "git:example.test/project-東京" if sid == "current-runtime-session" else None
+    ))
+    for name in ("derive_container_ref", "derive_actor_ref", "pin_container", "relay_turn",
+                 "acknowledge_relay", "_fetch_retrieval_fallback"):
+        monkeypatch.setattr(hook, name, lambda *_a, **_k: pytest.fail("compact must only restore the pin"))
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+    assert exited.value.code == 0
+    output = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
+    assert output["hookEventName"] == "SessionStart"
+    context = output["additionalContext"]
+    scope = json.loads(context.removeprefix("[Pallium scope — ").removesuffix("]"))
+    assert scope == {"container_ref": "git:example.test/project-東京", "thread_ref": "current-runtime-session",
+                     "agent_ref": "codex", "visibility": "private"}
+
+
+@pytest.mark.parametrize("session,state", [
+    (None, {"container_ref": "git:example/project"}),
+    ("", {"container_ref": "git:example/project"}),
+    (17, {"container_ref": "git:example/project"}),
+    ("../other-session", {"container_ref": "git:example/project"}),
+    ("current-session", None), ("current-session", {}),
+    ("current-session", {"container_ref": ""}),
+    ("current-session", {"container_ref": []}),
+    ("current-session", {"container_ref": "git:example/bad\nscope"}),
+    ("current-session", {"container_ref": "x" * 1300}),
+])
+def test_codex_compact_missing_or_invalid_pin_never_derives_scope(monkeypatch, capsys, session, state):
+    hook = _load("codex_compact_invalid_pin", "integrations/codex/hooks/session_start.py")
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "source": "compact", "session_id": session, "cwd": "/valid-but-unrelated-project",
+    })
+    monkeypatch.setattr(hook._common, "_read_session_state", lambda *_: state)
+    for name in ("derive_container_ref", "derive_actor_ref", "pin_container", "relay_turn",
+                 "acknowledge_relay", "_fetch_retrieval_fallback"):
+        monkeypatch.setattr(hook, name, lambda *_a, **_k: pytest.fail("missing compact pin must fail closed"))
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+    assert exited.value.code == 0
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("length", [1200, 1201])
+def test_codex_compact_scope_obeys_exact_output_boundary(monkeypatch, capsys, length):
+    hook = _load("codex_compact_output_boundary", "integrations/codex/hooks/session_start.py")
+    overhead = len(hook.format_injection([], "x", 1200, thread_ref="current-session",
+        agent_ref="codex", visibility="private")) - 1
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {"source": "compact", "session_id": "current-session"})
+    monkeypatch.setattr(hook._common, "get_pinned_container", lambda *_: "x" * (length - overhead))
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+    assert exited.value.code == 0
+    output = capsys.readouterr().out
+    if length == 1200:
+        assert len(json.loads(output)["hookSpecificOutput"]["additionalContext"]) == 1200
+    else:
+        assert output == ""
+
+
+def test_codex_compact_emission_failure_does_not_fall_back_or_ack(monkeypatch, capsys):
+    hook = _load("codex_compact_emit_failure", "integrations/codex/hooks/session_start.py")
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {"source": "compact", "session_id": "current-session"})
+    monkeypatch.setattr(hook._common, "get_pinned_container", lambda *_: "git:example/project")
+    def fail_emit(*args):
+        raise OSError("controlled sink failure")
+    monkeypatch.setattr(hook, "emit_context", fail_emit)
+    for name in ("derive_container_ref", "pin_container", "relay_turn", "acknowledge_relay", "_fetch_retrieval_fallback"):
+        monkeypatch.setattr(hook, name, lambda *_a, **_k: pytest.fail("compact emission failure must not consume messages"))
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+    assert exited.value.code == 0
+    captured = capsys.readouterr()
+    assert captured.out == "" and "controlled sink failure" in captured.err
+
+
+@pytest.mark.parametrize("pin", ["valid", "missing", "corrupt"])
+def test_codex_compact_actual_subprocess_restores_scope_without_network_or_state_mutation(tmp_path, pin):
+    import os
+
+    private_home = tmp_path / "private-home"
+    sessions = private_home / ".pallium" / "hooks" / "state" / "sessions"
+    sessions.mkdir(parents=True)
+    current = sessions / "runtime-current.json"
+    if pin == "valid":
+        current.write_text(json.dumps({"container_ref": "git:example.test/scope-東京", "container_generation": 7}), encoding="utf-8")
+    elif pin == "corrupt":
+        current.write_text("{", encoding="utf-8")
+    (sessions / "other-runtime.json").write_text(json.dumps({"container_ref": "git:example.test/other"}), encoding="utf-8")
+    before = {p.name: p.read_bytes() for p in sessions.iterdir()}
+    bootstrap = tmp_path / "bootstrap"
+    bootstrap.mkdir()
+    ledger = tmp_path / "forbidden-operations.jsonl"
+    marker = tmp_path / "bootstrap-active"
+    (bootstrap / "sitecustomize.py").write_text(
+        "import os,socket,subprocess,urllib.request\n"
+        "open(os.environ['PALLIUM_TEST_BOOTSTRAP_MARKER'],'w').write('active')\n"
+        "def denied(*args,**kwargs):\n"
+        " with open(os.environ['PALLIUM_TEST_NETWORK_LEDGER'],'a') as f:f.write('forbidden\\n')\n"
+        " raise OSError('operations disabled in compact hook control')\n"
+        "socket.socket.connect=socket.getaddrinfo=denied\n"
+        "urllib.request.urlopen=urllib.request.OpenerDirector.open=denied\n"
+        "subprocess.Popen=denied\n", encoding="utf-8",
+    )
+    result = subprocess.run(
+        [sys.executable, "-B", str(ROOT / "integrations/codex/hooks/session_start.py")],
+        input=json.dumps({"hook_event_name": "SessionStart", "source": "compact",
+                          "session_id": "runtime-current", "cwd": str(tmp_path / "other-project")}),
+        capture_output=True, text=True, encoding="utf-8", timeout=10,
+        env={**os.environ, "HOME": str(private_home), "USERPROFILE": str(private_home),
+             "PYTHONPATH": str(bootstrap), "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8",
+             "PALLIUM_TEST_NETWORK_LEDGER": str(ledger), "PALLIUM_TEST_BOOTSTRAP_MARKER": str(marker)},
+    )
+    assert result.returncode == 0 and result.stderr == ""
+    assert marker.read_text() == "active" and not ledger.exists()
+    assert {p.name: p.read_bytes() for p in sessions.iterdir()} == before
+    if pin == "valid":
+        output = json.loads(result.stdout)["hookSpecificOutput"]
+        assert output["hookEventName"] == "SessionStart"
+        scope = json.loads(output["additionalContext"].removeprefix("[Pallium scope — ").removesuffix("]"))
+        assert scope == {"container_ref": "git:example.test/scope-東京", "thread_ref": "runtime-current",
+                         "agent_ref": "codex", "visibility": "private"}
+    else:
+        assert result.stdout == ""
+
+
 def test_codex_session_start_then_prompt_does_not_emit_acked_delivery_twice(monkeypatch):
     start = _load("codex_session_start_then_prompt", "integrations/codex/hooks/session_start.py")
     from integrations.codex.hooks import user_prompt_submit as prompt
