@@ -31,6 +31,7 @@ def test_trace_capacity_snapshot_and_writer_failure(caplog):
         assert received[0] == {"reason": "東京"} and len(received) == 64
         assert "private-payload-token" not in caplog.text
         assert writer.enqueue(received.append, {"stage": "later"})
+        writer._executor.submit(lambda: None).result(3)
     finally:
         release.set()
         writer.close()
