@@ -2296,8 +2296,14 @@ def test_unreachable_and_closed_destinations_reject_without_new_state(client, re
     assert row_counts() == reply_before
 
 
-@pytest.mark.parametrize("phase", ("entry", "acquire", "candidate", "flush", "scope", "new-session", "missing", "closed"))
-def test_claim_expiry_rolls_back_waits_mutation_and_early_returns(client, monkeypatch, phase):
+@pytest.mark.parametrize(("phase", "exact_wake"), [
+    *[pytest.param(phase, False, id=phase) for phase in
+      ("entry", "acquire", "candidate", "flush", "scope", "new-session", "missing", "closed")],
+    *[pytest.param(phase, True, id="exact-" + phase) for phase in
+      ("entry", "acquire", "candidate", "flush")],
+])
+def test_claim_expiry_rolls_back_waits_mutation_and_early_returns(client, monkeypatch, caplog, phase, exact_wake):
+    import logging
     from types import SimpleNamespace
     import storage.sqlite_relay as module
     from storage.sqlite_schema import RelayEndpointGenerationRecord
@@ -2318,6 +2324,9 @@ def test_claim_expiry_rolls_back_waits_mutation_and_early_returns(client, monkey
                     for record in records]
 
     before = snapshot()
+    delivery_id = None
+    if exact_wake:
+        delivery_id = _status(client, sent.json()["message_id"]).json()["deliveries"][0]["delivery_id"]
     clock, observed = [0.0], []
     native_time = module.time
     monkeypatch.setattr(module, "time", SimpleNamespace(**{
@@ -2382,11 +2391,27 @@ def test_claim_expiry_rolls_back_waits_mutation_and_early_returns(client, monkey
         body["session_ref"] = "expiry-new"
     if phase in {"missing", "closed"}:
         body["register_session"] = False
+    if exact_wake:
+        body["wake_delivery_id"] = delivery_id
+        caplog.clear()
+        caplog.set_level(logging.INFO, logger="api.routes")
     response = client.post("/relay/turn", json=body)
     assert response.status_code == 409, response.text
     assert response.json()["detail"] == "Relay claim request expired"
     assert phase == "entry" or observed
     assert snapshot() == before  # Session/scope/generation/message expiry/token/lease/attempt all roll back.
+    if exact_wake:
+        records = [record.getMessage() for record in caplog.records
+                   if record.getMessage().startswith("relay_turn_timing")]
+        assert len(records) == 1
+        fields = dict(part.split("=", 1) for part in records[0].split()[1:])
+        assert fields["delivery_ref"] == delivery_id
+        assert fields["error_status"] == "409" and fields["error_category"] == "claim_expired"
+        assert fields["expiry_detected_at"] == {
+            "entry": "before_acquisition", "acquire": "after_acquisition",
+            "candidate": "pre_claim_mutation", "flush": "post_flush_precommit",
+        }[phase]
+        assert "expiry 東京" not in records[0] and SCOPE["container_ref"] not in records[0]
 
 
 @pytest.mark.parametrize("expiry", (True, False, 0, -1, 1.5, "1000", 2**53))

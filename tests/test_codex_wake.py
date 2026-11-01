@@ -3631,7 +3631,7 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
     assert len(records) == 1
     match = re.fullmatch(
         rf"relay_turn_timing delivery_ref={delivery_id} service_ms=(\d+) route_ready_ms=(\d+) outcome=ready "
-        rf"worker_start_ms=(\d+) snapshot_ms=(\d+) error_status=none error_category=none",
+        rf"worker_start_ms=(\d+) snapshot_ms=(\d+) error_status=none error_category=none expiry_detected_at=none",
         records[0],
     )
     assert match, records[0]
@@ -3707,7 +3707,7 @@ def test_relay_turn_logs_service_time_when_exact_wake_fails(
     match = re.fullmatch(
         rf"relay_turn_timing delivery_ref={delivery_id} service_ms=(\d+) "
         rf"route_ready_ms=(\d+) outcome=error worker_start_ms=0 snapshot_ms=125 "
-        rf"error_status=501 error_category=http_error",
+        rf"error_status=501 error_category=http_error expiry_detected_at=none",
         records[0],
     )
     assert match, records[0]
@@ -3737,6 +3737,7 @@ def test_relay_turn_logs_safe_failure_category(client, caplog, monkeypatch, fail
         "expiry_lookalike": RelayConflictError("Relay claim request expired: " + private),
         "http_conflict": HTTPException(409, detail={"reason": "Relay claim request expired", "private": private}),
     }[failure]
+    error.expiry_detected_at = "before_acquisition"
     relay = RelayService(client.app.state.pallium_service._storage)
 
     def fail(**_kwargs):
@@ -3769,6 +3770,7 @@ def test_relay_turn_logs_safe_failure_category(client, caplog, monkeypatch, fail
     fields = dict(part.split("=", 1) for part in records[0].split()[1:])
     assert fields["error_status"] == (str(status) if status is not None else "none")
     assert fields["error_category"] == category
+    assert fields["expiry_detected_at"] == "none"
     assert int(fields["worker_start_ms"]) >= 0 and int(fields["snapshot_ms"]) >= 0
     assert private not in records[0] and "private-session" not in records[0]
     assert SCOPE["container_ref"] not in records[0]
@@ -3800,7 +3802,10 @@ def test_relay_turn_logs_failure_before_worker_entry(client, caplog, failure):
     assert len(records) == 1
     assert "service_ms=none" in records[0]
     status, category = ("none", "cancelled") if failure == "cancelled" else ("409", "claim_expired")
-    assert records[0].endswith(f"worker_start_ms=none snapshot_ms=none error_status={status} error_category={category}")
+    stage = "unknown" if failure == "http" else "none"
+    assert records[0].endswith(
+        f"worker_start_ms=none snapshot_ms=none error_status={status} error_category={category} expiry_detected_at={stage}"
+    )
 
 
 def test_relay_turn_logs_actual_expiry_without_claim_then_preserves_delivery_lifecycle(client, caplog):
@@ -3826,10 +3831,14 @@ def test_relay_turn_logs_actual_expiry_without_claim_then_preserves_delivery_lif
     after = client.get("/relay/messages/" + message_id, params=SCOPE).json()["deliveries"][0]
     assert after == before and after["state"] == "pending" and after["attempts"] == 0
     records = [r.getMessage() for r in caplog.records if r.getMessage().startswith("relay_turn_timing")]
-    assert len(records) == 1 and records[0].endswith("error_status=409 error_category=claim_expired")
+    assert len(records) == 1 and records[0].endswith(
+        "error_status=409 error_category=claim_expired expiry_detected_at=before_acquisition"
+    )
     assert "private payload-token marker" not in records[0] and SCOPE["container_ref"] not in records[0]
     fresh = client.post("/relay/turn", json=body)
     assert fresh.status_code == 200, fresh.text
+    ready_records = [r.getMessage() for r in caplog.records if r.getMessage().startswith("relay_turn_timing")]
+    assert ready_records[-1].endswith("expiry_detected_at=none")
     claim, = fresh.json()["deliveries"]
     assert claim["delivery_id"] == delivery_id and claim["payload"] == "private payload-token marker"
     ack = client.post("/relay/deliveries/ack", json={"delivery_id": delivery_id,
@@ -3837,6 +3846,89 @@ def test_relay_turn_logs_actual_expiry_without_claim_then_preserves_delivery_lif
     assert ack.status_code == 200, ack.text
     final = client.get("/relay/messages/" + message_id, params=SCOPE).json()["deliveries"][0]
     assert final["state"] == "delivered" and final["attempts"] == 1
+
+
+@pytest.mark.parametrize("metadata", ("none", "bool", "invalid", "subclass", "unrenderable"))
+def test_relay_turn_expiry_metadata_is_allowlisted(client, caplog, monkeypatch, metadata):
+    from core.relay import RelayConflictError
+
+    class StringSubclass(str):
+        pass
+
+    class Unrenderable:
+        def __str__(self):
+            raise AssertionError("diagnostic metadata must not be rendered")
+
+    error = RelayConflictError("Relay claim request expired")
+    error.expiry_detected_at = {
+        "none": None, "bool": True, "invalid": "untrusted-stage 東京",
+        "subclass": StringSubclass("before_acquisition"), "unrenderable": Unrenderable(),
+    }[metadata]
+    relay = RelayService(client.app.state.pallium_service._storage)
+
+    def fail(**_kwargs):
+        raise error
+
+    monkeypatch.setattr(relay, "turn", fail)
+    app = FastAPI()
+    app.include_router(create_router(client.app.state.pallium_service, relay_service=relay))
+    caplog.set_level(logging.INFO, logger="api.routes")
+    with TestClient(app) as route:
+        response = route.post("/relay/turn", json={"runtime": "codex", "session_ref": "target",
+            "wake_delivery_id": "relay-delivery-" + "a" * 32, **SCOPE})
+    assert response.status_code == 409 and response.json() == {"detail": "Relay claim request expired"}
+    records = [r.getMessage() for r in caplog.records if r.getMessage().startswith("relay_turn_timing")]
+    assert len(records) == 1 and records[0].endswith("expiry_detected_at=unknown")
+    assert "untrusted-stage" not in records[0] and "東京" not in records[0]
+
+
+@pytest.mark.parametrize("failure", ("write", "read"))
+def test_relay_turn_expiry_metadata_failure_preserves_primary_error(client, caplog, monkeypatch, failure):
+    from sqlalchemy import select
+    from core.relay import RelayConflictError
+    import storage.sqlite_relay as module
+    from storage.sqlite_schema import RelayDeliveryRecord, RelayEndpointGenerationRecord, RelayMessageRecord, RelaySessionRecord
+
+    errors, failures = [], []
+    private = "metadata failure must not leak"
+
+    class MetadataError(RelayConflictError):
+        def __init__(self, *args):
+            super().__init__(*args)
+            errors.append(self)
+
+        def __setattr__(self, name, value):
+            if name == "expiry_detected_at" and failure == "write":
+                failures.append("write")
+                raise RuntimeError(private)
+            super().__setattr__(name, value)
+
+        def __getattribute__(self, name):
+            if name == "expiry_detected_at" and failure == "read":
+                failures.append("read")
+                raise RuntimeError(private)
+            return super().__getattribute__(name)
+
+    storage = client.app.state.pallium_service._storage
+
+    def snapshot():
+        with storage._relay_session_factory() as db:
+            return [db.execute(select(record.__table__).order_by(*record.__table__.primary_key.columns)).all()
+                    for record in (RelaySessionRecord, RelayEndpointGenerationRecord, RelayMessageRecord, RelayDeliveryRecord)]
+
+    before = snapshot()
+    monkeypatch.setattr(module, "RelayConflictError", MetadataError)
+    caplog.set_level(logging.INFO, logger="api.routes")
+    response = client.post("/relay/turn", json={"runtime": "codex", "session_ref": "metadata-target",
+        "wake_delivery_id": "relay-delivery-" + "b" * 32, "claim_expires_at_ms": 1, **SCOPE})
+    assert response.status_code == 409 and response.json() == {"detail": "Relay claim request expired"}
+    assert failures == [failure] and len(errors) == 1
+    assert type(errors[0]) is MetadataError and errors[0].args == ("Relay claim request expired",)
+    assert errors[0].__cause__ is None and errors[0].__context__ is None
+    assert snapshot() == before
+    records = [r.getMessage() for r in caplog.records if r.getMessage().startswith("relay_turn_timing")]
+    assert len(records) == 1 and records[0].endswith("expiry_detected_at=unknown")
+    assert private not in records[0] and SCOPE["container_ref"] not in records[0]
 
 
 def test_delivery_specific_turn_claims_exact_message_beyond_normal_limit(client) -> None:
