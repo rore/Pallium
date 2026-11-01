@@ -7,8 +7,8 @@ its line counts and extraction list are historical, not a queue of new work.
 
 `ItemProcessor`, `ThreadRebuilder`, `QueryExecutor`, `ConsolidationRunner` and
 `VectorEmbedder` already own their respective responsibilities. Do not extract
-them again. Remaining boundaries are tracked in
-[Simplify Relay lifecycle and capability boundaries](../../roadmap/features/simplify-relay-lifecycle-and-capability-boundaries.md).
+them again. Remaining boundaries belong to the roadmap feature
+`simplify-relay-lifecycle-and-capability-boundaries`.
 
 Relay trace jobs now belong to one `app.relay_trace.RelayTraceWriter` per app.
 App composition shares its bounded enqueue callback with routing and recovery,

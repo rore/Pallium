@@ -121,8 +121,20 @@ Skill feedback trigger 3 dropped: the diagnosed invocation prerequisites and unr
 
 ## Result review
 
-Agent technical review: independent non-implementer source and evidence review, 2026-11-01; SOURCE GO remains applicable and overall RESULT is HELD. Reviewed revision: `7ebe2bf5002e3dd8e6a880fad5b171a7638432ab`.
+Agent technical review: independent non-implementer source and evidence review, 2026-11-01; SOURCE GO remains applicable and overall RESULT is HELD.
+
+Reviewed revision: `7ebe2bf5002e3dd8e6a880fad5b171a7638432ab`.
 
 Verification adequacy: focused worker, actual HTTP saturation, lifecycle and affected-subsystem evidence adequately cover S3's ownership move, cancellation bookkeeping, optional tracing and drain-before-storage criteria. No demonstrated S3 regression was found. The reviewer independently verified 8,556 distinct primary XML cases with zero partition overlap, all 8,475 remainder IDs accounted for, all 1,013 source/configuration hashes unchanged, the corrected subsystem result, zero import violations and the advisory-only workflow result.
 
 The unresolved Windows installer failure prevents an all-green claim. Unchanged installer/test source and absence of trace-worker construction support keeping it separate from demonstrated S3 behavior; they do not prove causal independence. Its serial diagnostic pass does not erase the original failure. The reviewer accepts this source for owner review and requires State to remain `Blocked` until owner disposition and required platform/CI evidence. Human architecture/result review and publication gates remain open. No merge, installation or installed reliability acceptance is claimed.
+
+## Source-candidate publication
+
+The task owner authorized draft source-candidate publication and normal required CI after the final independent review, while keeping RESULT HELD. The unexplained parallel installer failure is a separate unresolved qualification issue; this disposition authorizes neither installer repair nor acceptance, waiver, merge or deployment. Preserve the original failed output alongside its successful serial diagnostic. No local broad-suite repetition or additional review chain is required.
+
+The publisher verified final evidence-only head `50c2810bb3da59eb2c5e7283dd88602a95addd4a`, tested source `7ebe2bf5002e3dd8e6a880fad5b171a7638432ab`, all 22 manifest entries and frozen patch SHA256 `09479c3d86a52ec74150266321a15d04c8a1dc842b5d3b67ad422a53e594f303`. Working-file hashes and normalized Git blobs agree; private qualification evidence, original XML and failed logs are retained. The owner's checkout is unchanged.
+
+Publication incorporates current main `e77e793622cf8c5f907565555695e92fa0cd713c`, preserving merged PR #384. The merge is conflict-free; the only shared S3 test file receives PR #384's existing added controls while retaining S3's trace-owner adaptations. Application changes remain the reviewed candidate. The design note's link to the not-yet-published roadmap file was replaced by its feature name; no canonical roadmap content was copied. The manager owns roadmap reconciliation.
+
+PR Windows smoke omits `tests/test_setup_skill_recovery_e2e.py`. The task owner therefore authorized one existing manual CI dispatch at the final published branch/head to obtain Windows full-platform evidence, without workflow changes or rerun-to-green. Verify that `test_setup_skill_keyboard_interrupt_preserves_recovery_state[codex-backup]` appears and executes in Windows XML; absence or skip cannot close the gap. Even a pass does not establish the physical cause of the original local failure. Required CI, same-reviewer/owner disposition and separate human architecture/result review remain open. State stays Blocked; no merge, formal GitHub approval, installation or restart is authorized by this publication handoff.

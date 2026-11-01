@@ -1939,6 +1939,164 @@ def test_turn_response_budget_is_a_preclaim_guard_not_an_envelope_limit(client):
     assert [delivery["message_id"] for delivery in claimed] == [sent["message_id"]]
 
 
+@pytest.mark.parametrize('runtime',['codex','claude-code','opencode','hermes'])
+def test_impossible_turn_response_budget_skips_candidate_work_and_preserves_claims(
+    client, relay_storage, monkeypatch, runtime,
+):
+    from sqlalchemy import event
+    from threading import local
+    import storage.sqlite_relay as module
+    from storage.sqlite_schema import RelayEndpointGenerationRecord
+
+    current = datetime.now(timezone.utc).replace(microsecond=123456)
+    original_now = module._now
+    monkeypatch.setattr(module,'_now',lambda value=None: original_now(current if value is None else value))
+    _turn(client,'claude-code','budget-sender')
+    target = _turn(client,runtime,'budget-東京',title='"'*255,max_chars=1,max_response_chars=1)['session']
+    messages = [_send(client,'claude-code','budget-sender',target['endpoint_id'],
+        '東京 🌍' if number == 0 else 'x'*(16000 if number == 1 else 32)).json() for number in range(10)]
+    ids = [message['message_id'] for message in messages]
+    def snapshot():
+        with relay_storage._relay_session_factory() as db:
+            generation = db.get(RelayEndpointGenerationRecord,target['endpoint_id'])
+            deliveries = db.execute(select(RelayDeliveryRecord).where(RelayDeliveryRecord.message_id.in_(ids))).scalars().all()
+            return (None if generation is None else generation.generation,
+                sorted((row.id,row.state,row.attempts,row.claim_token,row.lease_expires_at,row.codex_wake_generation) for row in deliveries))
+    before = snapshot()
+    counters = dict(candidates=0,render=0)
+    frames = []
+    safe, compact = module._delivery_render_safe,module._compact_json_chars
+    active = local()
+    transaction = relay_storage._begin_relay_immediate
+    @contextmanager
+    def observed_transaction():
+        with transaction() as db:
+            previous = getattr(active,'inside',False)
+            active.inside = True
+            try:
+                yield db
+            finally:
+                active.inside = previous
+    monkeypatch.setattr(relay_storage,'_begin_relay_immediate',observed_transaction)
+    def owned():
+        return getattr(active,'inside',False)
+    def render(*args):
+        if owned():
+            counters['render'] += 1
+        return safe(*args)
+    def json_chars(value):
+        result = compact(value)
+        if owned() and value.get('deliveries') == [] and value.get('remaining_count') == 10:
+            frames.append(result)
+        return result
+    def statements(_connection,_cursor,statement,*_):
+        if owned() and 'ORDER BY relay_messages.created_at, relay_deliveries.id' in statement:
+            counters['candidates'] += 1
+    monkeypatch.setattr(module,'_delivery_render_safe',render)
+    monkeypatch.setattr(module,'_compact_json_chars',json_chars)
+    event.listen(relay_storage._relay_engine,'before_cursor_execute',statements)
+    try:
+        for boundary in ('one','below','equal','above'):
+            counters.update(candidates=0,render=0)
+            budget = 1 if boundary == 'one' else frames[0]+{'below':-1,'equal':0,'above':1}[boundary]
+            result = _turn(client,runtime,'budget-東京',max_chars=1,max_response_chars=budget,max_messages=1)
+            assert result['deliveries'] == [] and result['remaining_count'] == 10 and result['has_more'] is True
+            if boundary != 'above':
+                assert counters == dict(candidates=0,render=0)
+            else:
+                assert counters == dict(candidates=1,render=10)
+            assert frames and all(size == frames[0] for size in frames)
+            assert snapshot() == before
+            for message in messages:
+                delivery, = _status(client,message['message_id']).json()['deliveries']
+                assert delivery['state'] == 'pending' and delivery['attempts'] == 0 and delivery['claim_token'] is None
+        counters.update(candidates=0,render=0)
+        result = _turn(client,runtime,'budget-東京',max_response_chars=0,max_messages=1)
+        assert len(result['deliveries']) == 1 and result['remaining_count'] == 9 and result['has_more'] is True
+        assert counters == dict(candidates=1,render=1)
+        claimed, = result['deliveries']
+        assert claimed['attempts'] == 1 and _ack(client,claimed).status_code == 200
+        assert _status(client,claimed['message_id']).json()['deliveries'][0]['state'] == 'delivered'
+    finally:
+        event.remove(relay_storage._relay_engine,'before_cursor_execute',statements)
+
+
+@pytest.mark.parametrize('seam',['pre-mutation','flush'])
+@pytest.mark.parametrize('kind',['existing','new','scope'])
+def test_impossible_turn_budget_preserves_expiry_rollback(client, monkeypatch, seam, kind):
+    from types import SimpleNamespace
+    import time as native_time
+    import storage.sqlite_relay as module
+    from storage.sqlite_schema import RelayEndpointGenerationRecord
+
+    _turn(client,'claude-code','budget-expiry-sender')
+    target = _turn(client,'codex','budget-expiry-target')['session']
+    messages = [_send(client,'claude-code','budget-expiry-sender',target['endpoint_id'],'pending 東京').json() for _ in range(2)]
+    storage = client.app.state.pallium_service._storage
+    with storage._relay_session_factory.begin() as db:
+        db.get(RelayMessageRecord,messages[1]['message_id']).expires_at = datetime.now(timezone.utc)-timedelta(seconds=1)
+    models = (RelaySessionRecord,RelayEndpointGenerationRecord,RelayMessageRecord,RelayDeliveryRecord)
+    def snapshot():
+        with storage._relay_session_factory() as db:
+            return {model.__tablename__:sorted(tuple(getattr(row,column.name) for column in model.__table__.columns)
+                for row in db.execute(select(model)).scalars()) for model in models}
+    before = snapshot()
+    clock,armed,observed = [0.0],[False],[]
+    monkeypatch.setattr(module,'time',SimpleNamespace(**{**vars(native_time),'time':lambda:1000.0,'monotonic':lambda:clock[0]}))
+    compact = module._compact_json_chars
+    def frame(value):
+        result = compact(value)
+        if value.get('deliveries') == []:
+            armed[0] = True
+            if seam == 'pre-mutation':
+                observed.append(seam)
+                clock[0] = 2.0
+        return result
+    monkeypatch.setattr(module,'_compact_json_chars',frame)
+    transaction = storage._begin_relay_immediate
+    @contextmanager
+    def controlled_transaction():
+        with transaction() as db:
+            flush = db.flush
+            def controlled_flush(*args,**kwargs):
+                result = flush(*args,**kwargs)
+                if seam == 'flush' and armed[0] and clock[0] == 0:
+                    observed.append(seam)
+                    clock[0] = 2.0
+                return result
+            db.flush = controlled_flush
+            yield db
+    monkeypatch.setattr(storage,'_begin_relay_immediate',controlled_transaction)
+    body = dict(runtime='codex',session_ref='budget-expiry-target',title='must roll back',
+        max_response_chars=1,claim_expires_at_ms=1001000,**SCOPE)
+    if kind == 'new':
+        body['session_ref'] = 'budget-expiry-new'
+    elif kind == 'scope':
+        body.update(container_ref='git:example.test/other-scope',previous_container_ref=SCOPE['container_ref'],
+            previous_endpoint_id=target['endpoint_id'],previous_scope_generation=target['scope_generation'])
+    response = client.post('/relay/turn',json=body)
+    assert response.status_code == 409 and response.json() == {'detail':'Relay claim request expired'}
+    assert observed == [seam] and snapshot() == before
+
+
+def test_impossible_turn_budget_keeps_structural_refresh_outside_claim_transaction(client):
+    _turn(client,'claude-code','refresh-sender')
+    target = _turn(client,'codex','refresh-target')['session']
+    sent = _send(client,'claude-code','refresh-sender',target['endpoint_id'],'later claim').json()
+    branch = dict(scope_ref=SCOPE['container_ref'],local_ref='branch:feature/example')
+    work = dict(scope_ref=SCOPE['container_ref'],local_ref='task:example')
+    for references in ([branch,work],[work],[]):
+        result = _turn(client,'codex','refresh-target',max_response_chars=1,structural_work_refs=references)
+        assert result['deliveries'] == [] and result['remaining_count'] == 1 and result['has_more'] is True
+        assert result['structural_work_refs_status'] == 'complete'
+        assert {(row['scope_ref'],row['local_ref'],row['origin']) for row in result['work_refs']} == {
+            (row['scope_ref'],row['local_ref'],'structural') for row in references}
+        delivery, = _status(client,sent['message_id']).json()['deliveries']
+        assert delivery['state'] == 'pending' and delivery['attempts'] == 0
+    claimed, = _turn(client,'codex','refresh-target')['deliveries']
+    assert claimed['message_id'] == sent['message_id'] and _ack(client,claimed).status_code == 200
+
+
 def test_turn_skips_legacy_unsafe_rows_and_drains_later_safe_delivery(client, relay_storage):
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "mixed-legacy-target")
