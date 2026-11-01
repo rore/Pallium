@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -4319,6 +4320,104 @@ def test_exclusive_trial_rejects_endpoint_scope_generation_aba_before_action(cli
     assert not relay.spend_codex_trial(endpoint_id=endpoint, trial_id="aba-trial", delivery_id=delivery_id)
 
 
+def _record_recovered_hook_evidence(evidence, boundary, phase, value=None, *, timeout=None):
+    try:
+        if len(evidence) >= 32:
+            return
+        event = {"boundary": boundary, "phase": phase}
+        if phase == "exception":
+            event["category"] = next((
+                category for kind, category in (
+                    (TimeoutError, "timeout"), (AssertionError, "assertion"),
+                    (OSError, "os_error"), (ValueError, "value_error"),
+                ) if isinstance(value, kind)
+            ), "other")
+        elif phase == "response" and type(value) is int:
+            event["status"] = value
+        elif phase == "return":
+            event["kind"] = (
+                "none" if value is None else "dict" if type(value) is dict
+                else "tuple" if type(value) is tuple else "other"
+            )
+            if boundary == "lock":
+                event["acquired"] = value is not None
+            elif boundary == "state_write":
+                event["written"] = value is True
+            elif boundary == "format" and type(value) is tuple and len(value) == 2 and type(value[1]) is list:
+                event["rendered_count"] = len(value[1])
+        if type(timeout) in (int, float) and 0 <= timeout <= 60:
+            event["timeout"] = timeout
+        evidence.append(event)
+    except BaseException:
+        pass
+
+
+@contextmanager
+def _observe_recovered_hook(monkeypatch, hook, evidence):
+    def observe(original, boundary):
+        def observed(*args, **kwargs):
+            _record_recovered_hook_evidence(evidence, boundary, "entry", timeout=kwargs.get("timeout"))
+            try:
+                result = original(*args, **kwargs)
+            except BaseException as error:
+                _record_recovered_hook_evidence(evidence, boundary, "exception", error)
+                raise
+            _record_recovered_hook_evidence(evidence, boundary, "return", result)
+            return result
+        return observed
+
+    with monkeypatch.context() as spies:
+        for namespace, name, boundary in (
+            (hook, "relay_turn", "turn"), (hook, "format_relay", "format"),
+            (hook._common, "_acquire_session_lock", "lock"),
+            (hook._common, "_write_session_state_locked", "state_write"),
+        ):
+            spies.setattr(namespace, name, observe(getattr(namespace, name), boundary))
+        yield
+
+
+@pytest.mark.parametrize("recording_fails", [False, True])
+def test_recovered_hook_evidence_preserves_calls_and_restores_spies(monkeypatch, recording_fails):
+    class BrokenEvidence(list):
+        def append(self, value):
+            raise RuntimeError("private-recording-failure")
+
+    evidence = BrokenEvidence() if recording_fails else []
+    result = {"private": "payload-token-identity"}
+    formatted = ("private-payload", [result])
+    lock = object()
+    error = RuntimeError("private-original-failure")
+    turn = MagicMock(side_effect=[result, error])
+    formatting = MagicMock(return_value=formatted)
+    acquire = MagicMock(return_value=lock)
+    write = MagicMock(return_value=True)
+    hook = SimpleNamespace(relay_turn=turn, format_relay=formatting, _common=SimpleNamespace(
+        _acquire_session_lock=acquire, _write_session_state_locked=write,
+    ))
+    with pytest.raises(RuntimeError) as failure:
+        with _observe_recovered_hook(monkeypatch, hook, evidence):
+            assert hook.relay_turn(timeout=1.5) is result
+            assert hook._common._acquire_session_lock(timeout=1.5) is lock
+            assert hook._common._write_session_state_locked() is True
+            assert hook.format_relay() is formatted
+            hook.relay_turn()
+    assert failure.value is error
+    assert hook.relay_turn is turn and hook.format_relay is formatting
+    assert hook._common._acquire_session_lock is acquire
+    assert hook._common._write_session_state_locked is write
+    assert turn.call_count == 2 and all(mock.call_count == 1 for mock in (formatting, acquire, write))
+    assert "private" not in repr(evidence) and "payload-token-identity" not in repr(evidence)
+    if recording_fails:
+        assert evidence == []
+    else:
+        assert {"boundary": "lock", "phase": "return", "kind": "other", "acquired": True} in evidence
+        assert {"boundary": "state_write", "phase": "return", "kind": "other", "written": True} in evidence
+        assert {"boundary": "format", "phase": "return", "kind": "tuple", "rendered_count": 1} in evidence
+        for _ in range(40):
+            _record_recovered_hook_evidence(evidence, "http_turn", "response", 200)
+        assert len(evidence) == 32
+
+
 def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     client, monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, *, force_setup_refusal=False,
 ) -> None:
@@ -4492,10 +4591,27 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
         hook, "emit_context", lambda output, _event: contexts.append(output)
     )
 
+    evidence = []
+
     def relay_request(method: str, path: str, payload: dict, *, timeout: float, deadline=None):
-        response = route.request(method, path, json=payload)
-        assert response.status_code == 200, response.text
-        return response.json() if response.content else None
+        operation = "http_other"
+        try:
+            operation = {
+                ("POST", "/relay/turn"): "http_turn",
+                ("GET", "/relay/sessions"): "http_sessions",
+                ("POST", "/relay/deliveries/ack"): "http_ack",
+            }.get((method, path), "http_other")
+        except BaseException:
+            pass
+        _record_recovered_hook_evidence(evidence, operation, "entry", timeout=timeout)
+        try:
+            response = route.request(method, path, json=payload)
+            _record_recovered_hook_evidence(evidence, operation, "response", response.status_code)
+            assert response.status_code == 200, response.text
+            return response.json() if response.content else None
+        except BaseException as error:
+            _record_recovered_hook_evidence(evidence, operation, "exception", error)
+            raise
 
     monkeypatch.setattr(hook, "relay_request", relay_request)
     monkeypatch.setattr(hook._common, "relay_request", relay_request)
@@ -4506,11 +4622,14 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
         "prompt": codex_wake._wake_prompt(claimed["delivery_id"]),
     })
 
-    with pytest.raises(SystemExit):
-        hook._HOOK_STARTED_AT = hook.time.monotonic()
-        hook.main()
+    with _observe_recovered_hook(monkeypatch, hook, evidence):
+        with pytest.raises(SystemExit):
+            hook._HOOK_STARTED_AT = hook.time.monotonic()
+            hook.main()
 
-    assert len(contexts) == 1 and contexts[0].count("😀") == 1500
+    assert len(contexts) == 1 and contexts[0].count("😀") == 1500, (
+        "recovered_hook_evidence=" + json.dumps(evidence, separators=(",", ":"))
+    )
     delivered = relay.message_status(
         message_id=sent["message_id"], **SCOPE
     )["deliveries"][0]
