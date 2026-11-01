@@ -389,7 +389,7 @@ def test_drive_directory_prose_redaction_send_reply_lifecycle(client, monkeypatc
             worker.join(2)
             assert not worker.is_alive(), "reply wake worker did not finish"
         # Diagnostic FIFO completion fences identity readback; it has no reply SLA.
-        service._relay_trace_executor.submit(lambda: None).result()
+        client.app.state.relay_trace_writer._executor.submit(lambda: None).result()
 
     monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", capture_schedule)
     _turn(client, "claude-code", "sender")
@@ -512,7 +512,7 @@ def test_duplicate_reply_contends_with_prepared_trace_then_keeps_identity(client
             for worker in workers:
                 worker.join(2)
                 assert not worker.is_alive(), (worker.name, phase)
-            service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+            client.app.state.relay_trace_writer._executor.submit(lambda: None).result(timeout=2)
         finally:
             event.remove(engine, "after_cursor_execute", hold_prepared)
             event.remove(engine, "handle_error", observe_acquisition)
@@ -535,7 +535,7 @@ def test_duplicate_reply_contends_with_prepared_trace_then_keeps_identity(client
     for worker in workers:
         worker.join(2)
         assert not worker.is_alive(), worker.name
-    service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+    client.app.state.relay_trace_writer._executor.submit(lambda: None).result(timeout=2)
     replies = _turn(client, "claude-code", "sender")["deliveries"]
     assert len(replies) == 1 and replies[0]["message_id"] == reply_id, replies
     assert _ack(client, replies[0]).status_code == 200
@@ -1244,7 +1244,7 @@ def test_delivery_derived_reply_chain_and_boundaries(client, monkeypatch):
         for worker in workers:
             worker.join(2)
         assert all(not worker.is_alive() for worker in workers)
-        service._relay_trace_executor.submit(lambda: None).result()
+        client.app.state.relay_trace_writer._executor.submit(lambda: None).result()
 
     monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", capture_schedule)
     try:

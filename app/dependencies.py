@@ -747,6 +747,7 @@ def build_router(
     relay_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     relay_wake_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     diagnostic_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
+    relay_trace_enqueue: Callable[[Callable[[dict[str, object]], object], dict[str, object]], bool] | None = None,
 ):
     relay_service = None
     if relay_storage is not None:
@@ -758,9 +759,9 @@ def build_router(
     codex_registry = codex_wake_registry if codex_wake_registry is not None else get_codex_wake_registry()
 
     def _relay_trace(event: dict[str, object]) -> bool:
-        if relay_service is None:
+        if relay_service is None or relay_trace_enqueue is None:
             return False
-        return service.enqueue_relay_trace_event(
+        return relay_trace_enqueue(
             relay_service.record_trace_event, event
         )
 

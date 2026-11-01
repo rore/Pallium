@@ -710,7 +710,7 @@ finally:
                     worker.join(5)
                 assert all(not worker.is_alive() for worker in workers)
                 if app is not None:
-                    app.state.pallium_service._relay_trace_executor.submit(lambda: None).result(2)
+                    app.state.relay_trace_writer._executor.submit(lambda: None).result(2)
         if _server_only:
             assert server._thread is not None and not server._thread.is_alive()
             assert app.state._wait_for_operations(0)
