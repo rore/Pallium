@@ -554,8 +554,17 @@ def test_alias_transfer_does_not_transfer_associations_and_reopen_retains_them(
     }
     assert _counts(client, [ticket]).json()["counts"][0]["participant_count"] == 1
 
-def test_detach_changes_future_history_but_not_captured_snapshot(client, drain_queue):
-    _turn(client, session="history")
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_detach_changes_future_history_but_not_captured_snapshot(
+    client, drain_queue, relay_admission_clock,
+):
+    from storage import sqlite_queue
+
+    store = client.app.state.pallium_service._storage
+    native_time = sqlite_queue.time
+    with relay_admission_clock(store, expected_admissions=1):
+        _turn(client, session="history")
+    assert sqlite_queue.time is native_time
     assert _attach(client, FEATURE, session="history").status_code == 200
     listed = _list(client, session="history")
     key = next(row["work_ref"] for row in listed["work_refs"] if row["origin"] == "explicit")

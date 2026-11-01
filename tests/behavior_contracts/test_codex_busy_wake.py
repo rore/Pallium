@@ -180,6 +180,7 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
     monkeypatch.setattr(hook._common, "relay_request", relay_request)
 
     with pytest.raises(SystemExit) as competing:
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
     assert competing.value.code == 0
     assert len(contexts) == 1
@@ -193,6 +194,7 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
     contexts.clear()
     capsys.readouterr()
     with pytest.raises(SystemExit) as overtaken:
+        hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
     assert overtaken.value.code == 0
     assert contexts == []

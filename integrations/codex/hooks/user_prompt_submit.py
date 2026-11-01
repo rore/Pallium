@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import time
+
+_HOOK_STARTED_AT = time.monotonic()
+
 import importlib.util
 import json
 import os
 import re
 import sys
-import time
+import threading
 import uuid
 from pathlib import Path
 
@@ -86,8 +90,15 @@ def main() -> None:
     wake_failure_recorded = False
     internal_wake = False
     wake_payload_emitted = False
+    item_query_worker = None
+    item_query_worker_started = False
+    item_query_parent_deadline = None
+    item_query_fallback = None
     try:
-        start_hook_deadline(8, host_reserve=1)
+        start_hook_deadline(
+            max(0.0, 8.0 - (time.monotonic() - _HOOK_STARTED_AT)),
+            host_reserve=1,
+        )
         record_codex_hook_execution(script=__file__)
         payload = read_hook_input()
         session_id = payload.get("session_id")
@@ -323,7 +334,9 @@ def main() -> None:
             agent_ref=AGENT_REF, visibility="private", work_ref=current_work_ref,
         ) if has_session else ""
         if len(content) >= 20:
-            response = pallium_request("POST", "/item-and-query", {
+            parent_deadline = _common.hook_deadline()
+            item_query_parent_deadline = parent_deadline
+            request_payload = {
                 "source_type": SOURCE_TYPE,
                 "source_id": f"cdx-{uuid.uuid4().hex[:12]}",
                 "content_type": "text/plain",
@@ -343,31 +356,92 @@ def main() -> None:
                 "source_turn_id": source_turn_key(payload.get("turn_id")),
                 "relay_name": relay_name_snapshot(relay_response)[1],
                 "relay_attribution_state": relay_name_snapshot(relay_response)[0],
-            })
-            if response:
-                if isinstance(response.get("work_ref_metadata"), dict):
-                    warning = work_ref_warning(response["work_ref_metadata"])
-                    memory_budget = min(
-                        2400,
-                        max(
-                            0,
-                            4000
-                            - len(relay_output)
-                            - len(warning)
-                            - separator,
-                        ),
+            }
+            request_callable = pallium_request
+            request_result = []
+            request_claim_lock = threading.Lock()
+            request_claimed = False
+
+            def claim_item_query():
+                nonlocal request_claimed
+                with request_claim_lock:
+                    if request_claimed:
+                        return False
+                    request_claimed = True
+                    return True
+
+            def run_item_query():
+                if not claim_item_query():
+                    return
+                response_value = None
+                try:
+                    response_value = request_callable(
+                        "POST", "/item-and-query", request_payload,
+                        deadline=parent_deadline,
                     )
-                memory_output = format_injection(
-                    response.get("injectable_blocks", []),
-                    container_ref,
-                    budget_chars=memory_budget,
-                    thread_ref=session_id,
-                    actor_ref=actor_ref,
-                    agent_ref=AGENT_REF,
-                    visibility="private",
-                    work_ref=current_work_ref,
-                    request_source_item_id=response.get("source_item_id"),
+                except Exception:
+                    pass
+                try:
+                    completed_at = parent_deadline.clock()
+                except Exception:
+                    completed_at = None
+                request_result.append((completed_at, response_value))
+
+            enrichment_cutoff = (
+                parent_deadline.deadline - parent_deadline.reserve - 1.0
+            )
+            try:
+                item_query_worker = threading.Thread(
+                    target=run_item_query, daemon=True,
                 )
+                item_query_worker_started = True
+                item_query_worker.start()
+            except Exception:
+                item_query_fallback = run_item_query
+
+            response = None
+            if item_query_worker_started and item_query_fallback is None:
+                try:
+                    item_query_worker.join(timeout=max(
+                        0.0, enrichment_cutoff - parent_deadline.clock(),
+                    ))
+                except Exception:
+                    pass
+            if request_result:
+                completed_at, candidate = request_result[0]
+                if (
+                    completed_at is not None
+                    and completed_at <= enrichment_cutoff
+                    and isinstance(candidate, dict)
+                ):
+                    response = candidate
+            if response:
+                try:
+                    response_warning = warning
+                    response_budget = memory_budget
+                    if isinstance(response.get("work_ref_metadata"), dict):
+                        response_warning = work_ref_warning(response["work_ref_metadata"])
+                        response_budget = min(
+                            2400,
+                            max(0, 4000 - len(relay_output) - len(response_warning) - separator),
+                        )
+                    enriched_output = format_injection(
+                        response.get("injectable_blocks", []),
+                        container_ref,
+                        budget_chars=response_budget,
+                        thread_ref=session_id,
+                        actor_ref=actor_ref,
+                        agent_ref=AGENT_REF,
+                        visibility="private",
+                        work_ref=current_work_ref,
+                        request_source_item_id=response.get("source_item_id"),
+                    )
+                except Exception:
+                    pass
+                else:
+                    if enriched_output:
+                        memory_output = enriched_output
+                        warning = response_warning
 
         output = "\n\n".join(part for part in (relay_output, memory_output, warning) if part)
         if output:
@@ -397,6 +471,23 @@ def main() -> None:
                 reason="unexpected_error",
             )
         print(f"pallium user_prompt_submit hook error: {exc}", file=sys.stderr)
+    finally:
+        if item_query_fallback is not None:
+            try:
+                item_query_fallback()
+            except Exception:
+                pass
+        if item_query_worker_started and item_query_worker is not None:
+            try:
+                remaining = max(
+                    0.0,
+                    item_query_parent_deadline.deadline
+                    - item_query_parent_deadline.clock()
+                    - item_query_parent_deadline.reserve,
+                )
+                item_query_worker.join(timeout=remaining)
+            except Exception:
+                pass
 
     sys.exit(0)
 

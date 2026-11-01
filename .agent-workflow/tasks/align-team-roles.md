@@ -29,3 +29,11 @@ Created the isolated feat/align-team-roles branch before role edits. Existing sh
 ## Handoff
 
 Branch: feat/align-team-roles. Role guidance is ready for publication review; canonical checkout adoption and session refresh remain separate. No application tests, model overrides, name transfers, service operations or installed changes were performed. Publication must preserve the existing dirty checkout and ongoing incident work; do not auto-sync or restart the installed service for this governance-only change.
+
+## Publication review
+
+The isolated publisher reconciled source `be2a677faae4ba634c9e2d7f5d9a628fbbc64c94` from base `447580f66d1ddeac6e66f2dc2413d46b9da1e4be` with current main `e77e793622cf8c5f907565555695e92fa0cd713c` without conflict. The supported governance selector, checker, workflow and selected test files are unchanged across those bases, so the recorded 47 distinct passing cases remain applicable; publication changes only guidance prose and this record.
+
+An existing unpublished shared developer guide on the held PR #381 branch supplies compatible safeguards. The new shared guide retains its explicit scope/authorization checks, isolation of other developers' files/indexes and incident work, focused and whole-change verification, protection against weakened assertions/hidden failures, exact result handoffs and public-documentation privacy. Its new manager/architect/developer split, cheap bounded delegation and separate publication assignment are preserved. The held source branch and every other publication worktree remain untouched; later integration can reconcile its duplicate guide with this combined content instead of overwriting unpublished work.
+
+Routine/Simple and the normal workflow remain appropriate: all changed paths are explicit blue guidance/bookkeeping, and no runtime permissions, session settings, source behavior or installed configuration changes. Publication review verifies exact-name mappings, relative existing links, content/privacy and current whole-change governance checks before push. No new application tests or session/alias/model changes are required.

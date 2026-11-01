@@ -1147,7 +1147,7 @@ async def _start_operation_barrier(app):
 
     def wait_for_operations() -> bool:
         entered.set()
-        return app.state._wait_for_operations(2)
+        return app.state._wait_for_operations()
 
     barrier = asyncio.create_task(asyncio.to_thread(wait_for_operations))
     assert await asyncio.to_thread(entered.wait, 1)
@@ -1157,6 +1157,49 @@ async def _start_operation_barrier(app):
 async def _assert_barrier_waiting(barrier) -> None:
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(asyncio.shield(barrier), 0.05)
+
+
+def test_operation_barrier_has_no_setup_timeout_while_workers_are_held():
+    held, release = threading.Event(), threading.Event()
+    waiter_started, waiter_finished = threading.Event(), threading.Event()
+    wait_timeouts = []
+
+    def wait_for_operations(timeout=None):
+        wait_timeouts.append(timeout)
+        if timeout is not None:
+            return not held.is_set()
+        waiter_started.set()
+        try:
+            release.wait()
+            return not held.is_set()
+        finally:
+            waiter_finished.set()
+
+    app = SimpleNamespace(state=SimpleNamespace(_wait_for_operations=wait_for_operations))
+    held.set()
+    assert app.state._wait_for_operations(2) is False
+
+    async def exercise():
+        barrier = None
+        try:
+            barrier = await _start_operation_barrier(app)
+            await _assert_barrier_waiting(barrier)
+            assert waiter_started.is_set()
+            assert wait_timeouts == [2, None]
+            held.clear()
+            release.set()
+            assert await asyncio.wait_for(asyncio.shield(barrier), 1)
+        finally:
+            held.clear()
+            release.set()
+            if waiter_started.is_set():
+                assert await asyncio.to_thread(waiter_finished.wait, 1)
+            if barrier is not None:
+                if not barrier.done():
+                    await asyncio.wait_for(asyncio.shield(barrier), 1)
+                await asyncio.gather(barrier, return_exceptions=True)
+
+    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize("projection_fails", [False, True])
