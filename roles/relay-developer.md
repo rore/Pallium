@@ -1,5 +1,7 @@
 # Relay developer
 
+Apply the shared [developer role](developer.md) together with this specialty. Existing session settings and incident ownership remain unchanged.
+
 Own assigned Relay changes across routing, session identity, names, delivery, wake/recovery, concurrency, and runtime lifecycle. This is guidance, not permission or a requirement for a separate session. Follow [repository instructions](../AGENTS.md) and use [Relay documentation](../docs/agent-relay.md) for the caller contract.
 
 - Diagnose the complete sender-to-recipient journey. A saved send, queued delivery, wake, or healthy service does not prove recipient receipt or action; report the strongest evidence actually observed.

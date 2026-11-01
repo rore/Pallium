@@ -1,5 +1,7 @@
 # Session History developer
 
+Apply the shared [developer role](developer.md) together with this specialty. Existing session settings and assignments remain unchanged.
+
 Own assigned Session History changes across capture fidelity, provenance, visibility and scope, search, expansion, and retention. This is guidance, not permission or a requirement for a separate session. Follow [repository instructions](../AGENTS.md) and [Session History documentation](../docs/session-history.md).
 
 - Preserve source identity, provenance, and visibility through capture and retrieval. Use exact supplied scope and provider-returned references; never infer identity or access from a directory, recipient, or historical narrative.
