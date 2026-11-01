@@ -46,14 +46,14 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Discovery and slice disposition
 
 Base: `9382b95b6496967c043269c8bee832eefafccc97`, branch `feat/relay-trace-lifetime`. Whole-change applicability is non-exempt because application files change. No incident-worktree or installed-overlay edits belong to this branch.
 
-S1 is satisfied at this source tuple without another edit or full run. The Codex common, SessionStart, UserPromptSubmit, hook journey and deadline-test files are unchanged from reviewed PR #384 head `ad1a2483043d6765c7c4525744a3594c231561ab`. That PR's recorded full validation and required checks cover these unchanged files. `test_codex_prompt_capture_survives_enrichment_cutoff` exercises actual HTTP capture and reads the saved user source through its context endpoint while optional enrichment yields to scope output; its failure/late-worker branches preserve the single-request/no-replay obligation. SessionStart uses a child enrichment budget while essential scope/output retains the parent budget. This is reuse of source/test proof, not an installed reliability claim or a new acceptance of the whole feature.
+S1 was satisfied at the initial source comparison without another implementation. The Codex common, SessionStart, UserPromptSubmit, hook journey and deadline-test files matched reviewed PR #384 head `ad1a2483043d6765c7c4525744a3594c231561ab`. That PR's recorded validation covers that unchanged behavior. This slice later adapts only owned-resource cleanup in the hook journey fixture, retaining its assertions. `test_codex_prompt_capture_survives_enrichment_cutoff` exercises actual HTTP capture and reads the saved user source through its context endpoint while optional enrichment yields to scope output; its failure/late-worker branches preserve the single-request/no-replay obligation. SessionStart uses a child enrichment budget while essential scope/output retains the parent budget. This is reuse of source/test proof, not an installed reliability claim or a new acceptance of the whole feature.
 
 S2 is not accepted or silently skipped: RetainedService still couples registration invalidation to `_drop(preserve_registration=...)`, with separate uncertain-I/O and identity constraints. That security-sensitive transition work remains distinct. The task owner's newer source-work direction supersedes the planning-only/recovery-start restriction for this isolated slice. S3 is reordered because the trace executor has no registration authority and can be moved independently; no historical stalled-delivery cause is assumed.
 
@@ -65,7 +65,7 @@ Move one trace lifetime/dependency edge from the memory facade to app compositio
 
 ## Implementation
 
-Planning record created before application edits. Await independent plan review; preserve all earlier incident and installation records outside this checkout.
+Planning record was created and independently reviewed before application edits. Earlier incident and installation records remain separate from this checkout.
 
 Full fresh-main caller search expanded only the owning test/fixture reach before implementation. Independent reviewer received this discovery correction. The shared fixture must close the app-owned trace worker before service/storage even when lifespan was never entered; production partial-construction cleanup owns the same worker. No memory-facade compatibility shim may hide an unowned pool.
 
@@ -93,8 +93,36 @@ The corrected affected subsystem selection passed 1,511 cases, with two existing
 
 ## Evidence
 
-No application checks run yet. S1 unchanged-source proof is reused as described above; current slice requires its own validation.
+Tested source: `7ebe2bf5002e3dd8e6a880fad5b171a7638432ab`, against base `9382b95b6496967c043269c8bee832eefafccc97`. All 1,013 recorded source/configuration hashes remained unchanged throughout qualification. The whole-change selector requires the full lane. Private XML, case ledgers, runtime provenance and original failed output are retained outside tracked content.
+
+| Check | Observed result |
+|---|---|
+| Worker failure, capacity and teardown controls | 7 passed |
+| Initial app/fixture caller-surface selection | 34 passed |
+| Additional HTTP 64-job saturation/claim/ACK control | 1 passed |
+| Affected subsystem selection | 1,511 passed, 2 skipped; 362 slow deselections |
+| Windows CI serial selection, qualified direct interpreter | 79 passed, 2 skipped |
+| First non-slow remainder leg | 3,874 passed, 3 skipped, 1 expected failure, 1 failed |
+| Second, previously unexecuted remainder leg | 3,418 passed, 24 skipped, 1 expected failure, 1 failed |
+| Final, previously unexecuted remainder leg | 1,144 passed, 8 skipped |
+| Existing 24-caller HTTP/hook load journey | 1 passed |
+| Import boundary check | Passed, zero violations |
+| Final workflow check | Advisory only: human architecture checkpoint remains open |
+
+The disjoint Windows selection accounts for 8,556 unique cases. Latest per-case outcomes total 8,517 passed, 37 skipped and two expected failures, including two successful diagnostic controls. This aggregate is **not an all-green full run**: the original failed legs and the unresolved installer failure remain material evidence.
+
+Two invocation prerequisites were established without changing source or assertions. The original serial selection stopped at 74 passes and two skips because the virtual-environment launcher PID differed from the executing Python child's PID. An isolated child control proved that mismatch; the same Python version and dependencies, invoked directly, preserved the exact native peer-identity assertion and completed the serial selection. The first parallel remainder then exposed the direct invocation's incompatibility with a Hermes child that intentionally filters environment variables: it could not import an existing dependency. Its exact test passed under the normal existing virtual environment. An exact collection and completed-case ledger let qualification continue without repeating completed passing cases.
+
+The second parallel leg failed `test_setup_skill_keyboard_interrupt_preserves_recovery_state[codex-backup]` during its initial install, before controlled fault injection: Windows denied the staged-directory rename. The installer and this test are unchanged from the base, and this path does not construct an app trace worker. One exact serial diagnostic passed, but the physical cause remains unexplained. Reported prior qualification history includes the same Windows failure class on a different unchanged installer journey; that is supporting history, not proof of the current cause or permission to waive a gate. No installer repair, assertion change, broad rerun or installation change belongs to this slice.
+
+**Blocking action:** The task owner must disposition the unexplained parallel installer failure and obtain required platform/CI evidence before treating validation as green. Independent result review and the separate human architecture/result checkpoints remain required. Source qualification does not close installed Relay delivery incidents or S2 registration-policy work.
+
+Skill feedback trigger 3 dropped: the diagnosed invocation prerequisites and unresolved Windows rename failure belong to the local test environment or consumer installer, not the upstream workflow skill.
 
 ## Result review
 
-Pending implementation and verification.
+Agent technical review: independent non-implementer source and evidence review, 2026-11-01; SOURCE GO remains applicable and overall RESULT is HELD. Reviewed revision: `7ebe2bf5002e3dd8e6a880fad5b171a7638432ab`.
+
+Verification adequacy: focused worker, actual HTTP saturation, lifecycle and affected-subsystem evidence adequately cover S3's ownership move, cancellation bookkeeping, optional tracing and drain-before-storage criteria. No demonstrated S3 regression was found. The reviewer independently verified 8,556 distinct primary XML cases with zero partition overlap, all 8,475 remainder IDs accounted for, all 1,013 source/configuration hashes unchanged, the corrected subsystem result, zero import violations and the advisory-only workflow result.
+
+The unresolved Windows installer failure prevents an all-green claim. Unchanged installer/test source and absence of trace-worker construction support keeping it separate from demonstrated S3 behavior; they do not prove causal independence. Its serial diagnostic pass does not erase the original failure. The reviewer accepts this source for owner review and requires State to remain `Blocked` until owner disposition and required platform/CI evidence. Human architecture/result review and publication gates remain open. No merge, installation or installed reliability acceptance is claimed.
