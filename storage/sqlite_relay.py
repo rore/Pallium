@@ -1680,6 +1680,13 @@ class SQLiteRelayMixin:
                     result.update(wake=self._opencode_wake_view(wake), restored=False)
                 return result
 
+            if max_response_chars:
+                empty_response = response([])
+                # A delivery envelope exceeds any savings from fewer remaining-count digits.
+                if max_response_chars <= _compact_json_chars(empty_response):
+                    check_claim_expiry()
+                    return finalize(empty_response)
+
             with db.execute(eligible_query) as rows:
                 for delivery, message in rows:
                     if not _delivery_render_safe(delivery, message):
