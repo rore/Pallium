@@ -312,4 +312,4 @@ def test_exact_claim_real_http_recovers_only_known_busy_and_emits_acks_once(tmp_
         server.shutdown(); server.server_close(); serving.join(3)
         assert not holding.is_alive() and not serving.is_alive()
         backend.close()
-        app.state.pallium_service.close()
+        app.state._close_constructed()

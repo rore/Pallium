@@ -38,6 +38,7 @@ from app.dependencies import (
 )
 from app.snapshot import resolve_live_db_path
 from app.relay_wake_health import relay_wake_health
+from app.relay_trace import RelayTraceWriter
 from core.observability import QueryStats
 from core.relay import RelayService, RelayUnavailableError
 from core.service import PalliumService
@@ -218,6 +219,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             early_storage.close()
         raise
     service = build_result.service
+    relay_trace_writer = None
     resources_closed = False
 
     def close_resources() -> None:
@@ -233,6 +235,8 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                 if isinstance(provider, SQLiteStorageProvider):
                     cleanup_stack.callback(provider.close)
             cleanup_stack.callback(service.close)
+            if relay_trace_writer is not None:
+                cleanup_stack.callback(relay_trace_writer.close)
     relay_limiter = anyio.CapacityLimiter(4)
     wake_admission_limiter = anyio.CapacityLimiter(3)
     diagnostic_limiter = anyio.CapacityLimiter(2)
@@ -435,7 +439,9 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                 recover_claude_registration_intents(claude_wake_registry, relay_service)
 
                 def relay_trace(event: dict[str, object]) -> bool:
-                    return service.enqueue_relay_trace_event(
+                    if relay_trace_writer is None:
+                        return False
+                    return relay_trace_writer.enqueue(
                         relay_service.record_trace_event, event
                     )
 
@@ -781,6 +787,14 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
 
     try:
         try:
+            relay_trace_writer = RelayTraceWriter()
+        except Exception:
+            try:
+                logger.warning("relay_trace_lifecycle outcome=unavailable reason=start_failed")
+            except Exception:
+                pass
+        app.state.relay_trace_writer = relay_trace_writer
+        try:
             dashboard_relay_service = RelayService(build_result.storage)
         except RelayUnavailableError:
             dashboard_relay_service = None
@@ -806,6 +820,10 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             relay_runner=run_relay_operation,
             relay_wake_runner=run_wake_relay_operation,
             diagnostic_runner=run_diagnostic_operation,
+            relay_trace_enqueue=(
+                (lambda writer, event: relay_trace_writer.enqueue(writer, event))
+                if relay_trace_writer is not None else None
+            ),
         ))
         if mcp_available and mcp_app is not None:
             app.mount("", mcp_app)

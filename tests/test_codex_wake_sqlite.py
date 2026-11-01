@@ -1664,7 +1664,7 @@ def test_http_send_restart_exact_claim_ack_preserves_sqlite_fence(
     # This lifecycle test asserts persisted trace facts, separately from the
     # best-effort async diagnostic queue's contention/drop contract below.
     monkeypatch.setattr(
-        client.app.state.pallium_service, "enqueue_relay_trace_event",
+        client.app.state.relay_trace_writer, "enqueue",
         lambda writer, event: bool(writer(event)),
     )
 
@@ -1685,7 +1685,7 @@ def test_http_send_restart_exact_claim_ack_preserves_sqlite_fence(
     def route(actual_registry):
         app = FastAPI()
         app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
-                                       codex_wake_registry=actual_registry))
+                                       codex_wake_registry=actual_registry, relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event)))
         return TestClient(app)
 
     http = route(registry)
@@ -1752,6 +1752,7 @@ def test_http_recovery_resumes_prepared_fence_after_restart(client, tmp_path, mo
         app.include_router(build_router(
             client.app.state.pallium_service, relay_storage=storage,
             codex_wake_registry=registry,
+            relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
         ))
         return TestClient(app)
 
@@ -1878,7 +1879,7 @@ def test_http_restart_prepares_new_generation_after_expired_hook_claim(client, t
     def route(actual_registry):
         app = FastAPI()
         app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
-                                       codex_wake_registry=actual_registry))
+                                       codex_wake_registry=actual_registry, relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event)))
         return TestClient(app)
 
     http = route(registry)
@@ -1937,7 +1938,7 @@ def test_http_pre_cas_worker_exception_clears_marker_for_same_process_resume(cli
     assert registry.initialize(old_owner_drained=True)
     app = FastAPI()
     app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
-                                   codex_wake_registry=registry))
+                                   codex_wake_registry=registry, relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event)))
     http = TestClient(app)
     from storage import sqlite_queue
     native_storage_time = sqlite_queue.time
@@ -2010,7 +2011,7 @@ def test_http_worker_start_or_prewrite_release_failure_resumes_same_generation_t
     assert registry.initialize(old_owner_drained=True)
     app = FastAPI()
     app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
-                                   codex_wake_registry=registry))
+                                   codex_wake_registry=registry, relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event)))
     http = TestClient(app)
     for session in ("sender", "target"):
         assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
@@ -2116,7 +2117,7 @@ def test_draining_trace_queue_does_not_restore_sqlite_contention_drop(client):
 
     def emit():
         codex_wake._emit_trace(
-            lambda event: service.enqueue_relay_trace_event(writer, event),
+            lambda event: client.app.state.relay_trace_writer.enqueue(writer, event),
             "relay-activation-" + "a" * 32,
             delivery["delivery_id"], delivery["recipient_endpoint_id"], "prepared",
         )
@@ -2136,14 +2137,14 @@ def test_draining_trace_queue_does_not_restore_sqlite_contention_drop(client):
                 witness.execute("BEGIN IMMEDIATE")
             assert caught.value.sqlite_errorcode == sqlite3.SQLITE_BUSY, diagnostics
         emit()
-        service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+        client.app.state.relay_trace_writer._executor.submit(lambda: None).result(timeout=2)
         assert competing.in_transaction, diagnostics
         assert results == [False], diagnostics
         competing.rollback()
     trace = client.get(f"/relay/messages/{sent['message_id']}/trace", params=SCOPE)
     assert trace.status_code == 200 and trace.json()["events"] == []
     emit()
-    service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+    client.app.state.relay_trace_writer._executor.submit(lambda: None).result(timeout=2)
     assert results == [False, True]
     trace = client.get(f"/relay/messages/{sent['message_id']}/trace", params=SCOPE)
     assert [event["stage"] for event in trace.json()["events"]] == ["prepared"]

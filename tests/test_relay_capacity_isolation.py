@@ -209,7 +209,7 @@ def test_tcp_ack_receipt_precedes_owned_callback_and_shutdown_drains(
         finally:
             invocation_returned.set()
 
-    cleanup.callback(app.state.pallium_service.close)
+    cleanup.callback(app.state._close_constructed)
     registry = app.state.codex_wake_registry
     assert registry.initialize(old_owner_drained=True)
     scope = {"container_ref": "git:example.test/ack-response-owner"}
@@ -379,7 +379,7 @@ def test_failed_ack_callback_recovers_next_delivery_once_through_native_fence(
             default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES,
             vector_index=VectorIndexConfig(enabled=False),
         ))
-        cleanup.callback(app.state.pallium_service.close)
+        cleanup.callback(app.state._close_constructed)
         registry = app.state.codex_wake_registry
         cleanup.callback(codex_wake.drain_codex_relay_wakes, registry)
         assert registry.initialize(old_owner_drained=True)
@@ -728,7 +728,7 @@ def test_exact_codex_turn_uses_one_admission_and_preserves_phase_failures(
             vector_index=VectorIndexConfig(enabled=False),
         ))
         cleanup.callback(app.state.pallium_service._storage.close)
-        cleanup.callback(app.state.pallium_service.close)
+        cleanup.callback(app.state._close_constructed)
         asyncio.run(exercise())
     finally:
         release_callback.set()
@@ -867,7 +867,7 @@ def test_relay_warning_sink_uses_tracked_worker_while_health_progresses(
     finally:
         release.set()
         try:
-            app.state.pallium_service.close()
+            app.state._close_constructed()
         finally:
             app.state.pallium_service._storage.close()
 
@@ -1137,7 +1137,7 @@ def test_independent_relay_operations_progress_with_all_codex_callbacks_waiting(
         if holder.ident is not None:
             holder.join(5)
         try:
-            app.state.pallium_service.close()
+            app.state._close_constructed()
         finally:
             app.state.pallium_service._storage.close()
 
@@ -1549,7 +1549,7 @@ def test_relay_callbacks_use_tracked_runner_without_blocking_health(
     finally:
         release.set()
         try:
-            app.state.pallium_service.close()
+            app.state._close_constructed()
         finally:
             app.state.pallium_service._storage.close()
 
@@ -1608,7 +1608,7 @@ def test_non_codex_http_activation_does_not_read_codex_authority(
         asyncio.run(exercise())
     finally:
         try:
-            app.state.pallium_service.close()
+            app.state._close_constructed()
         finally:
             app.state.pallium_service._storage.close()
 
@@ -1836,7 +1836,7 @@ def test_codex_operation_tracking_settles_after_event_loop_closes(tmp_path, monk
         cleanup.close()
         raise
     cleanup.callback(app.state.pallium_service._storage.close)
-    cleanup.callback(app.state.pallium_service.close)
+    cleanup.callback(app.state._close_constructed)
     loop = asyncio.new_event_loop()
     if failure == "schedule":
         original_schedule = loop.call_soon_threadsafe

@@ -443,7 +443,7 @@ def test_native_tool_failure_reopens_same_registration_for_hook_delivery(
     else:
         assert not force_release_refusal and attempts[0]["result"] == (expected,)
         assert registry.reservations() == ()
-    trace_executor = client.app.state.pallium_service._relay_trace_executor
+    trace_executor = client.app.state.relay_trace_writer._executor
     # Native-worker completion does not drain diagnostic writes.
     trace_executor.submit(lambda: None).result(timeout=2)
     pending = http.get("/relay/messages/retained-journey", params=SCOPE)

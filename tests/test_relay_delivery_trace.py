@@ -1205,23 +1205,23 @@ def test_trace_writer_failure_is_best_effort_and_releases_slot(client):
         assert release_writer.wait(timeout=2)
         raise RuntimeError("diagnostic storage unavailable")
 
-    assert service.enqueue_relay_trace_event(fail, {"stage": "prepared"})
+    assert client.app.state.relay_trace_writer.enqueue(fail, {"stage": "prepared"})
     assert called.wait(timeout=2)
     for _ in range(63):
-        assert service._relay_trace_slots.acquire(blocking=False)
-    assert not service._relay_trace_slots.acquire(blocking=False)
+        assert client.app.state.relay_trace_writer._slots.acquire(blocking=False)
+    assert not client.app.state.relay_trace_writer._slots.acquire(blocking=False)
     release_writer.set()
     for _ in range(200):
-        if service._relay_trace_slots.acquire(blocking=False):
+        if client.app.state.relay_trace_writer._slots.acquire(blocking=False):
             break
         threading.Event().wait(0.01)
     else:
         pytest.fail("failed trace writer did not release its slot")
     for _ in range(64):
-        service._relay_trace_slots.release()
+        client.app.state.relay_trace_writer._slots.release()
 
     completed = threading.Event()
-    assert service.enqueue_relay_trace_event(
+    assert client.app.state.relay_trace_writer.enqueue(
         lambda _event: completed.set(), {"stage": "prepared"}
     )
     assert completed.wait(timeout=2)

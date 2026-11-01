@@ -1015,6 +1015,7 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/real-reconcile"}
@@ -1186,6 +1187,7 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(recovered_app)
     workers = []
@@ -2548,6 +2550,7 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     workers = []
@@ -2837,7 +2840,7 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
         for worker in workers:
             worker.join(2)
             assert not worker.is_alive(), "reply wake worker did not finish"
-        service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+        client.app.state.relay_trace_writer._executor.submit(lambda: None).result(timeout=2)
 
     monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", capture_schedule)
     assert client.post(
@@ -2889,6 +2892,7 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     storage = client.app.state.pallium_service._storage
@@ -3318,6 +3322,7 @@ def test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract(client, 
     app.include_router(build_router(
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     with patch("app.dependencies.schedule_codex_relay_wake") as schedule:
@@ -3441,6 +3446,7 @@ def test_build_router_normalizes_endpoint_send_for_codex_wake(client) -> None:
     app.include_router(build_router(
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     target_scope = {"container_ref": "git:example.test/target"}
@@ -3467,6 +3473,7 @@ def test_ack_rearm_after_scope_transition_uses_live_container_and_historical_del
     app.include_router(build_router(
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     old = {"container_ref": "git:example.test/wake-old"}
@@ -3920,6 +3927,7 @@ def test_build_router_turn_never_releases_actual_codex_wake_state(client, monkey
         app.include_router(build_router(
             client.app.state.pallium_service,
             relay_storage=client.app.state.pallium_service._storage,
+            relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
         ))
         route = TestClient(app)
         assert route.post("/relay/turn", json={"runtime": "bad", "session_ref": "target-session", **SCOPE}).status_code == 422
@@ -4015,6 +4023,7 @@ def test_idempotent_send_schedules_one_codex_wake(client, monkeypatch) -> None:
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     assert route.post(
@@ -4056,6 +4065,7 @@ def test_exclusive_trial_endpoint_suppresses_send_and_recovery_native_wake(clien
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/exclusive-trial"}
@@ -4112,7 +4122,7 @@ def test_exclusive_trial_install_waits_for_inflight_native_reservation(client, m
     registry = _sqlite_wake_registry(storage)
     app = FastAPI()
     app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
-                                    codex_wake_registry=registry))
+                                    codex_wake_registry=registry, relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event)))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/trial-install-race"}
     for runtime, session in (("claude-code", "sender"), ("codex", "target")):
@@ -4180,6 +4190,7 @@ def test_exclusive_trial_binding_and_spend_survive_restart_and_later_delivery(cl
     app.include_router(build_router(
         client.app.state.pallium_service, relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/trial-spent"}
@@ -4227,7 +4238,7 @@ def test_exclusive_trial_rejects_stale_endpoint_or_delivery_before_native_action
     storage = client.app.state.pallium_service._storage
     relay = RelayService(storage)
     app = FastAPI()
-    app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage))
+    app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage, relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event)))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/trial-closed"}
     for runtime, session in (("claude-code", "sender"), ("codex", "target")):
@@ -4273,7 +4284,7 @@ def test_exclusive_trial_rejects_endpoint_scope_generation_aba_before_action(cli
     storage = client.app.state.pallium_service._storage
     relay = RelayService(storage)
     app = FastAPI()
-    app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage))
+    app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage, relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event)))
     route = TestClient(app)
     old = {"container_ref": "git:example.test/trial-aba-old"}
     new = {"container_ref": "git:example.test/trial-aba-new"}
@@ -4356,6 +4367,7 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     assert route.post("/relay/turn", json={
@@ -4454,6 +4466,7 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(recovered_app)
 
@@ -4560,6 +4573,7 @@ def test_late_exact_hook_claim_is_correlated_before_expired_wake_sweep(
     app.include_router(build_router(
         client.app.state.pallium_service, relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     for runtime, session in (("claude-code", "sender"), ("codex", "late-target")):
@@ -5153,8 +5167,8 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
     native_calls: list[tuple[str, str]] = []
 
     monkeypatch.setattr(
-        service,
-        "enqueue_relay_trace_event",
+        client.app.state.relay_trace_writer,
+        "enqueue",
         lambda writer, event: bool(writer(event)),
     )
     monkeypatch.setattr(codex_wake, "_DEBOUNCE_SECONDS", 0)
@@ -5180,6 +5194,7 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
         service,
         relay_storage=storage,
         codex_wake_registry=registry_a,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route_a = TestClient(app_a)
     scope = {"container_ref": "git:example.test/restart-link"}
@@ -5210,7 +5225,7 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
         scope,
         relay_service=relay,
         registry=registry_a,
-        trace_callback=lambda event: service.enqueue_relay_trace_event(
+        trace_callback=lambda event: client.app.state.relay_trace_writer.enqueue(
             relay.record_trace_event, event
         ),
     ) is None
@@ -5245,6 +5260,7 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
         service,
         relay_storage=storage,
         codex_wake_registry=registry_b,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route_b = TestClient(app_b)
     if round_trip_scope:
@@ -5279,7 +5295,7 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
         relay,
         ClaudeWakeRegistry(),
         codex_registry=registry_b,
-        trace_callback=lambda event: service.enqueue_relay_trace_event(
+        trace_callback=lambda event: client.app.state.relay_trace_writer.enqueue(
             relay.record_trace_event, event
         ),
     )
@@ -5328,6 +5344,7 @@ def test_http_repeat_ack_mcp_ack_and_atomic_reply_release_exact_codex_reservatio
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
         codex_wake_registry=isolated_codex_registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/ack-release"}
@@ -5426,6 +5443,7 @@ def test_expired_atomic_reply_keeps_exact_codex_activation_reservation(
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
         codex_wake_registry=isolated_codex_registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/expired-reply-fence"}
@@ -5497,6 +5515,7 @@ def _public_ack_route(client, runtime: str):
         relay_storage=client.app.state.pallium_service._storage,
         claude_wake_registry=claude_registry,
         codex_wake_registry=codex_registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     claim_app = FastAPI()
@@ -5950,6 +5969,7 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     source = {"container_ref": "git:example.test/scope-source"}
@@ -6106,6 +6126,7 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=restarted,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     status = TestClient(read_app).get(
         f"/relay/messages/{sent['message_id']}", params=source,
@@ -6273,6 +6294,7 @@ def test_ordinary_and_mismatched_claims_keep_unrelated_wake_fences(
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=isolated_codex_registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     for runtime, session in (
@@ -6393,6 +6415,7 @@ def test_old_inflight_claim_generation_cannot_unlock_replacement(
         relay_storage=storage,
         codex_wake_registry=registry,
         relay_runner=relay_runner,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     for runtime, session in (("claude-code", "sender"), ("codex", "target")):

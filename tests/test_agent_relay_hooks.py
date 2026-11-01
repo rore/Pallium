@@ -607,7 +607,7 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES,
         vector_index=VectorIndexConfig(enabled=False),
     ))
-    cleanup.callback(app.state.pallium_service.close)
+    cleanup.callback(app.state._close_constructed)
     assert app.state.codex_wake_registry.initialize(old_owner_drained=True)
 
     class NoRedirectHandler(urllib.request.HTTPRedirectHandler):

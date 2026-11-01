@@ -2,7 +2,25 @@
 
 ## Status
 
-Proposal (not yet accepted)
+Partially implemented. The proposal below describes the original decomposition;
+its line counts and extraction list are historical, not a queue of new work.
+
+`ItemProcessor`, `ThreadRebuilder`, `QueryExecutor`, `ConsolidationRunner` and
+`VectorEmbedder` already own their respective responsibilities. Do not extract
+them again. Remaining boundaries are tracked in
+[Simplify Relay lifecycle and capability boundaries](../../roadmap/features/simplify-relay-lifecycle-and-capability-boundaries.md).
+
+Relay trace jobs now belong to one `app.relay_trace.RelayTraceWriter` per app.
+App composition shares its bounded enqueue callback with routing and recovery,
+then settles its writers before closing the memory service and storage. A
+non-HTTP `PalliumService` does not create or own a Relay trace executor.
+Standalone router composition can omit optional tracing or supply an existing
+app-owned callback; it does not create a second pool. Usage-audit ownership
+remains on `PalliumService`.
+
+This ownership move does not resolve or alter retained-registration policy,
+hook capture, delivery guarantees or persistence. Those decisions remain
+separate from this completed structural boundary.
 
 ## Problem
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.relay_trace import RelayTraceWriter
+
 import asyncio
 import threading
 import contextlib
@@ -69,7 +71,6 @@ async def test_production_codex_shutdown_settles_pretracking_and_worker_tail(
     from types import SimpleNamespace
     from unittest.mock import MagicMock
     from app import main, run as app_run, codex_wake, dependencies, codex_bridge_pipe
-    from core.service import PalliumService
 
     entered, release, finished = threading.Event(), threading.Event(), threading.Event()
     closed, workers = [], []
@@ -94,7 +95,7 @@ async def test_production_codex_shutdown_settles_pretracking_and_worker_tail(
     monkeypatch.setattr(app_run.uvicorn.Server, "run", run)
     monkeypatch.setattr(app_run.uvicorn.Server, "_wait_tasks_to_complete", wait_for_tasks)
     monkeypatch.setattr(main, "app", owned_app)
-    real_enqueue = PalliumService.enqueue_relay_trace_event
+    real_enqueue = RelayTraceWriter.enqueue
     real_schedule = codex_wake.schedule_codex_relay_wake
     monkeypatch.setattr(dependencies, "schedule_codex_relay_wake", real_schedule)
     monkeypatch.setattr(codex_bridge_pipe, "retained_wake_enabled", lambda: False)
@@ -121,7 +122,7 @@ async def test_production_codex_shutdown_settles_pretracking_and_worker_tail(
             finally:
                 finished.set()
         return real_enqueue(service, writer, event)
-    monkeypatch.setattr(PalliumService, "enqueue_relay_trace_event", enqueue)
+    monkeypatch.setattr(RelayTraceWriter, "enqueue", enqueue)
 
     async with _prebuilt_production_inner(
         monkeypatch, lambda: create_app(_no_vector_config(test_db_url)),
@@ -1240,7 +1241,6 @@ async def test_production_factory_drains_claude_wake_thread_before_storage_close
     import httpx
     import app.main as main
     from app.claude_wake_binding import write_json_atomic
-    from core.service import PalliumService
     from sqlalchemy import text
 
     gate_started, release_gate, trace_finished = threading.Event(), threading.Event(), threading.Event()
@@ -1253,7 +1253,7 @@ async def test_production_factory_drains_claude_wake_thread_before_storage_close
     close_order_witnesses = []
     created_apps = []
     create_app = main.create_app
-    original_enqueue = PalliumService.enqueue_relay_trace_event
+    original_enqueue = RelayTraceWriter.enqueue
 
     def build_inner(*_args, **_kwargs):
         built = create_app(_no_vector_config(test_db_url))
@@ -1352,7 +1352,7 @@ async def test_production_factory_drains_claude_wake_thread_before_storage_close
             monkeypatch.setattr(main, "drain_claude_relay_wakes", unexpected_missing_drain, raising=False)
         else:
             monkeypatch.setattr(main, "drain_claude_relay_wakes", observe_actual_drain)
-        monkeypatch.setattr(PalliumService, "enqueue_relay_trace_event", gated_enqueue)
+        monkeypatch.setattr(RelayTraceWriter, "enqueue", gated_enqueue)
         monkeypatch.setattr("app.claude_wake.claude_wake_transport", fake_transport)
         application = main.app()
         owner = None
