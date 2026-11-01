@@ -1,3 +1,5 @@
-"@pallium-manager": owner.md
+"@pallium-manager": manager.md
+"@pallium-architect": architect.md
+"@publicationdev": developer.md
 "@relaydev": relay-developer.md
 "@historydev": session-history-developer.md
