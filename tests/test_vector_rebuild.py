@@ -234,9 +234,12 @@ class FakeIndex:
     def search(self, query_vector, k: int, exact: bool = False) -> FakeResults:
         return FakeResults(keys=[], distances=[])
 
-    def save(self, path: str) -> None:
+    def save(self, path: str | None = None) -> bytearray | None:
         vecs = {str(k): v for k, v in self._vectors.items()}
-        Path(path).write_text(json.dumps({"vectors": vecs}), encoding="utf-8")
+        data = bytearray(json.dumps({"vectors": vecs}).encode("utf-8"))
+        if path is None:
+            return data
+        Path(path).write_bytes(data)
 
     def load(self, path: str) -> None:
         data = json.loads(Path(path).read_text(encoding="utf-8"))

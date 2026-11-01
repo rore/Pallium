@@ -1282,7 +1282,20 @@ def test_codex_hook_reconciliation_preserves_mixed_peer_wrappers_and_matchers(
         if setup_codex._managed_hook_script(hook) == "session_start.py"
     ]
     assert len(managed) == 1
-    assert entries[-1]["matcher"] == "startup|resume"
+    assert entries[-1]["matcher"] == "startup|resume|compact"
+
+
+def test_codex_managed_session_start_matches_compaction_in_template_and_setup():
+    import re
+
+    template = json.loads((Path("integrations/codex/hooks/hooks.json")).read_text())
+    installed = setup_codex._register_hooks({})
+    for config in (template, installed):
+        entries = config["hooks"]["SessionStart"]
+        assert len(entries) == 1
+        matcher = entries[0]["matcher"]
+        assert all(re.search(matcher, source) for source in ("startup", "resume", "compact"))
+        assert all(re.search(matcher, source) is None for source in ("clear", "fork"))
 
 
 def test_codex_setup_refuses_accidental_live_checkout_replacement(

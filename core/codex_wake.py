@@ -116,7 +116,29 @@ class CodexWakeRegistry:
             try:
                 self._relay.codex_wake_initialize(tuple(self._reservations.values()))
             except Exception as exc:
-                logger.warning("codex_wake_initialization_failed error_type=%s", type(exc).__name__)
+                stage, phase_ms = "unknown", None
+                if isinstance(exc, ImmediateTransactionBusyError):
+                    try:
+                        value = exc.acquisition_stage
+                        if type(value) is str and value in ImmediateTransactionBusyError.ACQUISITION_STAGES:
+                            stage = value
+                    except Exception:
+                        pass
+                    try:
+                        values = exc.acquisition_phase_ms
+                        if type(values) is dict and 0 < len(values) <= 4:
+                            values = values.copy()
+                            allowed = {"session_factory", "session_connection", "setup_pragma", "begin_immediate"}
+                            if (0 < len(values) <= 4 and all(
+                                    type(key) is str and key in allowed and type(value) is int
+                                    and 0 <= value <= 60_000 for key, value in values.items())):
+                                phase_ms = {key: values[key] for key in sorted(values)}
+                    except Exception:
+                        pass
+                logger.warning(
+                    "codex_wake_initialization_failed error_type=%s acquisition_stage=%s acquisition_phase_ms=%s",
+                    type(exc).__name__, stage, phase_ms if phase_ms is not None else "unknown",
+                )
             self._refresh()
             return self._usable
 

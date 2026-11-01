@@ -704,7 +704,7 @@ def _register_hooks(hooks_data: dict) -> dict:
     """Reconcile Pallium hooks in Codex hooks.json across checkout paths."""
     hooks_by_event = hooks_data.setdefault("hooks", {})
     hook_defs = [
-        ("SessionStart", "session_start.py", 8, "Loading memory", "startup|resume"),
+        ("SessionStart", "session_start.py", 8, "Loading memory", "startup|resume|compact"),
         ("UserPromptSubmit", "user_prompt_submit.py", 8, "Retrieving memory", None),
         ("Stop", "stop.py", 15, None, None),
     ]

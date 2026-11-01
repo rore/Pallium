@@ -19,6 +19,82 @@ pytestmark = pytest.mark.slow
 native = pytest.mark.skipif(sys.platform != "win32", reason="Windows kernel pipe contract")
 
 
+@native
+def test_vector_save_slow_binary_write_preserves_real_ready_progress(native_tmp_path, monkeypatch):
+    pytest.importorskip("usearch")
+    from storage.vector_index import VectorIndex
+    from tests.test_codex_bridge_pipe import wait_until
+
+    home = native_tmp_path / "vector-ready"
+    directory = bridge.prepare_inventory_service(home)
+    index_path = home / "snapshot.index"
+    index = VectorIndex.create_empty(index_path, 2, "generic")
+    index.add("é-שלום", [1., 0.])
+    entered, release, completed = threading.Event(), threading.Event(), threading.Event()
+    errors = []
+    write = Path.write_bytes
+    def slow_binary_write(path, data):
+        if path.parent == home and path.suffix == ".tmp":
+            assert isinstance(data, bytearray)
+            entered.set()
+            assert release.wait(10), "test must release its isolated slow sink"
+        return write(path, data)
+    monkeypatch.setattr(Path, "write_bytes", slow_binary_write)
+    def save():
+        try:
+            index.save()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            completed.set()
+    service = bridge.RetainedService(directory).start()
+    writer = threading.Thread(target=save, daemon=True)
+    try:
+        wait_until(lambda: (directory / "active.json").exists() or service.stop_event.is_set())
+        assert not service.stop_event.is_set()
+        writer.start()
+        assert entered.wait(3)
+        started = time.monotonic()
+        result = subprocess.run([sys.executable, "-B", "-X", "utf8", "-c", """
+import json, sys, threading, time
+from pathlib import Path
+from app.codex_bridge_pipe import NativeInventoryClient
+client = NativeInventoryClient(Path(sys.argv[1]), threading.Event(), retained=True)
+try:
+    started = time.monotonic()
+    response = client.ready()
+    print(json.dumps({'response': response, 'seconds': time.monotonic()-started, 'unresolved': client.unresolved}))
+finally:
+    client.dispose()
+""", str(directory / "active.json")], cwd=Path(__file__).resolve().parents[1],
+            capture_output=True, text=True, encoding="utf-8", timeout=6)
+        assert result.returncode == 0, result.stderr
+        report = json.loads(result.stdout)
+        assert report["response"]["status"] == "ready" and report["seconds"] < bridge.EXCHANGE_SECONDS
+        assert report["unresolved"] is False and not completed.is_set()
+        # The slow sink stays blocked beyond the unchanged READY exchange budget.
+        time.sleep(max(0, bridge.EXCHANGE_SECONDS + .2 - (time.monotonic() - started)))
+        assert not completed.is_set() and not release.is_set()
+        assert json.loads(Path(str(index_path) + ".meta.json").read_text())["entry_count"] == 0
+        release.set()
+        writer.join(3)
+        assert not writer.is_alive() and not errors
+        loaded = VectorIndex.load(index_path)
+        assert loaded.entry_count() == 1 and loaded.search([1., 0.], 1)[0][0] == "é-שלום"
+        assert json.loads(Path(str(index_path) + ".meta.json").read_text())["entry_count"] == 1
+    finally:
+        release.set()
+        if writer.ident is not None:
+            writer.join(3)
+        service.stop()
+        if service.thread:
+            service.thread.join(3)
+        assert not writer.is_alive() and not service.thread.is_alive()
+        assert not service.unresolved and not bridge._native_uncertain
+        assert home.resolve().parent == native_tmp_path.resolve()
+        shutil.rmtree(home)
+
+
 @pytest.fixture
 def native_tmp_path():
     w = bridge._native()
