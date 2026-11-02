@@ -19,7 +19,7 @@ For an in-scope change task when `agent-workflow.yaml` exists.
 ```
 0. Apply request scope before config; return for standalone read-only analysis.
 1. Read agent-workflow.yaml.
-2. Use the supplied Work Record identity, or derive the slug from the branch.
+2. Resolve task identity.
 3. Classify, then read or initialise the Work Record.
 4. At each checkpoint, write then act.
 5. Update State at transitions.
@@ -52,9 +52,13 @@ Open `agent-workflow.yaml` and read:
 
 ## Step 2 — Resolve the identity
 
-When given `agent-workflow:<slug>`, invoke `python <trusted-install>/scripts/agent-workflow-check.py --repo-root <checkout> --resolve-work-record --work-record-ref agent-workflow:<slug>`. Use the supplied identity verbatim; never compare or fall back to the branch, and never create a competing record.
+One owner controls requirements, baseline, approvals, State, integration, and acceptance. Contributions share its record; independently progressing deliveries use distinct records. Resolve identity conflicts with the assigner; preserve identity on handoff.
 
-Otherwise run `git rev-parse --abbrev-ref HEAD`, strip the first matching prefix from `slice/`, `feat/`, `feature/`, `fix/`, `bug/`, `chore/`, `demo/`, then replace remaining `/` with `-`. On a long-lived branch, stop unless it is the default and applicability passed.
+Given `agent-workflow:<slug>`, run `python <trusted-install>/scripts/agent-workflow-check.py --repo-root <checkout> --resolve-work-record --work-record-ref agent-workflow:<slug>`. The resolver preserves supplied identity verbatim without branch inspection or fallback; never create competing records.
+
+Otherwise derive from `git rev-parse --abbrev-ref HEAD`: strip the first matching prefix (`slice/`, `feat/`, `feature/`, `fix/`, `bug/`, `chore/`, `demo/`) and replace remaining `/` with `-`. Stop on long-lived branches unless default and applicability passed.
+
+Branch-derived guards ignore supplied refs; use branches deriving the canonical slug, e.g. `feat/task` and `fix/task`.
 
 ## Step 3 — Classify, then read or initialise the Work Record
 
@@ -109,15 +113,12 @@ Update at every phase boundary:
 
 ## Delegating to subagents
 
-Outcome-affecting subagents inherit this Work Record. Supply:
+Same-task assistance and contributions inherit this Work Record. Supply:
 
-1. Path to the Work Record (don't paraphrase; point at the file).
-2. Required updates (Implementation prose, Evidence, State).
-3. Allowed and excluded scope.
-4. Read-only (report, no edits) or material (update the record).
-5. Exact target checkout; use explicit shell workdir or absolute write targets. Relative `apply_patch` targets the session cwd, not a prose-assigned checkout.
+1. Work Record path (don't paraphrase), required updates, allowed/excluded scope, and read-only (report/no edits) or material (update record) authority.
+2. Exact checkout; use explicit workdir or absolute targets. Relative `apply_patch` uses session cwd.
 
-Check the finished subagent's record; repair missing updates before declaring the step done.
+Repair missing subagent record updates before completing delegation.
 
 ### Clean-context delegation
 

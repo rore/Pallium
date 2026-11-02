@@ -45,9 +45,9 @@ Record `Agent technical review: <source ref>` in Plan review for Elevated/High. 
 
 ## Hand-off readiness
 
-Before `Ready to implement`:
-- Compact: Approach and Verification both populated.
-- Expanded: Plan, Verification plan, Plan review populated. Approvals populated when Risk is High.
+Before `Ready to implement`, populate compact Approach/Verification or expanded Plan/Verification plan/Plan review, plus High-risk Approvals.
+
+Before assigning implementation, record settled caller-visible behavior decisions or precise authoritative links in this Work Record; keep them current under [existing change rules](behavioral-integrity.md), never rewriting the original baseline.
 
 Checker predicates: `workrecord.routine_fields_present` (compact) / `workrecord.expanded_fields_present` (expanded).
 
