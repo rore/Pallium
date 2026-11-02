@@ -3,6 +3,51 @@
 How the Pallium service runs and how to read its health. Machine-specific launch
 details (paths, keys, restart commands) live in operator notes, not here.
 
+## Windows isolated qualification runtimes
+
+Python jobs started by a packaged desktop application can encounter a reported
+Windows `bindflt.sys` kernel-pool leak when opening AppData junctions. See the
+[trace-based report](https://github.com/anthropics/claude-code/issues/96870).
+Avoiding a managed interpreter's minor-version junction is a mitigation to
+validate in the actual execution context, not a driver fix or a guarantee.
+
+For new qualification work, use the physical directory of an already installed
+exact Python patch version. If that directory remains under AppData and growth
+continues, test an isolated copy of the same interpreter outside AppData. Managed
+Python tools may use a
+[minor-version directory](https://docs.astral.sh/uv/concepts/python-versions/#minor-version-directories)
+that redirects to a different patch directory. Preserve running jobs and old
+environments; create a separate qualification venv instead of rewriting an
+active environment's `pyvenv.cfg`.
+
+Audit the resulting executable, `pyvenv.cfg`, `sys._base_executable`,
+`sys.base_prefix`, `sys.path`, and any explicit bootstrap import list. Changing
+only the executable does not repair old bootstrap paths; editing only the
+`home` field does not necessarily retarget an existing Windows launcher. Build
+and test the replacement separately. Preserve dependency
+versions and supply the intended checkout explicitly; do not copy an editable
+project import mapping to another checkout. Select the new interpreter through
+process-local `PYTHON` for Workflow commands. Its Python runtime already uses
+`sys.executable` for child checks, so qualification does not require changing
+shared runtime code or global interpreter discovery.
+
+Validate with a bounded idle baseline, repeated starts and a small representative
+qualification run from the same desktop execution context. Compare `NtFC` bytes
+and allocation/free counts again after the children exit. Counters are
+system-wide, allocation/free counters can wrap, and other jobs or delayed frees
+can make attribution inconclusive. Keep raw measurements and machine-specific
+commands in ignored local evidence. Old retained memory need not disappear for
+new allocation growth to stop. Do not change global tools, PATH, desktop
+packaging or drivers, or restart Windows, as part of this isolated test.
+
+Switching existing developer or installed runtime entry points requires separate
+exact-scope authorization, guarded backups and rollback. Preserve running
+processes and stop on locked or changed files. Already running processes retain
+their loaded interpreter paths. Retain any adopted interpreter copy while an
+environment depends on it; cleanup, relocation, or a later environment rebuild
+must preserve that dependency. Recheck the actual launcher and paths after
+normal Python/venv maintenance, which can recreate a managed junction route.
+
 ## Service model
 
 Pallium runs as a long-lived local service, independent of any one repo or agent
