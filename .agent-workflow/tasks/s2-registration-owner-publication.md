@@ -44,6 +44,8 @@ The fresh whole-change selector chooses the full lane. Preparation does not exec
 
 Agent technical review: unchanged S2 plan/source/local result acceptance is reused from the original independent reviewer, as recorded above and in the task-owner handoff. Reviewed source identities remain fixed by their accepted packet/postimage hashes. Exact candidate projection excludes only independent diagnostics and includes the accepted characterization witness; this is not a fresh reviewer endorsement of final platform evidence. Task-owner verification of the concrete composition and later current-head CI remain open. No public publication, formal approval, installation or incident closure is claimed.
 
+Reviewed revision: source HEAD `d1537dac344036812c4879b58070822b1776a8b6` with the accepted S2 SOURCE packet `a4fe511e75ac9b34fc38293e2d95f6f2d7b5f12792537b37bdcaa92aa78dafef` and RESULT packet `16006cf281095cc47b4c58feb87a1b44305a87d835e8ce60bded7df4e4668d92`. Candidate application content at `c28e10de` is the verified S2 projection described above; no separate independent composition review is claimed.
+
 Verification adequacy: the exact four-file reverse projection, accepted caller-surface witness, import-boundary report, GRAY Redline result, clean history-aware workflow, full-lane selector, syntax, caller, privacy and whitespace checks establish a concrete unchanged-S2 composition for owner review. They do not establish current-head platform acceptance. Local full qualification was not repeated. The initial static boundary report prerequisite and a helper's default-encoding failure were corrected without product edits; original evidence remains retained.
 
 ## Handoff
