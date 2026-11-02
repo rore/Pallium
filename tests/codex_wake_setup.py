@@ -229,8 +229,10 @@ def observe_relay_acquisition_failures(storage, monkeypatch):
 def _self_check_setup_observation():
     """One hosted cheap check, before the sole development node invocation."""
     import json
+    import logging
     import time
     from types import SimpleNamespace
+    from unittest import TestCase
     from unittest.mock import patch
     import pytest
     from sqlalchemy import create_engine, text
@@ -248,7 +250,12 @@ def _self_check_setup_observation():
         return sentinel
 
     started = time.perf_counter_ns()
-    with patch.object(Connection, "execute", native):
+    checks = TestCase()
+    with checks.assertRaises(AssertionError):
+        with checks.assertNoLogs(level=logging.WARNING):
+            logging.getLogger("sqlalchemy.pool").error("controlled cleanup error")
+    # Pool reset can log an error without raising; gate success on clean teardown.
+    with checks.assertNoLogs(level=logging.WARNING), patch.object(Connection, "execute", native):
         with pytest.MonkeyPatch.context() as monkeypatch:
             probe = _SetupObservation(storage, monkeypatch)
             with engine.connect() as connection:
@@ -267,12 +274,12 @@ def _self_check_setup_observation():
                 assert len(calls) == 2 and probe.recording_errors == 1
                 probe.record = saved_record
                 probe.snapshot(attempt)
-                storage.close()
-                assert not probe.active
-                assert not engine.dispatch.before_cursor_execute and not engine.dispatch.after_cursor_execute
+            storage.close()
+            assert not probe.active
+            assert not engine.dispatch.before_cursor_execute and not engine.dispatch.after_cursor_execute
         assert Connection.execute is native
     assert Connection.execute is original_execute
-    with pytest.MonkeyPatch.context() as monkeypatch:
+    with checks.assertNoLogs(level=logging.WARNING), pytest.MonkeyPatch.context() as monkeypatch:
         probe = _SetupObservation(storage, monkeypatch)
         with engine.connect() as connection:
             attempt = probe.start()
@@ -294,6 +301,8 @@ def _self_check_setup_observation():
             assert probe.recording_errors >= 2
             probe.stamp = original_stamp
         storage.close()
+        assert not probe.active
+        assert not engine.dispatch.before_cursor_execute and not engine.dispatch.after_cursor_execute
     assert Connection.execute is original_execute
     print(json.dumps({"self_check": "passed", "elapsed_ns": time.perf_counter_ns() - started,
                       "cost_limit": "single invocation; no worst-case or historical-load equivalence"}))

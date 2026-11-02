@@ -45,11 +45,11 @@ jobs:
           Path('/tmp/acquisition-constraints.txt').write_text('PyYAML==6.0.3\nannotated-doc==0.0.5\nannotated-types==0.8.0\nanyio==4.16.0\nattrs==26.1.0\ncertifi==2026.10.23\ncffi==2.1.1\nclick==8.5.0\ncryptography==50.0.2\nexecnet==2.1.2\nfastapi==0.162.0\nfilelock==4.2.6\nflatbuffers==25.12.19\nfsspec==2026.9.0\ngrimp==3.18\nh11==0.16.0\nhf-xet==1.8.0\nhttpcore==1.0.9\nhttpcore2==2.16.0\nhttpx==0.28.1\nhttpx-sse==0.4.3\nhttpx2==2.16.0\nhuggingface-hub==2.4.0\nidna==3.20\nimport-linter==2.15\niniconfig==2.3.1\njsonschema==4.26.0\njsonschema-specifications==2025.9.1\nmarkdown-it-py==4.2.0\nmcp==1.30.0\nmdurl==0.1.2\nnumkong==7.8.7\nnumpy==2.5.4\nonnxruntime==1.31.1\nopentelemetry-api==1.45.2\npackaging==26.3\npluggy==1.7.0\nprompt_toolkit==3.0.53\nprotobuf==7.36.2\npycparser==3.12\npydantic==2.14.2\npydantic-core==2.50.2\npydantic-settings==2.16.2\npygments==2.21.0\npyjwt==2.15.1\npyte==0.8.2\npytest==8.4.2\npytest-asyncio==0.26.0\npytest-xdist==3.8.0\npython-dotenv==1.2.4\npython-multipart==0.0.33\nreferencing==0.37.0\nrich==15.0.0\nrpds-py==2026.9.1\nshellingham==1.5.4\nsqlalchemy==2.1.6\nsse-starlette==3.6.0\nstarlette==1.10.0\ntokenizers==0.23.3\ntqdm==4.70.1\ntruststore==0.10.5\ntyper==0.27.3\ntyping-inspection==0.4.4\ntyping_extensions==4.16.0\nusearch==2.26.6\nuvicorn==0.54.0\nwcwidth==0.9.4\n')
           PY
           pip install -e '.[dev,vector,mcp]' -c /tmp/acquisition-constraints.txt
-      - name: One self-check then one unchanged native-error node
+      - name: One corrected observer self-check only
         shell: bash
         run: |
           python -I -B - <<'PY'
-          import hashlib, importlib, importlib.metadata, json, os, pathlib, platform, re, sqlite3, subprocess, sys
+          import hashlib, importlib, importlib.metadata, json, os, pathlib, platform, sqlite3, subprocess, sys
           root = pathlib.Path.cwd().resolve()
           output = root / 'test-results/acquisition'
           raw_output = pathlib.Path(os.environ['RUNNER_TEMP']) / 'acquisition-raw'
@@ -60,32 +60,28 @@ jobs:
               assert origin.is_relative_to(root), name
           helper = importlib.import_module('tests.codex_wake_setup')
           helper_hash = hashlib.sha256(pathlib.Path(helper.__file__).read_bytes()).hexdigest()
+          expected_helper = 'e2b1626d25fb86a2386ae9fc376f7fe5dc08c5b0511ee7cd2e48da200b9434dc'
+          assert helper_hash == expected_helper
           metadata = {'head': os.environ['GITHUB_SHA'], 'python': platform.python_version(),
               'platform': platform.system(), 'os_release': platform.freedesktop_os_release(),
-              'sqlite': sqlite3.sqlite_version, 'image': os.environ.get('ImageVersion'), 'configured_workers': 4,
+              'sqlite': sqlite3.sqlite_version, 'image': os.environ.get('ImageVersion'), 'pytest_nodes': 0,
               'helper_sha256': helper_hash,
               'packages': dict(sorted((d.metadata['Name'], d.version) for d in importlib.metadata.distributions())),
-              'limits': 'One WIP development attempt; no historical worker-load equivalence or release qualification.'}
+              'limits': 'One corrected observer self-check only; no concurrency node, full suite or release qualification.'}
           (raw_output / 'metadata.json').write_text(json.dumps(metadata, sort_keys=True, indent=2))
           # Raw output remains on this ephemeral runner until sanitized.
           selfcheck = subprocess.run([sys.executable, '-I', '-B', '-c',
-              "import sys;sys.path.insert(0,'.');from tests.codex_wake_setup import _self_check_setup_observation;_self_check_setup_observation()"],
-              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+              "import hashlib,pathlib,sys;sys.path.insert(0,'.');from tests import codex_wake_setup as h;"
+              "p=pathlib.Path(h.__file__).resolve();assert p==pathlib.Path('tests/codex_wake_setup.py').resolve();"
+              "assert hashlib.sha256(p.read_bytes()).hexdigest()=='e2b1626d25fb86a2386ae9fc376f7fe5dc08c5b0511ee7cd2e48da200b9434dc';"
+              "h._self_check_setup_observation();print('verified corrected helper source')"],
+              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
           status, raw = selfcheck.returncode, selfcheck.stdout
           (raw_output / 'self-check.log').write_bytes(raw)
-          node_invocations = 0
-          if status == 0:
-              node_invocations = 1
-              command = [sys.executable, '-B', '-m', 'pytest', '-q', '-rA', '--capture=tee-sys', '--tb=short',
-                  '--junitxml=' + str(raw_output / 'pytest.xml'),
-                  'tests/test_codex_retained_wake.py::test_write_is_fenced_across_concurrency_recovery_restart[native-error]']
-              result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-              status, raw = result.returncode, result.stdout
-          (raw_output / 'pytest.log').write_bytes(raw)
-          loaded = re.findall(r'WIP observer loaded: (\{[^\n]+\})', raw.decode(errors='replace'))
-          workers = [json.loads(row) for row in loaded]
-          observed_workers = [row['worker'] for row in workers
-              if re.fullmatch(r'gw[0-9]+', row.get('worker', '')) and row.get('helper_sha256') == helper_hash]
+          (raw_output / 'self-check.stderr.log').write_bytes(selfcheck.stderr)
+          clean = status == 0 and not selfcheck.stderr
+          if status == 0 and not clean:
+              status = 1
           replacements = [(str(root), '<checkout>'), (str(pathlib.Path.home()), '<home>'),
               (os.environ['RUNNER_TEMP'], '<runner-temp>'), (sys.prefix, '<python>')]
           sizes = {}
@@ -96,24 +92,23 @@ jobs:
               sizes[path.name] = {'characters': len(value), 'truncated': len(value) > 262144}
               (output / path.name).write_text(value[:262144])
           manifest = {'exit_status': status, 'self_check_status': selfcheck.returncode,
-              'node_invocations': node_invocations, 'observed_executing_workers': observed_workers,
-              'observer_proven': bool(observed_workers), 'sizes': sizes,
+              'node_invocations': 0, 'self_check_invocations': 1, 'stderr_empty': not selfcheck.stderr,
+              'helper_sha256': helper_hash, 'clean_teardown': clean, 'sizes': sizes,
               'files': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in output.iterdir()}}
           (output / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True, indent=2))
           print((output / 'self-check.log').read_text())
-          print((output / 'pytest.log').read_text())
+          print((output / 'self-check.stderr.log').read_text())
           raise SystemExit(status)
           PY
       - name: Preserve only sanitized development evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: acquisition-development-${{ github.run_attempt }}
+          name: corrected-observer-selfcheck-${{ github.run_attempt }}
           path: |
             test-results/acquisition/metadata.json
             test-results/acquisition/self-check.log
-            test-results/acquisition/pytest.log
-            test-results/acquisition/pytest.xml
+            test-results/acquisition/self-check.stderr.log
             test-results/acquisition/manifest.json
           if-no-files-found: error
           retention-days: 7
