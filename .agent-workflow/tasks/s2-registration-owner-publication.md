@@ -34,7 +34,7 @@ The pre-edit import-boundary report, Redline and implementation-ready workflow c
 
 ## Composition evidence
 
-All four candidate files exactly equal the accepted postimages after reversing only the excluded diagnostic hunks. This also verifies that the source-closure witness and documentation retain their accepted content. Syntax parses, changed-call inspection and absence of old registration mutation entry points passed. The extraction introduces no dependency on the excluded retry-observation helpers. No semantic composition conflict was found. PR #381's four relevant files equal current main, so its broader conflicting branch is not an S2 source prerequisite.
+After newline normalization, all four candidate files exactly equal the accepted postimages after reversing only the excluded diagnostic hunks. This also verifies that the source-closure witness and documentation retain their accepted content. Syntax parses, changed-call inspection and absence of old registration mutation entry points passed. The extraction introduces no dependency on the excluded retry-observation helpers. No semantic composition conflict was found. PR #381's four relevant files equal current main, so its broader conflicting branch is not an S2 source prerequisite.
 
 The accepted source RESULT reports 8,940 passes, 37 skips, two xfails and 699 slow deselections. Existing focused and native evidence is reused with its original limits: two earlier-profile native passes and three corrected-profile passes are separate evidence, with original failed profiles retained. These are source qualifications, not a new-head platform result. The accepted source reviewer and task owner retain review ownership; no new team, reviewer or architect was created.
 
