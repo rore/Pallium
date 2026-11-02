@@ -21,7 +21,7 @@ Publication readiness -> fresh Redline, history-aware Agent Workflow, selector, 
 Evidence limits -> reuse accepted local qualification as source evidence, preserve failed-profile limits, and do not claim current-head platform acceptance or installed recovery.
 **Plan review:** Agent technical review: reuse the existing independent S2 PLAN GO for packet 1926836b991eebd3f912482cd689cd7ec4593fd4bbb677df668700dec0a61b5a and SOURCE GO for packet a4fe511e75ac9b34fc38293e2d95f6f2d7b5f12792537b37bdcaa92aa78dafef, limited to the unchanged accepted S2 delta and characterization witness. Any semantic change outside that accepted material stops preparation for disposition; no new review chain is created.
 **Approvals:** Approved by user in the prior standing work directive (timestamp unavailable): "yes, i approve, and no need to ask every time - i approve all the work to get this bug fixed". The authoritative roadmap and task owner select behavior-preserving S2 source work under that standing authority. This assignment authorizes only bounded isolated publication preparation and task-owner verification of the concrete composition; no additional product behavior, public publication or installed change is inferred.
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -29,3 +29,23 @@ Evidence limits -> reuse accepted local qualification as source evidence, preser
 Created the isolated publication branch from `d01986fe6d7013a04fcdcf382d9f57f1c65e0b61` without changing any preserved publication branch or source-owner Git state. Exact roadmap relationship and current participation were resolved through their owning tools. The manager retains roadmap ownership and the separate incident assignment.
 
 Accepted evidence was read and copied as private immutable inputs. SOURCE packet, SOURCE diff, RESULT packet and supplement hashes match the task-owner handoff. All four source files still match their accepted raw postimages. The accepted documentation preimage equals main after newline normalization; the other preimages differ only by the enumerated diagnostic/test and characterization hunks. No application edit has occurred yet.
+
+The pre-edit import-boundary report, Redline and implementation-ready workflow checks passed after generating the required fresh boundary backend report. Imported only the accepted three-file S2 patch and unchanged 103-line source-closure characterization witness. Excluded 18 production retry-observation lines and the 65-line observation test from commit `552b86430dffb4d5be12e2299a25a0e595aad8f1`, plus its separate warning-parser test adaptation. No broad commit was cherry-picked and no whole source file was silently copied.
+
+## Composition evidence
+
+All four candidate files exactly equal the accepted postimages after reversing only the excluded diagnostic hunks. This also verifies that the source-closure witness and documentation retain their accepted content. Syntax parses, changed-call inspection and absence of old registration mutation entry points passed. The extraction introduces no dependency on the excluded retry-observation helpers. No semantic composition conflict was found. PR #381's four relevant files equal current main, so its broader conflicting branch is not an S2 source prerequisite.
+
+The accepted source RESULT reports 8,940 passes, 37 skips, two xfails and 699 slow deselections. Existing focused and native evidence is reused with its original limits: two earlier-profile native passes and three corrected-profile passes are separate evidence, with original failed profiles retained. These are source qualifications, not a new-head platform result. The accepted source reviewer and task owner retain review ownership; no new team, reviewer or architect was created.
+
+The fresh whole-change selector chooses the full lane. Preparation does not execute a duplicate full local suite or claim platform acceptance. Existing PR CI supplies Linux 3.12/3.13 and Windows smoke; full pre-merge Windows 3.12/3.13/native selection requires a separately authorized existing manual dispatch at the final publication head because branch-push CI is restricted to main. The inert proposed PR description and exact-head CI plan are retained privately for task-owner composition verification.
+
+## Result review
+
+Agent technical review: unchanged S2 plan/source/local result acceptance is reused from the original independent reviewer, as recorded above and in the task-owner handoff. Reviewed source identities remain fixed by their accepted packet/postimage hashes. Exact candidate projection excludes only independent diagnostics and includes the accepted characterization witness; this is not a fresh reviewer endorsement of final platform evidence. Task-owner verification of the concrete composition and later current-head CI remain open. No public publication, formal approval, installation or incident closure is claimed.
+
+Verification adequacy: the exact four-file reverse projection, accepted caller-surface witness, import-boundary report, GRAY Redline result, clean history-aware workflow, full-lane selector, syntax, caller, privacy and whitespace checks establish a concrete unchanged-S2 composition for owner review. They do not establish current-head platform acceptance. Local full qualification was not repeated. The initial static boundary report prerequisite and a helper's default-encoding failure were corrected without product edits; original evidence remains retained.
+
+## Handoff
+
+The clean local branch is `feat/s2-registration-owner-publication`, based on `d01986fe6d7013a04fcdcf382d9f57f1c65e0b61`. Four application/test/design files plus this record are the complete tracked change. No source-composition blocker or production dependency on PR #381 was found. The manager verifies the exact candidate and inert proposed PR description before any public push/PR/merge, then owns authorization for the existing current-head platform CI plan and roadmap reconciliation. No feature completion, installed S2 behavior, S3 acceptance or incident recovery is claimed. Retain this publication checkout for that pending composition review and preserve every existing source/qualification checkout and evidence packet.
