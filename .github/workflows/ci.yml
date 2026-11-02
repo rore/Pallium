@@ -1,323 +1,119 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
-  schedule:
-    # Nightly full run (incl. the full Windows matrix). Off-peak, off :00.
-    - cron: "17 6 * * *"
 
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+permissions:
+  contents: read
 
 jobs:
-  select:
-    runs-on: ubuntu-latest
-    outputs:
-      lane: ${{ steps.plan.outputs.lane }}
-      selector_error: ${{ steps.plan.outputs.selector_error }}
+  acquisition-development:
+    if: github.repository == 'rore/Pallium' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feat/s2-acquisition-development' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
-      - name: Select checks from trusted base policy
-        id: plan
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          python-version: '3.13.17'
+      - name: Guard immutable source and one-attempt development scope
         shell: bash
         run: |
-          lane=full
-          selector_error=false
-          if [[ "$EVENT" != schedule && "$EVENT" != workflow_dispatch ]]; then
-            trusted="$BASE"
-            if [[ "$EVENT" == pull_request ]]; then
-              trusted=$(git merge-base "$BASE" "$HEAD") || trusted=""
-            fi
-            # Missing history/policy (including rollout) safely keeps the full lane.
-            if [[ -n "$trusted" ]] && git show "$trusted:scripts/test-plan.py" > "$RUNNER_TEMP/trusted-test-plan.py"; then
-              if python "$RUNNER_TEMP/trusted-test-plan.py" --repo-root "$GITHUB_WORKSPACE" --base "$trusted" --head "$HEAD" --exact > "$RUNNER_TEMP/test-plan.json"; then
-                if ! lane=$(python -c 'import json,sys; p=json.load(open(sys.argv[1])); lane=p["lane"]; assert lane in ("docs","governance","full"); print(lane)' "$RUNNER_TEMP/test-plan.json"); then
-                  lane=full
-                  selector_error=true
-                fi
-              else
-                lane=full
-                selector_error=true
-              fi
-            fi
-          fi
-          echo "lane=$lane" >> "$GITHUB_OUTPUT"
-          echo "selector_error=$selector_error" >> "$GITHUB_OUTPUT"
-          echo "Validation lane: $lane; selector error: $selector_error" >> "$GITHUB_STEP_SUMMARY"
-
-  focused:
-    needs: select
-    if: needs.select.outputs.lane == 'docs' || needs.select.outputs.lane == 'governance'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON(needs.select.outputs.lane == 'governance' && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest"]') }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - name: Install focused test dependencies
-        run: pip install "pytest>=8.3,<9" "pytest-xdist>=3.6,<4" pyyaml jsonschema
-      - name: Check documentation and selection contracts
-        if: needs.select.outputs.lane == 'docs'
-        run: python -m pytest --noconftest -q -n 0 tests/test_test_plan.py tests/test_ci_workflow.py --durations=20
-      - name: Check governance caller contracts
-        if: needs.select.outputs.lane == 'governance'
-        run: python -m pytest --noconftest -q -n 0 tests/test_test_plan.py tests/test_ci_workflow.py tests/test_agent_workflow_ci.py --durations=20
-
-  # Full application coverage for application/unknown changes and scheduled/manual runs.
-  test:
-    needs: select
-    if: needs.select.outputs.lane == 'full'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install dependencies
-        run: pip install -e ".[dev,vector,mcp]"
-
-      - name: Verify MCP test dependency
-        run: |
-          python -c "import mcp; import app.mcp.server"
-          python -c "import platform, sqlite3, sqlalchemy; print('Runtime versions:', platform.python_version(), 'SQLite', sqlite3.sqlite_version, 'SQLAlchemy', sqlalchemy.__version__)"
-
-      - name: Run tests
-        run: python -m pytest tests/ ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q --durations=20 --junitxml=test-results/linux-${{ matrix.python-version }}-test-all.xml
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pytest-linux-${{ matrix.python-version }}-test-${{ github.run_attempt }}
-          path: test-results/linux-${{ matrix.python-version }}-test-all.xml
-          if-no-files-found: error
-          retention-days: 7
-
-  # Fast Windows regression for full-lane PRs and pushes. Runs only the
-  # Windows-sensitive hotspots (process mgmt, subprocess hooks, file I/O,
-  # SQLite locking) so PRs get Windows signal without the ~20 min full suite.
-  # The full Windows matrix runs in `windows-full` on push-to-main + nightly.
-  windows-smoke:
-    needs: select
-    if: needs.select.outputs.lane == 'full'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Exclude workspace from Windows Defender
-        shell: pwsh
-        run: |
-          foreach ($path in @("${{ github.workspace }}", "$env:RUNNER_TEMP")) {
-            try {
-              Add-MpPreference -ExclusionPath $path -ErrorAction Stop
-              Write-Host "Defender exclusion added: $path"
-            } catch {
-              Write-Host "::warning::Could not add Defender exclusion for ${path}: $($_.Exception.Message)"
-            }
-          }
-
-      - name: Install dependencies
-        run: pip install -e ".[dev,vector,mcp]"
-
-      - name: Run process-sensitive tests serially
-        id: serial
-        continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
-        run: python -m pytest tests/test_service_launcher_lifecycle.py tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q -n 0 --durations=20
-
-      - name: Run Windows-sensitive tests
-        id: remaining
-        continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
-        run: >
-          python -m pytest ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q --durations=20
-          tests/test_supervisor.py
-          tests/test_supervisor_kill_tree.py
-          tests/test_codex_integration.py
-          tests/test_restart_service.py
-          tests/test_hook_deadline_safety.py
-          tests/test_asyncio_windows_accept.py
-          tests/test_claude_code_hooks
-          tests/test_snapshot.py
-          tests/test_snapshot_concurrent.py
-          tests/test_snapshot_failure.py
-          tests/test_snapshot_roundtrip.py
-          tests/test_storage_sqlite.py
-          tests/test_sqlite_write_retry.py
-          tests/test_relay_endpoint_repair_e2e.py
-          tests/test_queue_concurrent_claim.py
-          tests/test_launch_token.py
-          tests/test_config.py
-          tests/test_runtime_logging.py
-
-      - name: Preserve manual selection failures
-        if: always() && github.event_name == 'workflow_dispatch'
-        shell: pwsh
-        env:
-          SERIAL: ${{ steps.serial.outcome }}
-          REMAINING: ${{ steps.remaining.outcome }}
-        run: |
-          if ($env:SERIAL -ne 'success' -or $env:REMAINING -ne 'success') {
-            throw "Manual selections failed or did not complete: serial=$env:SERIAL remaining=$env:REMAINING"
-          }
-
-  # Full Windows matrix for full-lane pushes, nightly and manual runs, never on PRs.
-  windows-full:
-    needs: select
-    if: needs.select.outputs.lane == 'full' && github.event_name != 'pull_request'
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Exclude workspace from Windows Defender
-        shell: pwsh
-        run: |
-          foreach ($path in @("${{ github.workspace }}", "$env:RUNNER_TEMP")) {
-            try {
-              Add-MpPreference -ExclusionPath $path -ErrorAction Stop
-              Write-Host "Defender exclusion added: $path"
-            } catch {
-              Write-Host "::warning::Could not add Defender exclusion for ${path}: $($_.Exception.Message)"
-            }
-          }
-
-      - name: Install dependencies
-        run: pip install -e ".[dev,vector,mcp]"
-
-      - name: Run process-sensitive tests serially
-        id: serial
-        continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
-        run: python -m pytest tests/test_restart_service.py tests/test_structural_work_refs_e2e.py tests/test_stable_actor_identity_e2e.py tests/test_service_launcher_lifecycle.py tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once tests/test_codex_retained_native_reconnect.py ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -m "slow or not slow" -q -n 0 --durations=20 --junitxml=test-results/windows-${{ matrix.python-version }}-windows-full-serial.xml
-
-      - name: Run remaining tests
-        id: remaining
-        continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
-        run: python -m pytest tests/ ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q --ignore=tests/test_restart_service.py --ignore=tests/test_structural_work_refs_e2e.py --ignore=tests/test_stable_actor_identity_e2e.py --ignore=tests/test_service_launcher_lifecycle.py --ignore=tests/test_codex_retained_native_reconnect.py --deselect=tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers --deselect=tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once --durations=20 --junitxml=test-results/windows-${{ matrix.python-version }}-windows-full-remaining.xml
-
-      - name: Preserve manual selection failures
-        if: always() && github.event_name == 'workflow_dispatch'
-        shell: pwsh
-        env:
-          SERIAL: ${{ steps.serial.outcome }}
-          REMAINING: ${{ steps.remaining.outcome }}
-        run: |
-          if ($env:SERIAL -ne 'success' -or $env:REMAINING -ne 'success') {
-            throw "Manual selections failed or did not complete: serial=$env:SERIAL remaining=$env:REMAINING"
-          }
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pytest-windows-${{ matrix.python-version }}-windows-full-${{ github.run_attempt }}
-          path: |
-            test-results/windows-${{ matrix.python-version }}-windows-full-serial.xml
-            test-results/windows-${{ matrix.python-version }}-windows-full-remaining.xml
-          if-no-files-found: error
-          retention-days: 7
-
-  nightly-slow-smoke:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install dependencies
-        run: pip install -e ".[dev,vector,mcp]"
-
-      - name: Run hermetic slow smoke tests
-        run: >
-          python -m pytest
-          tests/test_snapshot.py
-          tests/test_snapshot_concurrent.py
-          tests/test_snapshot_failure.py
-          tests/test_storage_sqlite.py
-          tests/test_thread_summary_accumulation.py
-          tests/test_relay_load_smoke.py
-          -m slow -n 0 -q --durations=20
-
-  result:
-    name: CI result
-    needs: [select, focused, test, windows-smoke, windows-full, nightly-slow-smoke]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require every selected lane to succeed
-        env:
-          RESULTS: ${{ toJSON(needs) }}
-          EVENT: ${{ github.event_name }}
-        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           python - <<'PY'
-          import json, os
-          jobs = json.loads(os.environ["RESULTS"])
-          selection = jobs["select"]
-          assert selection["result"] == "success", "test selection did not succeed"
-          outputs = selection.get("outputs", {})
-          assert outputs.get("selector_error") == "false", "trusted selector failed; full validation was requested"
-          lane = outputs.get("lane")
-          assert lane in {"docs", "governance", "full"}, "missing or invalid lane"
-          event = os.environ["EVENT"]
-          assert event not in {"schedule", "workflow_dispatch"} or lane == "full", "scheduled/manual runs must be full"
-          expected = {
-              "focused": lane != "full",
-              "test": lane == "full",
-              "windows-smoke": lane == "full",
-              "windows-full": lane == "full" and event != "pull_request",
-              "nightly-slow-smoke": event == "schedule",
-          }
-          for job, required in expected.items():
-              wanted = "success" if required else "skipped"
-              assert jobs[job]["result"] == wanted, f"{job}: expected {wanted}, got {jobs[job]['result']}"
-          print(f"All required {lane} checks succeeded")
+          import subprocess
+          allowed = {'.github/workflows/ci.yml', 'tests/codex_wake_setup.py', '.agent-workflow/tasks/s2-registration-owner-publication.md'}
+          paths = set(subprocess.check_output(['git', 'diff', '--name-only', '0127268de4766999ba8087984e21b8516c02e046', 'HEAD'], text=True).splitlines())
+          assert paths <= allowed and {'.github/workflows/ci.yml', 'tests/codex_wake_setup.py'} <= paths
           PY
+          mkdir -p "$RUNNER_TEMP/acquisition-home" "$GITHUB_WORKSPACE/test-results/acquisition"
+          echo "HOME=$RUNNER_TEMP/acquisition-home" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/acquisition-home/config" >> "$GITHUB_ENV"
+          echo "PALLIUM_WIP_ACQUISITION=1" >> "$GITHUB_ENV"
+          echo "PYTHONDONTWRITEBYTECODE=1" >> "$GITHUB_ENV"
+      - name: Install recorded dependency profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          Path('/tmp/acquisition-constraints.txt').write_text('PyYAML==6.0.3\nannotated-doc==0.0.5\nannotated-types==0.8.0\nanyio==4.16.0\nattrs==26.1.0\ncertifi==2026.10.23\ncffi==2.1.1\nclick==8.5.0\ncryptography==50.0.2\nexecnet==2.1.2\nfastapi==0.162.0\nfilelock==4.2.6\nflatbuffers==25.12.19\nfsspec==2026.9.0\ngrimp==3.18\nh11==0.16.0\nhf-xet==1.8.0\nhttpcore==1.0.9\nhttpcore2==2.16.0\nhttpx==0.28.1\nhttpx-sse==0.4.3\nhttpx2==2.16.0\nhuggingface-hub==2.4.0\nidna==3.20\nimport-linter==2.15\niniconfig==2.3.1\njsonschema==4.26.0\njsonschema-specifications==2025.9.1\nmarkdown-it-py==4.2.0\nmcp==1.30.0\nmdurl==0.1.2\nnumkong==7.8.7\nnumpy==2.5.4\nonnxruntime==1.31.1\nopentelemetry-api==1.45.2\npackaging==26.3\npluggy==1.7.0\nprompt_toolkit==3.0.53\nprotobuf==7.36.2\npycparser==3.12\npydantic==2.14.2\npydantic-core==2.50.2\npydantic-settings==2.16.2\npygments==2.21.0\npyjwt==2.15.1\npyte==0.8.2\npytest==8.4.2\npytest-asyncio==0.26.0\npytest-xdist==3.8.0\npython-dotenv==1.2.4\npython-multipart==0.0.33\nreferencing==0.37.0\nrich==15.0.0\nrpds-py==2026.9.1\nshellingham==1.5.4\nsqlalchemy==2.1.6\nsse-starlette==3.6.0\nstarlette==1.10.0\ntokenizers==0.23.3\ntqdm==4.70.1\ntruststore==0.10.5\ntyper==0.27.3\ntyping-inspection==0.4.4\ntyping_extensions==4.16.0\nusearch==2.26.6\nuvicorn==0.54.0\nwcwidth==0.9.4\n')
+          PY
+          pip install -e '.[dev,vector,mcp]' -c /tmp/acquisition-constraints.txt
+      - name: One self-check then one unchanged native-error node
+        shell: bash
+        run: |
+          python -I -B - <<'PY'
+          import hashlib, importlib, importlib.metadata, json, os, pathlib, platform, re, sqlite3, subprocess, sys
+          root = pathlib.Path.cwd().resolve()
+          output = root / 'test-results/acquisition'
+          raw_output = pathlib.Path(os.environ['RUNNER_TEMP']) / 'acquisition-raw'
+          raw_output.mkdir()
+          sys.path.insert(0, str(root))
+          for name in ('app', 'core', 'storage', 'tests.codex_wake_setup'):
+              origin = pathlib.Path(importlib.import_module(name).__file__).resolve()
+              assert origin.is_relative_to(root), name
+          helper = importlib.import_module('tests.codex_wake_setup')
+          helper_hash = hashlib.sha256(pathlib.Path(helper.__file__).read_bytes()).hexdigest()
+          metadata = {'head': os.environ['GITHUB_SHA'], 'python': platform.python_version(),
+              'platform': platform.system(), 'os_release': platform.freedesktop_os_release(),
+              'sqlite': sqlite3.sqlite_version, 'image': os.environ.get('ImageVersion'), 'configured_workers': 4,
+              'helper_sha256': helper_hash,
+              'packages': dict(sorted((d.metadata['Name'], d.version) for d in importlib.metadata.distributions())),
+              'limits': 'One WIP development attempt; no historical worker-load equivalence or release qualification.'}
+          (raw_output / 'metadata.json').write_text(json.dumps(metadata, sort_keys=True, indent=2))
+          # Raw output remains on this ephemeral runner until sanitized.
+          selfcheck = subprocess.run([sys.executable, '-I', '-B', '-c',
+              "import sys;sys.path.insert(0,'.');from tests.codex_wake_setup import _self_check_setup_observation;_self_check_setup_observation()"],
+              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+          status, raw = selfcheck.returncode, selfcheck.stdout
+          (raw_output / 'self-check.log').write_bytes(raw)
+          node_invocations = 0
+          if status == 0:
+              node_invocations = 1
+              command = [sys.executable, '-B', '-m', 'pytest', '-q', '-rA', '--capture=tee-sys', '--tb=short',
+                  '--junitxml=' + str(raw_output / 'pytest.xml'),
+                  'tests/test_codex_retained_wake.py::test_write_is_fenced_across_concurrency_recovery_restart[native-error]']
+              result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+              status, raw = result.returncode, result.stdout
+          (raw_output / 'pytest.log').write_bytes(raw)
+          loaded = re.findall(r'WIP observer loaded: (\{[^\n]+\})', raw.decode(errors='replace'))
+          workers = [json.loads(row) for row in loaded]
+          observed_workers = [row['worker'] for row in workers
+              if re.fullmatch(r'gw[0-9]+', row.get('worker', '')) and row.get('helper_sha256') == helper_hash]
+          replacements = [(str(root), '<checkout>'), (str(pathlib.Path.home()), '<home>'),
+              (os.environ['RUNNER_TEMP'], '<runner-temp>'), (sys.prefix, '<python>')]
+          sizes = {}
+          for path in raw_output.iterdir():
+              value = path.read_text(errors='replace')
+              for source, label in replacements:
+                  value = value.replace(source, label)
+              sizes[path.name] = {'characters': len(value), 'truncated': len(value) > 262144}
+              (output / path.name).write_text(value[:262144])
+          manifest = {'exit_status': status, 'self_check_status': selfcheck.returncode,
+              'node_invocations': node_invocations, 'observed_executing_workers': observed_workers,
+              'observer_proven': bool(observed_workers), 'sizes': sizes,
+              'files': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in output.iterdir()}}
+          (output / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True, indent=2))
+          print((output / 'self-check.log').read_text())
+          print((output / 'pytest.log').read_text())
+          raise SystemExit(status)
+          PY
+      - name: Preserve only sanitized development evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acquisition-development-${{ github.run_attempt }}
+          path: |
+            test-results/acquisition/metadata.json
+            test-results/acquisition/self-check.log
+            test-results/acquisition/pytest.log
+            test-results/acquisition/pytest.xml
+            test-results/acquisition/manifest.json
+          if-no-files-found: error
+          retention-days: 7
