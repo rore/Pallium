@@ -4184,8 +4184,14 @@ def test_exclusive_trial_install_waits_for_inflight_native_reservation(client, m
 
 
 @pytest.mark.parametrize("durable", [False, True])
-def test_exclusive_trial_binding_and_spend_survive_restart_and_later_delivery(client, durable) -> None:
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_exclusive_trial_binding_and_spend_survive_restart_and_later_delivery(
+    client, durable, relay_admission_clock,
+) -> None:
+    from storage import sqlite_queue
+
     storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
     registry = _sqlite_wake_registry(storage)
     app = FastAPI()
     app.include_router(build_router(
@@ -4195,11 +4201,14 @@ def test_exclusive_trial_binding_and_spend_survive_restart_and_later_delivery(cl
     ))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/trial-spent"}
-    for runtime, session in (("claude-code", "sender"), ("codex", "target")):
-        assert route.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}).status_code == 200
-    endpoint = route.post("/relay/turn", json={
-        "runtime": "codex", "session_ref": "target", **scope,
-    }).json()["session"]["endpoint_id"]
+    with relay_admission_clock(storage, expected_admissions=3):
+        for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+            assert route.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}).status_code == 200
+        endpoint = route.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target", **scope,
+        }).json()["session"]["endpoint_id"]
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
     relay = RelayService(storage)
     assert relay.enroll_codex_trial(
         endpoint_id=endpoint, session_ref="target", container_ref=scope["container_ref"],
