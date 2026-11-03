@@ -360,6 +360,7 @@ def test_redaction_reply_rechecks_budget_after_wait(monkeypatch):
     assert len(calls) == 1 and waits == [1]
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("case, suffix, secret", [
     ("harmless", "", None),
     ("mixed", " rotate this aB3dE4fG5hI6jK7lM8nO9 now", "aB3dE4fG5hI6jK7lM8nO9"),
@@ -371,10 +372,15 @@ def test_redaction_reply_rechecks_budget_after_wait(monkeypatch):
     ("provider-segment", " C:/short/ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zXcVb", "ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zXcVb"),
     ("assignment", "\npassword: C:/short/folder", "C:/short/folder"),
 ])
-def test_drive_directory_prose_redaction_send_reply_lifecycle(client, monkeypatch, case, suffix, secret):
+def test_drive_directory_prose_redaction_send_reply_lifecycle(
+    client, monkeypatch, case, suffix, secret, relay_admission_clock,
+):
     from app import dependencies
+    from storage import sqlite_queue
 
     service = client.app.state.pallium_service
+    storage = service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
     workers = []
     original_schedule = dependencies.schedule_claude_relay_wake
 
@@ -392,8 +398,11 @@ def test_drive_directory_prose_redaction_send_reply_lifecycle(client, monkeypatc
         client.app.state.relay_trace_writer._executor.submit(lambda: None).result()
 
     monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", capture_schedule)
-    _turn(client, "claude-code", "sender")
-    _turn(client, "codex", "target")
+    with relay_admission_clock(storage, expected_admissions=2):
+        _turn(client, "claude-code", "sender")
+        _turn(client, "codex", "target")
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
     path = "C:/Users/reader/.codex/worktrees/sample-project/workspace_run."
     raw = f"authorization: run checks from {path} Use python check.py --record build/check.json{suffix}\n完成 → שלום"
     sent = _send(client, "claude-code", "sender", "codex:target", raw, message_id=f"path-{case}")

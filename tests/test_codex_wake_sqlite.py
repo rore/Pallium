@@ -1096,14 +1096,19 @@ def test_http_exact_claim_uses_fresh_authority_and_committed_generation(
     "reserved", "removed", "malformed", "uninitialized", "read_failed", "health", "scope_unavailable",
 ])
 def test_http_response_projection_uses_fresh_authority_and_distinct_health(
-    relay_store, tmp_path, monkeypatch, authority,
+    relay_store, tmp_path, monkeypatch, authority, *, force_setup_refusal=False,
 ):
     from app import dependencies
     from core.relay import RelayNotFoundError
+    from tests.codex_wake_setup import initialize_empty_wake_registry
 
     relay, storage, database = relay_store
-    registry = _registry(relay, tmp_path / "legacy")
-    assert registry.initialize(old_owner_drained=True)
+    legacy = tmp_path / "legacy"
+    registry = _registry(relay, legacy)
+    initialize_empty_wake_registry(
+        registry, relay, storage, expected_database=database, legacy=legacy,
+        monkeypatch=monkeypatch, force_refusal=force_setup_refusal,
+    )
     reservation = _reserve(registry, _send(relay))
     spent = registry.begin_native_attempt(reservation)
     assert spent is not None and registry.record_outcome(spent, "accepted")
@@ -1169,6 +1174,17 @@ def test_http_response_projection_uses_fresh_authority_and_distinct_health(
         retained, = readback.json()["deliveries"]
         assert retained["delivery_id"] == reservation.delivery_id
         assert retained["state"] == "claimed" and retained["attempts"] == 1
+
+
+@pytest.mark.parametrize("authority", [
+    "reserved", "removed", "malformed", "uninitialized", "read_failed", "health", "scope_unavailable",
+])
+def test_http_response_projection_recovers_empty_setup_refusal(
+    relay_store, tmp_path, monkeypatch, authority,
+):
+    test_http_response_projection_uses_fresh_authority_and_distinct_health(
+        relay_store, tmp_path, monkeypatch, authority, force_setup_refusal=True,
+    )
 
 
 @pytest.mark.parametrize("callback_mode", ["custom", "delegate", "factory_raises", "factory_invalid"])

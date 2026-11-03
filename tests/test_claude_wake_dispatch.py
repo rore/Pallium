@@ -1870,13 +1870,14 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("old_state,new_state", [
     ("busy", "idle"), ("idle", "busy"), ("idle", "closed"), ("closed", "idle"),
 ])
 @pytest.mark.parametrize("lost_http", [False, True], ids=["http", "recovery"])
 def test_create_app_preserves_new_intent_during_old_cleanup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-    old_state: str, new_state: str, lost_http: bool, *, before_cleanup=None,
+    old_state: str, new_state: str, lost_http: bool, relay_admission_clock, *, before_cleanup=None,
 ) -> None:
     from itertools import count
     from concurrent.futures import ThreadPoolExecutor
@@ -1930,6 +1931,8 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
         vector_index=VectorIndexConfig(enabled=False),
     ))
     scope = {"container_ref": PAYLOAD["container_ref"]}
+    storage = app.state.pallium_service._storage
+    native_sqlite_time, native_sqlite_begin = sqlite_queue.time, storage._begin_relay_immediate
 
     with TestClient(app, client=("127.0.0.1", 50000)) as http, ExitStack() as release_gates:
         release_gates.callback(recovery_ready.set)
@@ -2072,6 +2075,8 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
         monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", PAYLOAD["token"])
 
         def open_request(request, **kwargs):
+            assert sqlite_queue.time is native_sqlite_time
+            assert storage._begin_relay_immediate == native_sqlite_begin
             published.set()
             assert send_http.wait(timeout=3)
             if lost_http:
@@ -2086,6 +2091,8 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
         monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=open_request))
 
         def publish_new():
+            assert sqlite_queue.time is native_sqlite_time
+            assert storage._begin_relay_immediate == native_sqlite_begin
             publisher_thread.append(threading.get_ident())
             if new_state == "closed":
                 return common.close_claude_wake(session, scope["container_ref"])
@@ -2094,9 +2101,16 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
         try:
             with ThreadPoolExecutor(max_workers=2) as workers:
                 try:
-                    cleanup = workers.submit(apply, old)
-                    # Arrival precedes the competing publisher; contention stays native.
-                    assert cleanup_held.wait(timeout=5)
+                    old_activation = (
+                        relay_admission_clock(storage, expected_admissions=1)
+                        if old_state != "closed" else nullcontext()
+                    )
+                    with old_activation:
+                        cleanup = workers.submit(apply, old)
+                        # Activation has returned before deletion reaches this barrier.
+                        assert cleanup_held.wait(timeout=5)
+                    assert sqlite_queue.time is native_sqlite_time
+                    assert storage._begin_relay_immediate == native_sqlite_begin
                     publication = workers.submit(publish_new)
                     # Arrival is fixture orchestration; native lock budgets stay unchanged.
                     assert published.wait(timeout=5)
@@ -2112,6 +2126,8 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
                 finally:
                     native_contention.set()
                     send_http.set()
+            assert sqlite_queue.time is native_sqlite_time
+            assert storage._begin_relay_immediate == native_sqlite_begin
             recovery_ready.set()
             assert recovered.wait(timeout=1)
             assert not target.exists()
@@ -2124,7 +2140,6 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
         from core.errors import ImmediateTransactionBusyError
         from storage.sqlite_schema import RelayMessageRecord, RelayDeliveryRecord
 
-        storage = app.state.pallium_service._storage
         begin = storage._begin_relay_immediate
         send = storage.relay_send
         local = threading.local()
