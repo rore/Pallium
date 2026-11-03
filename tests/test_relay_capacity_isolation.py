@@ -2386,7 +2386,7 @@ def test_operation_tracking_early_failure_drains_before_storage_close(tmp_path, 
 @pytest.mark.parametrize("cancel_target", ["queued", "started"])
 def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
     client, monkeypatch, cancel_target,
-    *, health_after_summary_exit=None,
+    *, health_after_summary_exit=None, turn_observer=None,
 ):
     from app import codex_readiness
 
@@ -2489,6 +2489,8 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
                 assert (turn_request in done and not requests[1].done()
                         and not first_worker_exited.is_set() and not release.is_set()
                         and not finished.is_set()), "Relay did not complete while summary workers were held"
+                if turn_observer is not None:
+                    turn_observer(turn_request.result())
                 assert turn_request.result().status_code == 200
                 # Observe summary ownership without including unrelated Relay-body time.
                 barrier = await _start_operation_barrier(app)
@@ -2518,8 +2520,11 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("delayed_phase", ["summary-admission", "relay-body"])
-def test_summary_isolation_allows_delayed_admission_and_relay_body(client, monkeypatch, delayed_phase):
+def test_summary_isolation_allows_delayed_admission_and_relay_body(
+    client, monkeypatch, delayed_phase, relay_admission_clock,
+):
     import time
     from core.relay import RelayService
 
@@ -2540,11 +2545,71 @@ def test_summary_isolation_allows_delayed_admission_and_relay_body(client, monke
 
     monkeypatch.setattr(anyio.to_thread, "run_sync", dispatch)
     monkeypatch.setattr(RelayService, "turn", turn)
-    test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(client, monkeypatch, "queued")
+    storage = client.app.state.pallium_service._storage
+    with relay_admission_clock(storage, expected_admissions=1):
+        test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(client, monkeypatch, "queued")
     assert delayed.is_set()
 
 
-def test_summary_relay_progress_after_worker_release_is_rejected(client, monkeypatch):
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+@pytest.mark.parametrize("held_writer", ["mutex", "sqlite"])
+def test_modeled_summary_turn_refuses_real_writer_contention(
+    client, monkeypatch, relay_admission_clock, held_writer,
+):
+    from storage import sqlite_queue
+
+    storage = client.app.state.pallium_service._storage
+    scope = {"container_ref": "git:example.test/summary-drain", "include_inactive": True}
+    before = client.get("/relay/sessions", params=scope)
+    assert before.status_code == 200
+    assert not any(row["session_ref"] == "summary-drain-target" for row in before.json())
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
+    observed = []
+    gate = connection = None
+    try:
+        if held_writer == "mutex":
+            writer_gate = storage._relay_writer_lock
+            assert writer_gate.acquire(blocking=False)
+            gate = writer_gate
+        else:
+            connection = storage._relay_engine.connect()
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+        with relay_admission_clock(storage, expected_admissions=1):
+            with pytest.raises(AssertionError):
+                test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
+                    client, monkeypatch, "queued", turn_observer=observed.append,
+                )
+        assert len(observed) == 1 and observed[0].status_code == 503
+        assert sqlite_queue.time is native_time
+        assert storage._begin_relay_immediate == native_begin
+        while_held = client.get("/relay/sessions", params=scope)
+        assert while_held.status_code == 200
+        assert while_held.json() == before.json()
+    finally:
+        if gate is not None:
+            gate.release()
+        if connection is not None:
+            try:
+                connection.rollback()
+            finally:
+                connection.close()
+    recovered = client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "summary-drain-target",
+        "container_ref": scope["container_ref"],
+    })
+    assert recovered.status_code == 200
+    readback = client.get("/relay/sessions", params=scope)
+    assert readback.status_code == 200
+    assert [row["endpoint_id"] for row in readback.json()
+            if row["session_ref"] == "summary-drain-target"] == [recovered.json()["session"]["endpoint_id"]]
+
+
+@pytest.mark.parametrize("relay_admission_clock,expected_admissions", [
+    ("native", None), ("semantic", 1),
+], indirect=["relay_admission_clock"], ids=["native", "semantic"])
+def test_summary_relay_progress_after_worker_release_is_rejected(
+    client, monkeypatch, relay_admission_clock, expected_admissions,
+):
     from core.relay import RelayService
 
     events, event_type = [], threading.Event
@@ -2567,8 +2632,10 @@ def test_summary_relay_progress_after_worker_release_is_rejected(client, monkeyp
         **vars(threading), "Event": event,
     }))
     monkeypatch.setattr(RelayService, "turn", turn)
-    with pytest.raises(AssertionError, match="Relay did not complete while summary workers were held"):
-        test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(client, monkeypatch, "queued")
+    storage = client.app.state.pallium_service._storage
+    with relay_admission_clock(storage, expected_admissions=expected_admissions):
+        with pytest.raises(AssertionError, match="Relay did not complete while summary workers were held"):
+            test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(client, monkeypatch, "queued")
 
 
 def test_summary_health_progress_allows_slow_native_body(client, monkeypatch):
