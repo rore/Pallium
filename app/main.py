@@ -436,7 +436,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                     port = int(service_port)
                     write_json_atomic(service_marker_path(port), {"port": port, **binding})
                 relay_service = RelayService(build_result.storage)
-                recover_claude_registration_intents(claude_wake_registry, relay_service)
+                recover_claude_registration_intents(claude_wake_registry, relay_service, caller="startup")
 
                 def relay_trace(event: dict[str, object]) -> bool:
                     if relay_trace_writer is None:

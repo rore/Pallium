@@ -12,6 +12,7 @@ import weakref
 from typing import TYPE_CHECKING, Any, Callable
 
 from app.claude_wake_transport import claude_wake_transport
+from core.errors import ImmediateTransactionBusyError
 from core.relay import RelayNotFoundError
 from core.relay_activation import ActivationAttemptResult
 
@@ -243,6 +244,7 @@ def schedule_claude_relay_wake(
 
 def recover_claude_registration_intents(
     registry: ClaudeWakeRegistry, relay_service: Any,
+    *, caller: str = "unknown",
 ) -> None:
     """Admit persisted registrations before readiness, completing only safe intents."""
     def complete_registration(**scope):
@@ -250,8 +252,47 @@ def recover_claude_registration_intents(
             relay_service.mark_active(**scope)
         except RelayNotFoundError:
             pass  # Registration before endpoint enrollment remains supported.
-        except Exception:
-            logger.warning("Claude registration activation deferred")
+        except Exception as exc:
+            family, busy = "other", False
+            try:
+                busy = isinstance(exc, ImmediateTransactionBusyError)
+                family = "relay_acquisition" if busy else {
+                    "RelayUnavailableError": "relay_unavailable",
+                    "OperationalError": "storage_operational",
+                    "TimeoutError": "timeout", "ValueError": "validation",
+                    "OSError": "os_error", "PermissionError": "os_error",
+                }.get(type(exc).__name__, "other")
+            except Exception:
+                pass
+            stage, phase_ms = "unknown", "unknown"
+            if busy:
+                try:
+                    value = getattr(exc, "acquisition_stage", None)
+                    if type(value) is str and value in ImmediateTransactionBusyError.ACQUISITION_STAGES:
+                        stage = value
+                except Exception:
+                    pass
+                try:
+                    value = getattr(exc, "acquisition_phase_ms", None)
+                    if type(value) is dict and 0 < len(value) <= 4:
+                        fields = tuple(value.items())
+                        allowed = {"session_factory", "session_connection", "setup_pragma", "begin_immediate"}
+                        if 0 < len(fields) <= 4 and all(
+                            type(key) is str and key in allowed and type(ms) is int and 0 <= ms <= 60_000
+                            for key, ms in fields
+                        ):
+                            phase_ms = dict(sorted(fields))
+                except Exception:
+                    pass
+            try:
+                source = caller if type(caller) is str and caller in {"startup", "reconcile"} else "unknown"
+                logger.warning(
+                    "Claude registration activation deferred caller=%s error_family=%s "
+                    "acquisition_stage=%s acquisition_phase_ms=%s",
+                    source, family, stage, phase_ms,
+                )
+            except Exception:
+                pass
             return False
         return True
 
@@ -265,7 +306,7 @@ def recover_claude_relay_wakes(
     trace_callback: Callable[[dict[str, object]], object] | None = None,
 ) -> None:
     """Schedule only idle capabilities; unresolved reservations stay fenced."""
-    recover_claude_registration_intents(registry, relay_service)
+    recover_claude_registration_intents(registry, relay_service, caller="reconcile")
     for candidate in registry.recovery_candidates():
         if candidate["state"] == "wake_inflight":
             continue
