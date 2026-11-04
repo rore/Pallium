@@ -379,20 +379,28 @@ def _association_pairs(client, session="worker"):
             for row in _list(client, session)["work_refs"]}
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("settlement", ["commit", "rollback"])
 @pytest.mark.parametrize("cleanup,error", [
     ("close", None), ("reset", None), ("close", "close"), ("reset", "reset"),
 ])
 def test_settled_relay_write_releases_gate_before_cleanup(
-    client, relay_settlement_control, settlement, cleanup, error,
+    client, relay_settlement_control, settlement, cleanup, error, relay_admission_clock,
 ):
     control = relay_settlement_control
     control.mode, control.cleanup_error = cleanup, error
+    from storage import sqlite_queue
+
+    storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
     scope = "scope:gate-cleanup"
-    _turn(client)
-    seeds = [f"item:seed-{index}" for index in range(2 if settlement == "commit" else 3)]
-    for value in seeds:
-        assert _attach(client, {"scope_ref": scope, "local_ref": value}).status_code == 200
+    with relay_admission_clock(storage, expected_admissions=3 if settlement == "commit" else 4):
+        _turn(client)
+        seeds = [f"item:seed-{index}" for index in range(2 if settlement == "commit" else 3)]
+        for value in seeds:
+            assert _attach(client, {"scope_ref": scope, "local_ref": value}).status_code == 200
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
     expected = {(scope, value, "explicit") for value in seeds}
     if settlement == "commit":
         expected.add((scope, "item:A", "explicit"))
