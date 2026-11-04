@@ -4240,22 +4240,29 @@ def test_exclusive_trial_binding_and_spend_survive_restart_and_later_delivery(
     )
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("changed_before", ["bind", "spend"])
 @pytest.mark.parametrize("change", ["closed", "expired"])
 def test_exclusive_trial_rejects_stale_endpoint_or_delivery_before_native_action(
-    client, changed_before, change,
+    client, changed_before, change, relay_admission_clock,
 ) -> None:
+    from storage import sqlite_queue
+
     storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
     relay = RelayService(storage)
     app = FastAPI()
     app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage, relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event)))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/trial-closed"}
-    for runtime, session in (("claude-code", "sender"), ("codex", "target")):
-        assert route.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}).status_code == 200
-    endpoint = route.post("/relay/turn", json={
-        "runtime": "codex", "session_ref": "target", **scope,
-    }).json()["session"]["endpoint_id"]
+    with relay_admission_clock(storage, expected_admissions=3):
+        for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+            assert route.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}).status_code == 200
+        endpoint = route.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target", **scope,
+        }).json()["session"]["endpoint_id"]
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
     assert relay.enroll_codex_trial(
         endpoint_id=endpoint, session_ref="target", container_ref=scope["container_ref"],
         trial_id="closed-trial",
