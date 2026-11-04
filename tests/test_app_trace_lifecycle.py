@@ -5,7 +5,7 @@ import threading
 from fastapi.testclient import TestClient
 import pytest
 
-from app import main
+from app import main, relay_trace
 from app.relay_trace import RelayTraceWriter
 from tests.test_dashboard import _test_config
 
@@ -132,6 +132,83 @@ def test_full_trace_queue_keeps_http_send_claim_ack_and_recovers(client, monkeyp
     assert later.status_code == 200 and accepted == [False, True]
     worker._executor.submit(lambda: None).result(3)
     assert [row["stage"] for row in client.get(f"/relay/messages/{later.json()['message_id']}/trace", params=scope).json()["events"]] == ["prepared"]
+
+
+@pytest.mark.parametrize("reason", ["closed", "capacity"])
+@pytest.mark.parametrize("logging_fails", [False, True])
+def test_http_trace_rejection_reason_preserves_receipts_and_privacy(
+    client, monkeypatch, caplog, reason, logging_fails,
+):
+    worker = client.app.state.relay_trace_writer
+    entered, release = threading.Event(), threading.Event()
+    accepted, attempts = [], []
+    original_warning = relay_trace.logger.warning
+
+    def warning(message, *args, **kwargs):
+        attempts.append((message, args, kwargs))
+        if logging_fails:
+            raise RuntimeError("private-diagnostic-error-東京")
+        return original_warning(message, *args, **kwargs)
+
+    def schedule(result, scope, *, trace_callback, **kwargs):
+        delivery, = result["deliveries"]
+        accepted.append(trace_callback({
+            "attempt_id": "relay-activation-" + "c" * 32,
+            "delivery_id": delivery["delivery_id"],
+            "recipient_endpoint_id": delivery["recipient_endpoint_id"],
+            "stage": "prepared",
+        }))
+
+    def hold(event):
+        entered.set()
+        assert release.wait(10)
+
+    monkeypatch.setattr(relay_trace.logger, "warning", warning)
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", schedule)
+    scope = {"container_ref": "git:example.test/trace-rejection-東京"}
+    for session in ("sender", "target"):
+        assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **scope}).status_code == 200
+    try:
+        if reason == "closed":
+            worker.close()
+        else:
+            assert worker.enqueue(hold, {}) and entered.wait(3)
+            for _ in range(63):
+                assert worker.enqueue(lambda event: None, {})
+        for index in range(2):
+            sent = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender",
+                "recipient": "codex:target", "payload": f"private-message-東京-{index}", **scope})
+            assert sent.status_code == 200
+            delivery, = sent.json()["deliveries"]
+            claimed = client.post("/relay/turn", json={"runtime": "codex", "session_ref": "target",
+                "wake_delivery_id": delivery["delivery_id"], **scope})
+            assert claimed.status_code == 200
+            claim, = claimed.json()["deliveries"]
+            assert claim["attempts"] == 1
+            assert client.post("/relay/deliveries/ack", json={"delivery_id": claim["delivery_id"],
+                "claim_token": claim["claim_token"], **scope}).status_code == 200
+            status = client.get(f"/relay/messages/{sent.json()['message_id']}", params=scope)
+            assert status.status_code == 200 and status.json()["deliveries"][0]["state"] == "delivered"
+            trace = client.get(f"/relay/messages/{sent.json()['message_id']}/trace", params=scope)
+            assert trace.status_code == 200 and trace.json()["events"] == []
+        assert accepted == [False, False]
+        assert attempts == [("relay_trace_enqueue outcome=rejected reason=%s", (reason,), {})]
+    finally:
+        release.set()
+        if reason == "capacity":
+            worker._executor.submit(lambda: None).result(3)
+    if reason == "capacity":
+        later = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender",
+            "recipient": "codex:target", "payload": "fresh-recovered-trace", **scope})
+        assert later.status_code == 200 and accepted == [False, False, True]
+        worker._executor.submit(lambda: None).result(3)
+        assert [row["stage"] for row in client.get(f"/relay/messages/{later.json()['message_id']}/trace", params=scope).json()["events"]] == ["prepared"]
+    records = [record for record in caplog.records if record.name == "app.relay_trace"
+        and record.msg == "relay_trace_enqueue outcome=rejected reason=%s"]
+    assert len(records) == (0 if logging_fails else 1)
+    assert all(record.exc_info is None for record in records)
+    assert "private-message" not in caplog.text and "private-diagnostic-error" not in caplog.text
+    assert all("東京" not in record.getMessage() for record in records)
 
 
 def test_partial_app_construction_closes_trace_before_storage(app_factory, monkeypatch):

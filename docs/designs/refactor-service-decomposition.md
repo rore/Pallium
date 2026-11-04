@@ -18,6 +18,13 @@ Standalone router composition can omit optional tracing or supply an existing
 app-owned callback; it does not create a second pool. Usage-audit ownership
 remains on `PalliumService`.
 
+Trace admission distinguishes `closed` from `capacity` on the existing logger.
+Each writer attempts each fixed rejection warning at most once in its lifetime,
+including after capacity recovers. Disabled or failed logging consumes that
+attempt without retry; this bound applies only to these two admission warnings.
+Emission occurs outside the admission lock. Synchronous logging may delay the
+first refusal; these warnings do not count dropped events or explain stalls.
+
 This ownership move does not resolve or alter retained-registration policy,
 hook capture, delivery guarantees or persistence. Those decisions remain
 separate from this completed structural boundary.

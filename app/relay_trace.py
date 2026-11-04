@@ -14,6 +14,7 @@ class RelayTraceWriter:
         self._slots = threading.BoundedSemaphore(64)
         self._lock = threading.Lock()
         self._closed = False
+        self._reported_rejections: set[str] = set()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relay-trace")
         try:
             self._executor.submit(lambda: None).result()
@@ -30,20 +31,31 @@ class RelayTraceWriter:
 
     def enqueue(self, writer: Callable[[dict[str, object]], object], event: dict[str, object]) -> bool:
         with self._lock:
-            if self._closed or not self._slots.acquire(blocking=False):
-                return False
-            try:
-                future = self._executor.submit(self._run, writer, dict(event))
-            except Exception:
-                self._slots.release()
+            if self._closed:
+                reason = "closed"
+            elif not self._slots.acquire(blocking=False):
+                reason = "capacity"
+            else:
                 try:
-                    logger.warning("relay trace enqueue failed")
+                    future = self._executor.submit(self._run, writer, dict(event))
                 except Exception:
-                    pass
-                return False
-            # Cancelled queued jobs never enter _run, but still return their slot.
-            future.add_done_callback(lambda _future: self._slots.release())
-            return True
+                    self._slots.release()
+                    try:
+                        logger.warning("relay trace enqueue failed")
+                    except Exception:
+                        pass
+                    return False
+                # Cancelled queued jobs never enter _run, but still return their slot.
+                future.add_done_callback(lambda _future: self._slots.release())
+                return True
+            report = reason not in self._reported_rejections
+            self._reported_rejections.add(reason)
+        if report:
+            try:
+                logger.warning("relay_trace_enqueue outcome=rejected reason=%s", reason)
+            except Exception:
+                pass
+        return False
 
     @staticmethod
     def _run(writer: Callable[[dict[str, object]], object], event: dict[str, object]) -> None:

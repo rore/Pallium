@@ -1,4 +1,5 @@
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
+import logging
 import threading
 
 import pytest
@@ -151,3 +152,92 @@ def test_trace_logging_failure_cannot_change_lifetime_or_release(monkeypatch):
     writer._executor.submit(lambda: None).result(3)
     writer.close()
     assert not writer.enqueue(fail, {})
+
+
+@pytest.mark.parametrize("reason", ["closed", "capacity"])
+@pytest.mark.parametrize("logging_mode", ["normal", "raises", "disabled"])
+def test_trace_rejection_warning_is_bounded_private_and_reentrant(
+    monkeypatch, caplog, reason, logging_mode,
+):
+    writer = RelayTraceWriter()
+    attempts, lock_free, recursive_results = [], [], []
+    concurrent_phase = True
+    original_warning = relay_trace.logger.warning
+    if logging_mode == "disabled":
+        caplog.set_level(logging.ERROR, logger="app.relay_trace")
+
+    def warning(message, *args, **kwargs):
+        attempts.append((message, args, kwargs))
+        if not concurrent_phase:
+            acquired = writer._lock.acquire(blocking=False)
+            lock_free.append(acquired)
+            if acquired:
+                writer._lock.release()
+                recursive_results.append(writer.enqueue(lambda event: None, {"private": "再帰"}))
+        if logging_mode == "raises":
+            raise RuntimeError("private-logger-failure-東京")
+        return original_warning(message, *args, **kwargs)
+
+    monkeypatch.setattr(relay_trace.logger, "warning", warning)
+    reserved = 0
+    try:
+        for _ in range(64):
+            assert writer._slots.acquire(blocking=False)
+            reserved += 1
+        if reason == "closed":
+            writer.close()
+        with ThreadPoolExecutor(max_workers=4) as callers:
+            results = list(callers.map(
+                lambda _: writer.enqueue(lambda event: None, {"private": "payload-token-東京"}),
+                range(16),
+            ))
+        assert results == [False] * 16
+        concurrent_phase = False
+        assert attempts == [("relay_trace_enqueue outcome=rejected reason=%s", (reason,), {})]
+        for _ in range(reserved):
+            writer._slots.release()
+        reserved = 0
+        if reason == "capacity":
+            received = []
+            assert writer.enqueue(received.append, {"stage": "recovered"})
+            writer._executor.submit(lambda: None).result(3)
+            assert received == [{"stage": "recovered"}]
+            for _ in range(64):
+                assert writer._slots.acquire(blocking=False)
+                reserved += 1
+            assert not writer.enqueue(received.append, {"private": "second-full"})
+            assert len(attempts) == 1
+            writer.close()
+            assert not writer.enqueue(received.append, {"private": "closed-while-full"})
+            assert attempts[-1] == ("relay_trace_enqueue outcome=rejected reason=%s", ("closed",), {})
+            assert len(attempts) == 2
+    finally:
+        for _ in range(reserved):
+            writer._slots.release()
+        writer.close()
+
+    count = len(attempts)
+    writer = RelayTraceWriter()
+    reserved = 0
+    try:
+        if reason == "closed":
+            writer.close()
+        else:
+            for _ in range(64):
+                assert writer._slots.acquire(blocking=False)
+                reserved += 1
+        assert not writer.enqueue(lambda event: None, {"private": "new-writer"})
+        assert not writer.enqueue(lambda event: None, {})
+        assert attempts[count:] == [("relay_trace_enqueue outcome=rejected reason=%s", (reason,), {})]
+    finally:
+        for _ in range(reserved):
+            writer._slots.release()
+        writer.close()
+    assert lock_free == [True] * (len(attempts) - 1)
+    assert recursive_results == [False] * (len(attempts) - 1)
+    records = [record for record in caplog.records if record.name == "app.relay_trace"
+        and record.msg == "relay_trace_enqueue outcome=rejected reason=%s"]
+    assert len(records) == (len(attempts) if logging_mode == "normal" else 0)
+    assert all(record.exc_info is None for record in records)
+    assert "payload-token" not in caplog.text and "東京" not in caplog.text
+    assert "再帰" not in caplog.text and "private-logger-failure" not in caplog.text
