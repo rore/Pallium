@@ -59,7 +59,7 @@ jobs:
           if ! (
             cd "$DEFINITION" || exit 1
             printf "%s  %s\n" \
-              39a05c071a5226cebe579f2caef2e50bcab6de6e4ef039fc64fc8464f76dece5 .github/diagnostics/gate_capture.py \
+              99c5893dc9ea65547ddeb6cfafc5f9e227e0785310e89bd3b0384b5169e5988c .github/diagnostics/gate_capture.py \
               6f3b3e7fb7f0b4f47ab2cb36aaa64cad6169528bc4982f19ec47e2c1524e80a5 .github/diagnostics/constraints.txt | sha256sum --check --strict || exit 1
             python -I -S -B .github/diagnostics/gate_capture.py setup \
               --source "$SOURCE_ROOT" --environment "$VENV" \

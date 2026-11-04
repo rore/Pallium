@@ -770,6 +770,9 @@ def request_child(method, path, body, token, deadline):
     require(remaining > 0, "owner_budget")
     # This child alone receives the credential; no token-bearing pytest environment.
     environment = {"GH_TOKEN": token}
+    if os.name == "nt":
+        require(bool(os.environ.get("SYSTEMROOT")), "owner_systemroot")
+        environment["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
     result = subprocess.run([sys.executable, "-I", "-S", "-B", str(Path(__file__).resolve()), "api", method, path, json.dumps(body, separators=(",", ":"))], env=environment, capture_output=True, timeout=min(10, remaining))
     require(result.returncode == 0 and len(result.stdout) <= 128 * 1024, "api_request_failed")
     return json.loads(result.stdout)
