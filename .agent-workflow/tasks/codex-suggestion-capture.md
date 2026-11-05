@@ -23,7 +23,7 @@
 - Repository validation → run the test selector and full non-slow suite.
 **Plan review:** Agent technical review: independent suggestion-plan review of base fba314a4 and this Work Record. Initial review identified a Stop pairing gap. Revised latest-boundary and ambiguity handling and corresponding verification accepted.
 **Approvals:** Not required at this risk level. Live changes need separate authorization.
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -31,3 +31,18 @@
 Plan review accepted after adding explicit Stop transcript boundary checks.
 
 Added the exact-template check to submit and to the existing latest-turn parser. The hook-to-History regression covers both prompt shapes, normalized line endings, later real turns, and uncertain transcript boundaries. The private preview contains exact source IDs and fingerprints only.
+
+## Evidence
+
+Implementation revision `23122945dc80add3147b0d0ff157db1e4546f5d8`.
+
+- The Codex integration and wake suites passed all 335 tests, including 10 new hook-to-History cases.
+- The test selector selected the full lane. After resolving local dependency setup, the full Windows run stopped at 5,122 passed on an unchanged Hermes Relay test whose request reported a busy connection. That exact test passed in isolation on both the baseline and this branch. The parallel full run remains inconclusive. Draft PR CI will supply fresh full-lane evidence.
+- Import boundaries passed and Redline reported the expected gray hook paths. No protected behavior contracts were edited.
+- The scoped legacy preview matched both known fingerprints. Cleanup and rollout require separate live-environment approval.
+
+## Result review
+
+Agent technical review: independent suggestion-result review of the exact product and test diff.
+Reviewed revision: 23122945dc80add3147b0d0ff157db1e4546f5d8
+Verification adequacy: The reviewer accepted the hook-to-History coverage and the boundary handling. Codex's current hook payload leaves a verbatim submission of a known app template indistinguishable from the background request. The agreed full-template fallback excludes either instance; quoted or modified text remains eligible.
