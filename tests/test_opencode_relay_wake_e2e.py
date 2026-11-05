@@ -63,6 +63,50 @@ def _activation(client, base):
 
 
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_context_batch_loss_restores_only_anchor_then_collects_expired_sibling(
+    client, monkeypatch, relay_admission_clock,
+):
+    import storage.sqlite_relay as sqlite_relay
+
+    real_now = sqlite_relay._now
+    clock = [datetime.now(timezone.utc)]
+    monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: real_now(value) if value is not None else clock[0])
+    base = _setup(client, relay_admission_clock=relay_admission_clock)
+    anchor = _send(client, base, payload="anchor", relay_admission_clock=relay_admission_clock).json()
+    sibling = _send(client, base, payload="sibling", relay_admission_clock=relay_admission_clock).json()
+    wake = _wake(client, base, "poll").json()["wake"]
+    snap = _snapshot(base, wake)
+    assert _wake(client, base, "poll", max_messages=1).status_code == 422
+    assert _wake(client, base, "context", **snap, max_messages=True).status_code == 422
+    result = _wake(client, base, "context", **snap, max_messages=3)
+    assert result.status_code == 200, result.text
+    first, second = result.json()["deliveries"]
+    assert [first["message_id"], second["message_id"]] == [anchor["message_id"], sibling["message_id"]]
+    repeated = _wake(client, base, "context", **snap, max_messages=3).json()
+    recovered_anchor, = repeated["deliveries"]
+    assert repeated["wake"]["generation"] == wake["generation"]
+    assert repeated["remaining_count"] == 0
+    assert recovered_anchor["claim_token"] == first["claim_token"]
+    assert recovered_anchor["attempts"] == first["attempts"] == 1
+    ack = client.post("/relay/deliveries/ack", json={
+        "delivery_id": first["delivery_id"], "claim_token": first["claim_token"], **SCOPE,
+    })
+    assert ack.status_code == 200, ack.text
+    assert _wake(client, base, "terminal", **snap, terminal_message_id="msg_terminal_anchor").status_code == 200
+    clock[0] += timedelta(seconds=61)
+    store = client.app.state.pallium_service._storage
+    with relay_admission_clock(store, expected_admissions=1):
+        recovered, = _turn(client)["deliveries"]
+    assert recovered["delivery_id"] == second["delivery_id"] and recovered["attempts"] == 2
+    assert recovered["claim_token"] != second["claim_token"]
+    ack = client.post("/relay/deliveries/ack", json={
+        "delivery_id": recovered["delivery_id"], "claim_token": recovered["claim_token"], **SCOPE,
+    })
+    assert ack.status_code == 200, ack.text
+    assert client.get("/relay/messages/" + sibling["message_id"], params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
+
+
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_idle_then_pending_backlog_is_drained_one_at_a_time(client, relay_admission_clock):
     base = _setup(client, relay_admission_clock=relay_admission_clock)
     assert _activation(client, base)["behavior"] == "busy_queue"

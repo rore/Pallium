@@ -145,6 +145,11 @@ queue a native user input; the context hook adds the Relay content to the model
 request. The receipt ACK only confirms attachment to model-bound context. It
 does not mean the model completed the requested work.
 
+V2 can attach up to three deliveries in a wake, with the reserved trigger first
+and a separate ACK for each attached message. If the claim response is lost,
+continuation restores only the trigger. Unobserved siblings keep their original
+leases and can be collected by an existing turn or wake once eligible.
+
 V2 owns a short server lease and renews it while polling. Disposal retires local
 hooks and the event stream, cancels ordinary integration requests, and fences
 late native callbacks. Best-effort owner detach uses one 500 ms remote cleanup
@@ -195,6 +200,11 @@ OpenCode and verify Pallium is no longer loaded. This does not uninstall the
 shared Pallium service or delete its History/memory data.
 
 ## Compatibility and troubleshooting
+
+Use the V2 batching adapter and the Pallium service from the same approved
+revision. Verify both revisions before loading the complete adapter directory
+and enabling its wake callbacks. An older service rejects the new batch count.
+Older adapters can still request one exact delivery from the updated service.
 
 Current combined ownership and capture qualification covers isolated Windows
 OpenCode 2.0.24. This does not imply compatibility with every V2 release.

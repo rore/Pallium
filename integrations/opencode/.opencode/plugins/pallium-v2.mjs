@@ -5,6 +5,17 @@ import * as pallium from "./pallium-common.mjs";
 const WAKE_TEXT = "[Pallium Relay wake: check the lower-authority Relay context before acting.]";
 const POLL_MS = 2500;
 const BUDGET = 2300;
+const RELAY_NOTICE_RESERVE = 40;
+// Use the real renderer with the shortest possible required fields.
+const MIN_RELAY_ENVELOPE = pallium.formatRelay([{
+  delivery_id: `relay-delivery-${"0".repeat(32)}`, claim_token: "x", message_id: "x",
+  sender_runtime: "codex", sender_session_ref: "x", payload: "x", created_at: "x", attempts: 1,
+}]).text.length;
+const relayRenderBudget = (scopeText) => BUDGET - scopeText.length - 2;
+const relayClaimBudget = (renderBudget) => {
+  const available = renderBudget - RELAY_NOTICE_RESERVE;
+  return available >= MIN_RELAY_ENVELOPE ? available : 1;
+};
 const MAX_HISTORY = 20000;
 const validInput = (id) => typeof id === "string" && id.length <= 512 && /^msg_[A-Za-z0-9_-]+$/.test(id);
 const validDelivery = (id) => typeof id === "string" && /^relay-delivery-[0-9a-f]{32}$/.test(id);
@@ -164,8 +175,9 @@ export default {
       if (claim.response) return Promise.resolve(claim.response);
       if (claim.promise) return claim.promise;
       const pending = (async () => {
+        const maxChars = relayClaimBudget(relayBudget);
         const response = await pallium.relayRequest("POST", "/relay/turn", {
-          runtime: "opencode", session_ref: id, container_ref: scope(id), max_chars: relayBudget,
+          runtime: "opencode", session_ref: id, container_ref: scope(id), max_chars: maxChars,
           structural_work_refs: pallium.structuralWorkRefsPayload(scope(id), discovery.structuralRefs, pallium.repositoryScopeRef(cwd)),
         }, pallium.HTTP_TIMEOUT_MS, item.abort.signal);
         if (!live(id, item)) return null;
@@ -177,7 +189,9 @@ export default {
           if (!item.naturalClaims.has(inputId)) item.naturalClaims.set(inputId, claim);
           void enroll(id, item);
         }
-        claim.response = response?.session ? response : null;
+        claim.response = response?.session
+          ? (maxChars === 1 ? { ...response, deliveries: [] } : response)
+          : null;
         return claim.response;
       })();
       claim.promise = pending;
@@ -284,7 +298,7 @@ export default {
       const scopeText = pallium.formatInjection([], container, BUDGET, id, actor, pallium.AGENT_REF, "private", null,
         pallium.injectedWorkRef(discovery));
       const claim = event.metadata?.pallium_relay_wake === true ? null :
-        ensureNaturalTurn(id, item, event.messageID, content, BUDGET - scopeText.length - 2, discovery);
+        ensureNaturalTurn(id, item, event.messageID, content, relayRenderBudget(scopeText), discovery);
       if (claim) await claim.promise;
       if (!await owned(id, item, signal)) return;
       const roleTurn = item.roleTurns.get(event.messageID);
@@ -326,7 +340,8 @@ export default {
       const discovery = pallium.discoverWorkRefs(cwd);
       const scopeText = pallium.formatInjection([], scope(id), BUDGET, id,
         pallium.resolveActorRef(cwd, id), pallium.AGENT_REF, "private", null, pallium.injectedWorkRef(discovery));
-      const relayBudget = BUDGET - scopeText.length - 2;
+      const relayBudget = relayRenderBudget(scopeText);
+      const maxChars = relayClaimBudget(relayBudget);
       if (internal(user) && !item.endpointId) await restore(id);
       if (!live(id, item, signal)) {
         if (wake) throw new Error("Pallium internal wake owner retired");
@@ -335,11 +350,12 @@ export default {
       wake = reservedWake();
       let response;
       if (wake) {
+        if (maxChars === 1) throw new Error("Pallium internal wake has no Relay output budget");
         response = await wakeRequest(id, item, "context", {
           generation: user.metadata.generation, delivery_id: user.metadata.delivery_id,
-          native_input_id: user.id, max_chars: relayBudget,
+          native_input_id: user.id, max_chars: maxChars, max_messages: 3,
         });
-        if (!response || (!response.deliveries?.length && !response.restored))
+        if (response?.deliveries?.[0]?.delivery_id !== user.metadata.delivery_id)
           throw new Error("Pallium internal wake has no current Relay work");
       } else if (!internal(user)) {
         // The prompt hook freezes the role snapshot at source time and owns the
@@ -362,9 +378,22 @@ export default {
       const deliveries = response?.deliveries || [];
       const claim = item.naturalClaims.get(user.id);
       const continuation = response?.restored || (!wake && claim?.acked);
-      const rendered = continuation ? null : pallium.formatRelay(deliveries, relayBudget, response?.remaining_count || 0);
-      const formatted = continuation ? pallium.formatRelayContinuation(deliveries, relayBudget) : rendered.text;
-      if (wake && !formatted) throw new Error("Pallium internal wake has no model-bound Relay context");
+      let rendered = { text: "", deliveries: [] };
+      if (!continuation && maxChars !== 1) {
+        const eligible = response?.has_more === true && Number.isInteger(response.remaining_count)
+          ? Math.max(0, response.remaining_count) : 0;
+        rendered = pallium.formatRelay(deliveries, relayBudget, eligible);
+        let omitted = 0;
+        while (omitted < deliveries.length - rendered.deliveries.length) {
+          omitted = deliveries.length - rendered.deliveries.length;
+          rendered = pallium.formatRelay(deliveries, relayBudget, eligible + omitted);
+        }
+      }
+      const formatted = continuation && maxChars !== 1
+        ? pallium.formatRelayContinuation(deliveries, relayBudget)
+        : rendered.text;
+      if (wake && (!formatted || (!continuation && rendered.deliveries[0]?.delivery_id !== user.metadata.delivery_id)))
+        throw new Error("Pallium internal wake has no model-bound Relay context");
       const memory = !formatted && !wake && item.memory?.inputId === user.id ? item.memory.text : scopeText;
       const text = [formatted, memory].filter(Boolean).join("\n\n");
       if (!text) return;

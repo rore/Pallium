@@ -230,16 +230,25 @@ class RelayService:
                 exact_delivery_id, "exact_delivery_id", maximum=128
             )
             if (
-                runtime != "codex"
+                runtime not in {"codex", "hermes"}
                 or re.fullmatch(r"relay-delivery-[0-9a-f]{32}", exact_delivery_id)
                 is None
             ):
                 raise ValueError(
-                    "exact_delivery_id requires a canonical Codex delivery ID"
+                    "exact_delivery_id requires a canonical Codex or Hermes delivery ID"
                 )
+            if runtime == "hermes" and (
+                register_session or type(max_messages) is not int
+                or not 1 <= max_messages <= 3 or not max_chars or not max_response_chars
+                or structural_work_refs is not None
+                or any(value is not None for value in (
+                    previous_container_ref, previous_endpoint_id, previous_scope_generation,
+                ))
+            ):
+                raise ValueError("Hermes exact claims require claim-only authority and bounded budgets")
         if codex_wake_endpoint_id is not None or codex_wake_generation is not None:
             if (
-                exact_delivery_id is None
+                runtime != "codex" or exact_delivery_id is None
                 or not isinstance(codex_wake_endpoint_id, str)
                 or _ENDPOINT_ID_RE.fullmatch(codex_wake_endpoint_id) is None
                 or type(codex_wake_generation) is not int
@@ -268,6 +277,7 @@ class RelayService:
             max_messages=max_messages,
             lease_seconds=RELAY_CLAIM_LEASE_SECONDS,
             **({"exact_delivery_id": exact_delivery_id} if exact_delivery_id is not None else {}),
+            **({"complete_payloads": True} if runtime == "hermes" and exact_delivery_id is not None else {}),
             **({"claim_expires_at_ms": claim_expires_at_ms} if claim_expires_at_ms is not None else {}),
             **({
                 "codex_wake_endpoint_id": codex_wake_endpoint_id,
@@ -704,6 +714,11 @@ class RelayService:
         request["native_location"] = _opaque(request["native_location"], "native_location", maximum=4096)
         if request.get("operation") not in {"enroll", "poll", "admitted", "terminal", "detach", "context"}:
             raise ValueError("invalid OpenCode wake operation")
+        if "max_messages" in request and (
+            request["operation"] != "context" or type(request["max_messages"]) is not int
+            or not 1 <= request["max_messages"] <= 3
+        ):
+            raise ValueError("OpenCode max_messages must be 1 through 3 on context only")
         if not _ENDPOINT_ID_RE.fullmatch(request.get("endpoint_id", "")):
             raise ValueError("invalid OpenCode endpoint")
         if not re.fullmatch(r"opencode-owner-[0-9a-f]{32}", request.get("owner_id", "")):

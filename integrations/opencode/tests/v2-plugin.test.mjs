@@ -29,7 +29,7 @@ test("package keeps V1 default and exports the V2 raw plugin", () => {
   assert.equal(typeof v2.setup, "function");
 });
 
-test("V2 exact session wakes once, attaches to model context, ACKs, and settles correlated idle", async () => {
+for (const batch of [false, true]) test(`V2 exact ${batch ? "batch" : "singleton"} wakes once, attaches, ACKs and settles`, async () => {
   const oldFetch = globalThis.fetch;
   const calls = [];
   const hooks = {};
@@ -37,6 +37,9 @@ test("V2 exact session wakes once, attaches to model context, ACKs, and settles 
   let owner;
   let waitCount = 0;
   let contextCount = 0;
+  let modelBound;
+  const sibling = { ...delivery, delivery_id: "relay-delivery-" + "c".repeat(32),
+    message_id: "relay-message-sibling", claim_token: "claim-sibling", payload: "fitting sibling" };
   const wake = { generation: 1, delivery_id: deliveryID, native_input_id: nativeID,
     native_location: location, scope_generation: 0, admitted: false, terminal: false };
   globalThis.fetch = async (url, init) => {
@@ -49,13 +52,19 @@ test("V2 exact session wakes once, attaches to model context, ACKs, and settles 
       owner = body.owner_id;
       if (body.operation === "admitted") wake.admitted = true;
       if (body.operation === "terminal") wake.terminal = true;
-      if (body.operation === "context") contextCount++;
+      if (body.operation === "context") {
+        contextCount++;
+        assert.equal(body.max_messages, 3);
+      }
       result = { session: relaySession, wake: { ...wake },
-        deliveries: body.operation === "context" ? [contextCount === 1 ? delivery : { ...delivery, claim_token: undefined }] : [],
+        deliveries: body.operation !== "context" ? [] : contextCount > 1
+          ? [{ ...delivery, claim_token: undefined }] : batch ? [delivery, sibling] : [delivery],
+        has_more: batch, remaining_count: batch ? 1 : 0,
         restored: body.operation === "context" && contextCount > 1 };
-    } else if (u.pathname === "/relay/deliveries/ack") result = {
-      delivery_id: deliveryID, state: "delivered", already_delivered: false,
-    };
+    } else if (u.pathname === "/relay/deliveries/ack") {
+      assert.ok(modelBound.content.at(-1).text.includes(body.delivery_id));
+      result = { delivery_id: body.delivery_id, state: "delivered", already_delivered: false };
+    }
     else result = {};
     return { ok: true, text: async () => JSON.stringify(result) };
   };
@@ -70,11 +79,14 @@ test("V2 exact session wakes once, attaches to model context, ACKs, and settles 
         waitCount++;
         const user = messages.find((m) => m.id === nativeID);
         const projected = { id: user.id, role: "user", content: [{ type: "text", text: user.text }], metadata: user.metadata };
+        modelBound = projected;
         await hooks.context({ sessionID, messages: [projected] });
         assert.match(projected.content.at(-1).text, /שלום wake payload/);
+        if (batch) assert.match(projected.content.at(-1).text, /fitting sibling[\s\S]*\[Relay: 1 more;/);
         const continuation = { id: user.id, role: "user", content: [{ type: "text", text: user.text }], metadata: user.metadata };
         await hooks.context({ sessionID, messages: [continuation] });
         assert.match(continuation.content.at(-1).text, /שלום wake payload/);
+        assert.doesNotMatch(continuation.content.at(-1).text, /fitting sibling|\[Relay: 1 more;/);
         messages.push({ type: "idle", id: "msg_terminal123", outcome: "succeeded" });
       },
     },
@@ -90,7 +102,8 @@ test("V2 exact session wakes once, attaches to model context, ACKs, and settles 
     assert.match(owner, /^opencode-owner-[0-9a-f]{32}$/);
     assert.equal(calls.filter((c) => c.body.operation === "admitted").length, 1);
     assert.equal(calls.filter((c) => c.body.operation === "terminal")[0].body.terminal_message_id, "msg_terminal123");
-    assert.equal(calls.filter((c) => c.path === "/relay/deliveries/ack").length, 1);
+    assert.deepEqual(calls.filter((c) => c.path === "/relay/deliveries/ack").map((c) => c.body.delivery_id),
+      batch ? [deliveryID, sibling.delivery_id] : [deliveryID]);
     assert.equal(contextCount, 2);
     await dispose();
     assert.equal(calls.filter((c) => c.body.operation === "detach").length, 1);

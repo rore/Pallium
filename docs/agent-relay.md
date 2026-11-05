@@ -41,19 +41,47 @@ credential assignments and secret-shaped segments remain masked.
 Messages contain at most 16,000 Unicode code points. New messages and replies
 expire after 24 hours when expiry is omitted. Explicit `expires_in_seconds: null`
 requests durable delivery; finite expiry can range from 60 seconds through
-7 days. HTTP and hook turns claim three messages by default; a positive
+7 days. HTTP turns claim three messages by default; a positive
 `max_messages` sets an explicit cap, while `0` means unlimited. MCP receive
 claims one delivery per call and keeps its compact JSON response within 2,000
 characters. Its claim lease lasts 60 seconds. After paging, reply or acknowledge with `pallium_relay_ack` before either the source message expiry or claim lease ends. After ACK, reply later with the same receipt.
 
-Codex, Claude, and OpenCode hooks claim within 2,360 characters, reserving 40
-characters for a compact backlog notice inside their 2,400-character output budget.
+Claude Code, OpenCode V1 and Codex SessionStart claim within 2,360 characters,
+reserving 40 characters for a compact backlog notice inside their 2,400-character
+Relay output budget. Codex UserPromptSubmit instead requests up to eight messages
+within 11,960 characters, reserving the same notice space inside a 12,000-character
+Relay packet. Its scope block has its own existing bound. Optional memory does not
+expand that Relay packet. OpenCode V2 reserves scope and notice space within
+its 2,300-character context budget. Hermes uses its complete-context envelope
+and can include up to three whole payloads.
+
+Finite pageable turns reserve room for fitting delivery envelopes before
+expanding individual payloads. This lets a small sibling share a turn with a
+long message. When the host supplies an exact wake trigger, it must fit and
+appear first. Each selected message has its own lease and receipt.
 A long message is injected as an attributed prefix with the exact omitted count
 and a `pallium_relay_status` continuation call. Status pages use Unicode
 code-point offsets and reconstruct the complete stored redacted body; continue with `next_offset` until it is null. The unpaged HTTP status response remains a
-full-body compatibility view. `has_more` and `remaining_count` report all
-unclaimed work, and integrations acknowledge only blocks actually added to model
+full-body compatibility view. `has_more` and `remaining_count` report eligible
+work left at selection. A live lease is outside that count even if the host
+never observed it. Integrations acknowledge only blocks actually added to model
 context.
+
+A Codex wake must include its exact trigger before it can collect eligible
+siblings for the same endpoint. The trigger comes first, then siblings in queue
+order. If the trigger is missing, expired, held by an unexpired claim, unsafe or
+cannot fit, the wake claims no siblings. An explicit `max_messages: 1` retains
+trigger-only selection. Finite Codex batches share the render budget across messages, including
+their attribution and continuation notices; a first envelope that exceeds its
+share can use the whole budget rather than starve. This can produce fewer than
+eight blocks. Bodies remain readable through the existing status continuation.
+
+The hook emits and flushes one packet before acknowledging individual blocks.
+Unconfirmed ACKs leave lease-based recovery in place, so a previously emitted
+message can appear again. Counts describe the selection snapshot; later arrivals
+wait for a later eligible hook. A 27-message backlog can fit into four eight-item
+hook batches when envelopes and budgets permit, but packet capacity does not
+guarantee subsequent wake timing or autonomous backlog drainage.
 Hook delivery appends a separately bounded exact-scope block so the same turn
 can reply without a receipt. If trusted scope cannot be rendered safely, the hook
 does not claim or acknowledge Relay work; the persisted delivery remains recoverable.
@@ -286,7 +314,12 @@ Codex recipient remains eligible; recovery derives its current session and
 container from that boundary, atomically replaces the reservation with a fresh
 uncorrelated generation, clears old-scope scheduling keys, and schedules one
 replacement before claims resume. Mismatches and active claims remain fenced;
-uncorrelated expired claims use the bounded retained recovery path above. A delivery-specific turn selects only its exact delivery, while `has_more` and `remaining_count` still describe all unclaimed inbox work. A positively pre-submit failure becomes retryable
+uncorrelated expired claims use the bounded retained recovery path above. A
+delivery-specific Codex turn requires its eligible exact trigger first, then
+selects eligible same-endpoint siblings within its count and output limits;
+explicit `max_messages: 1` selects only the trigger. An expired claim lease can
+be reclaimed. `has_more` and `remaining_count` still describe all unclaimed inbox
+work. A positively pre-submit failure becomes retryable
 only after the safe reset durably commits. A never-claimed legacy reservation
 or expired unacknowledged claim can recover only after cooldown and fresh authenticated idle/notLoaded
 eligibility; legacy uncorrelated active claims remain fenced. If a reservation

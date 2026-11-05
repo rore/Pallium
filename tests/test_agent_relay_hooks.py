@@ -7,8 +7,11 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+from tests.test_relay_exact_claim_e2e import exact_client
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,6 +55,187 @@ def _turn_response(deliveries=(), *, has_more=False, remaining_count=0, **sessio
         "remaining_count": remaining_count,
         "session": {**TURN_SESSION, **session},
     }
+
+
+@pytest.fixture
+def batch_hook(exact_client, monkeypatch, tmp_path):
+    from urllib.parse import urlsplit
+    from tests.test_relay_exact_claim_e2e import SCOPE
+
+    client, storage = exact_client
+    hook = _load("codex_batch_prompt", "integrations/codex/hooks/user_prompt_submit.py")
+    common = hook._common
+    assert Path(hook.__file__).resolve() == ROOT / "integrations/codex/hooks/user_prompt_submit.py"
+    assert Path(common.__file__).resolve() == ROOT / "integrations/codex/hooks/common.py"
+    monkeypatch.setattr(common, "STATE_DIR", tmp_path / "hook-state")
+    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "hook-state" / "sessions")
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: SCOPE["container_ref"])
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(hook, "discover_work_refs", lambda *_: None)
+    monkeypatch.setattr(hook, "structural_work_refs_payload", lambda *_: None)
+    monkeypatch.setattr(hook, "record_codex_hook_execution", lambda **_: False)
+    monkeypatch.setattr(hook, "record_codex_wake_event", lambda **_: False)
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
+    monkeypatch.setattr(hook, "pallium_request", lambda *_a, **_k: pytest.fail("batch must precede memory"))
+    _intercept_blocked_wake_exit(monkeypatch, hook)
+    state = SimpleNamespace(client=client, storage=storage, hook=hook, common=common,
+                            outputs=[], calls=[], turns=[], ack_count=0, ack_cutoff=None,
+                            omit_trigger=False, emit_failure=False, on_emit=None)
+
+    class Response:
+        def __init__(self, value):
+            self.raw = json.dumps(value, ensure_ascii=False).encode("utf-8")
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            return False
+        def read(self):
+            return self.raw
+
+    def urlopen(request, *, timeout):
+        url = urlsplit(request.full_url)
+        path = url.path + ("?" + url.query if url.query else "")
+        body = json.loads(request.data) if request.data else None
+        state.calls.append((request.get_method(), path, body, timeout))
+        assert path.startswith("/relay/"), path
+        if path == "/relay/deliveries/ack":
+            state.ack_count += 1
+            if state.ack_cutoff is not None and state.ack_count > state.ack_cutoff:
+                return Response({})
+        response = client.request(request.get_method(), path, json=body)
+        assert response.status_code == 200, response.text
+        value = response.json()
+        if path == "/relay/turn":
+            state.turns.append(value)
+            if state.omit_trigger:
+                value = {**value, "deliveries": value["deliveries"][1:]}
+        return Response(value)
+
+    monkeypatch.setattr(common, "_urlopen", urlopen)
+
+    def emit(text, _event):
+        if state.emit_failure:
+            raise OSError("controlled output flush failure")
+        state.outputs.append(text)
+        if state.on_emit is not None:
+            state.on_emit()
+
+    monkeypatch.setattr(hook, "emit_context", emit)
+
+    def restart():
+        nonlocal hook, common
+        previous_hook, previous_common = hook, common
+        hook = _load("codex_batch_prompt_restart", "integrations/codex/hooks/user_prompt_submit.py")
+        common = hook._common
+        for name in ("resolve_container_ref", "derive_actor_ref", "discover_work_refs",
+                     "structural_work_refs_payload", "record_codex_hook_execution",
+                     "record_codex_wake_event", "get_pending_relay_close_batch",
+                     "pallium_request", "_exit_blocked_wake", "emit_context"):
+            monkeypatch.setattr(hook, name, getattr(previous_hook, name))
+        for name in ("STATE_DIR", "SESSIONS_DIR", "_urlopen"):
+            monkeypatch.setattr(common, name, getattr(previous_common, name))
+        state.hook, state.common = hook, common
+
+    def run(prompt="hi"):
+        monkeypatch.setattr(hook, "read_hook_input", lambda: {
+            "cwd": str(tmp_path), "session_id": "target", "prompt": prompt,
+        })
+        hook._HOOK_STARTED_AT = time.monotonic()
+        with pytest.raises(SystemExit) as finished:
+            hook.main()
+        return finished.value.code
+
+    state.run = run
+    state.restart = restart
+    return state
+
+
+@pytest.mark.parametrize("exact_wake", [False, True])
+def test_codex_prompt_batches_27_messages_through_real_http_and_ack(batch_hook, exact_wake):
+    from app.codex_wake import _wake_prompt
+    from tests.test_relay_exact_claim_e2e import send, status
+
+    state = batch_hook
+    messages = [send(state.client, payload=f"finding {index} → 你好 " + "界" * 1800) for index in range(27)]
+    lengths = {item["message_id"]: len(f"finding {index} → 你好 " + "界" * 1800)
+               for index, item in enumerate(messages)}
+    pending = list(messages)
+    for expected_count in (8, 8, 8, 3):
+        trigger = pending[-1] if exact_wake else pending[0]
+        expected = ([trigger, *pending[:-1]] if exact_wake else pending)[:expected_count]
+        prompt = _wake_prompt(trigger["deliveries"][0]["delivery_id"]) if exact_wake else "hi"
+        assert state.run(prompt) == 0
+        turn = state.turns[-1]
+        assert [row["message_id"] for row in turn["deliveries"]] == [item["message_id"] for item in expected]
+        relay_text, scope = state.outputs[-1].rsplit("\n\n", 1)
+        assert relay_text.count("[Pallium Relay message from ") == expected_count
+        assert len(relay_text) <= state.hook.RELAY_BATCH_OUTPUT_BUDGET
+        assert len(scope) <= state.common.RELAY_OUTPUT_BUDGET == 2400
+        assert all(status(state.client, item)["state"] == "delivered" for item in expected)
+        assert all(row["payload_total_chars"] == lengths[row["message_id"]] for row in turn["deliveries"])
+        assert "claim_token:" not in relay_text and "relay-claim-" not in relay_text
+        pending = [item for item in pending if item not in expected]
+        assert turn["remaining_count"] == len(pending)
+        assert (f"[Relay: {len(pending)} more; Pallium continues.]" in relay_text) is bool(pending)
+    assert state.ack_count == 27 and len(state.outputs) == 4
+    turn_requests = [body for _, path, body, _ in state.calls if path == "/relay/turn"]
+    assert all(body["max_messages"] == 8 and body["max_chars"] == 11960 for body in turn_requests)
+
+
+@pytest.mark.parametrize("failure", ["emit", "missing_trigger", "partial_ack"])
+def test_codex_batch_failure_preserves_unacknowledged_lease_recovery(batch_hook, failure):
+    from datetime import datetime, timedelta, timezone
+    from app.codex_wake import _wake_prompt
+    from storage.sqlite_schema import RelayDeliveryRecord
+    from tests.test_relay_exact_claim_e2e import send, status
+
+    state = batch_hook
+    messages = [send(state.client, payload=f"finding {index}") for index in range(8)]
+    trigger = messages[-1]
+    ordered = [trigger, *messages[:-1]]
+    state.emit_failure = failure == "emit"
+    state.omit_trigger = failure == "missing_trigger"
+    state.ack_cutoff = 1 if failure == "partial_ack" else None
+    assert state.run(_wake_prompt(trigger["deliveries"][0]["delivery_id"])) == (0 if failure == "partial_ack" else 2)
+    assert len(state.outputs) == (1 if failure == "partial_ack" else 0)
+    assert state.ack_count == (8 if failure == "partial_ack" else 0)
+    for item in messages:
+        expected = "delivered" if failure == "partial_ack" and item is trigger else "claimed"
+        assert (status(state.client, item)["state"], status(state.client, item)["attempts"]) == (expected, 1)
+
+    with state.storage._relay_session_factory.begin() as db:
+        for item in messages:
+            row = db.get(RelayDeliveryRecord, item["deliveries"][0]["delivery_id"])
+            if row.state == "claimed":
+                row.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    state.emit_failure = state.omit_trigger = False
+    state.ack_cutoff = None
+    state.restart()
+    assert state.run() == 0
+    assert all(status(state.client, item)["state"] == "delivered" for item in messages)
+    assert all(status(state.client, item)["attempts"] == (1 if item is trigger and failure == "partial_ack" else 2)
+               for item in ordered)
+    assert "possible_redelivery: true" in state.outputs[-1]
+
+
+def test_codex_batch_arrival_after_selection_waits_for_a_fresh_hook(batch_hook):
+    from app.codex_wake import _wake_prompt
+    from tests.test_relay_exact_claim_e2e import send, status
+
+    state = batch_hook
+    messages = [send(state.client) for _ in range(8)]
+    arrived = []
+    state.on_emit = lambda: arrived.append(send(state.client, payload="new arrival"))
+    anchor = messages[-1]["deliveries"][0]["delivery_id"]
+    assert state.run(_wake_prompt(anchor)) == 0
+    assert state.turns[-1]["remaining_count"] == 0  # Count at selection, before the later send.
+    assert (status(state.client, arrived[0])["state"], status(state.client, arrived[0])["attempts"]) == ("pending", 0)
+    state.on_emit = None
+    outputs, acknowledgments = len(state.outputs), state.ack_count
+    assert state.run(_wake_prompt(anchor)) == 0
+    assert len(state.outputs) == outputs and state.ack_count == acknowledgments
+    assert status(state.client, arrived[0])["state"] == "pending"
+    assert state.run() == 0 and status(state.client, arrived[0])["state"] == "delivered"
 
 @pytest.fixture(autouse=True)
 def isolated_hook_state(monkeypatch, tmp_path):
@@ -230,6 +414,9 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
         "container_ref": "git:example/repo",
         "max_chars": 2360,
     }
+    if codex:
+        expected_body["max_chars"] = hook.RELAY_BATCH_TURN_BUDGET
+        expected_body["max_messages"] = hook.RELAY_BATCH_MAX_MESSAGES
     if codex:
         expected_body["wake_delivery_id"] = embedded_delivery_id
         expiry = turn_calls[0][2]["claim_expires_at_ms"]
@@ -1953,14 +2140,15 @@ def test_codex_short_prompt_delivers_relay_before_memory_gate(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("relative", "runtime"),
+    ("relative", "runtime", "batch"),
     [
-        ("integrations/claude-code/hooks/common.py", "claude-code"),
-        ("integrations/codex/hooks/common.py", "codex"),
+        ("integrations/claude-code/hooks/common.py", "claude-code", False),
+        ("integrations/codex/hooks/common.py", "codex", False),
+        ("integrations/codex/hooks/common.py", "codex", True),
     ],
 )
 def test_relay_turn_replays_without_claiming_until_final_destination(
-    monkeypatch, tmp_path: Path, relative: str, runtime: str,
+    monkeypatch, tmp_path: Path, relative: str, runtime: str, batch,
 ):
     common = _load(f"replay_{runtime}", relative)
     monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "sessions")
@@ -2001,14 +2189,15 @@ def test_relay_turn_replays_without_claiming_until_final_destination(
             )
         return None
 
-    result = common.relay_turn(runtime, session_id, "git:new/repo", request=request)
+    result = common.relay_turn(runtime, session_id, "git:new/repo", request=request,
+                               **({"max_messages": 8} if batch else {}))
     assert result is not None
     assert [item["delivery_id"] for item in result["deliveries"]] == ["replayed-delivery"]
     assert [body["container_ref"] for body in calls] == [
         "git:middle/repo", "git:new/repo",
     ]
     assert calls[0]["max_chars"] == 1 and calls[0]["max_messages"] == 1
-    assert "max_messages" not in calls[1]
+    assert calls[1].get("max_messages") == (8 if batch else None)
     state = json.loads((state_dir / f"{session_id}.json").read_text(encoding="utf-8"))
     assert state["last_confirmed_container_ref"] == "git:new/repo"
     assert state["last_confirmed_scope_generation"] == 2
@@ -2170,6 +2359,97 @@ def _legacy_scope_clock(common, monkeypatch):
     scoped_time.monotonic = count(step=.001).__next__
     monkeypatch.setattr(common, "time", scoped_time)
     assert time.monotonic is native_monotonic
+
+
+def test_claude_ordinary_batch_captures_then_flushes_before_individual_ack(client, monkeypatch, tmp_path):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    monkeypatch.delitem(sys.modules, "common", raising=False)
+    hook = _load("claude_timed_batch", "integrations/claude-code/hooks/user_prompt_submit.py")
+    common = hook.relay_turn.__globals__
+    scope = {"container_ref": "git:example.test/claude-batch"}
+    sender = {"runtime": "codex", "session_ref": "sender", **scope}
+    target = {"runtime": "claude-code", "session_ref": "target", **scope}
+    for turn in (sender, target):
+        result = client.post("/relay/turn", json=turn)
+        assert result.status_code == 200, result.text
+    sent = []
+    for payload in ("界" * 8000, "fitting sibling"):
+        result = client.post("/relay/messages", json={
+            "sender_runtime": "codex", "sender_session_ref": "sender",
+            "recipient": "claude-code:target", "payload": payload, **scope,
+        })
+        assert result.status_code == 200, result.text
+        sent.append(result.json())
+    events, saved = [], []
+    prompt = "Capture the current ordinary prompt before returning the Relay batch."
+
+    class HTTP(BaseHTTPRequestHandler):
+        def do_POST(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            body = json.loads(raw)
+            events.append((self.path, time.monotonic(), body))
+            response = client.post(self.path, content=raw, headers={"Content-Type": "application/json"})
+            if self.path == "/items" and response.status_code == 200:
+                saved.extend(response.json())
+            self.send_response(response.status_code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(response.content)
+
+        def log_message(self, *_args):
+            pass
+
+    class Buffer(io.BytesIO):
+        def flush(self):
+            events.append(("flush", time.monotonic(), None))
+            super().flush()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HTTP)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    output = SimpleNamespace(buffer=Buffer(), encoding="utf-8")
+    try:
+        monkeypatch.setitem(common, "PALLIUM_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+        monkeypatch.setitem(common, "SESSIONS_DIR", tmp_path / "sessions")
+        monkeypatch.setattr(hook, "read_hook_input", lambda: {
+            "cwd": str(tmp_path), "session_id": "target", "prompt_id": "prompt-one", "prompt": prompt,
+        })
+        monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(hook, "resolve_container_ref", lambda *_args: scope["container_ref"])
+        monkeypatch.setattr(hook, "derive_actor_ref", lambda *_args: "actor")
+        monkeypatch.setattr(hook, "discover_work_refs", lambda *_args: common["WorkRefDiscovery"]())
+        monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_args: ([], 0))
+        started = time.monotonic()
+        with monkeypatch.context() as stream:
+            stream.setattr(hook.sys, "stdout", output)
+            with pytest.raises(SystemExit) as exited:
+                hook.main()
+        assert exited.value.code == 0
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    capture = [(when, body) for path, when, body in events if path == "/items"]
+    assert len(capture) == len(saved) == 1
+    assert capture[0][1][0]["source_turn_id"] == hook.source_turn_key("prompt-one")
+    assert not any(path == "/item-and-query" for path, _, _ in events)
+    assert [event for event, _, _ in events if event in {"/items", "flush", "/relay/deliveries/ack"}] == [
+        "/items", "flush", "/relay/deliveries/ack", "/relay/deliveries/ack",
+    ]
+    assert all(when - started < 7 for path, when, _ in events if path == "/relay/deliveries/ack")
+    rendered = output.buffer.getvalue().decode("utf-8")
+    assert "fitting sibling" in rendered and "pallium_relay_status" in rendered
+    source = client.get(f"/source/{saved[0]['source_item_id']}/context", params={
+        **scope, "query_actor_ref": "actor", "query_visibility": "private",
+    })
+    assert source.status_code == 200, source.text
+    assert any(item["content"] == prompt for item in source.json()["items"])
+    for message in sent:
+        delivery, = client.get(f"/relay/messages/{message['message_id']}", params=scope).json()["deliveries"]
+        assert delivery["state"] == "delivered" and delivery["attempts"] == 1
 
 
 @pytest.mark.parametrize("runtime", ["claude-code", "codex"])
@@ -3569,7 +3849,8 @@ def test_relay_ack_batch_stops_at_shared_deadline(
         "claim_token": "relay-claim-2",
     }
     result = common.acknowledge_relay(
-        [DELIVERY, second], container_ref="container"
+        [DELIVERY, second, *[{**second, "delivery_id": f"relay-delivery-{index}"}
+                               for index in range(3, 9)]], container_ref="container"
     )
 
     assert observed == [0.5]

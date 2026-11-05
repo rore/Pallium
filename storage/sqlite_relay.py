@@ -376,7 +376,7 @@ class SQLiteRelayMixin:
     def relay_opencode_wake(
         self, *, operation, session_ref, container_ref, endpoint_id, scope_generation,
         native_location, owner_id, generation=None, delivery_id=None,
-        native_input_id=None, terminal_message_id=None, max_chars=2300, now=None,
+        native_input_id=None, terminal_message_id=None, max_chars=2300, max_messages=1, now=None,
     ) -> dict[str, Any]:
         request = dict(
             session_ref=session_ref, container_ref=container_ref, endpoint_id=endpoint_id,
@@ -388,7 +388,7 @@ class SQLiteRelayMixin:
         if operation == "context":
             return self.relay_turn(
                 runtime="opencode", session_ref=session_ref, container_ref=container_ref,
-                title=None, max_chars=max_chars, max_messages=1,
+                title=None, max_chars=max_chars, max_messages=max_messages,
                 lease_seconds=60, register_session=False, exact_delivery_id=delivery_id,
                 opencode_wake=request, now=current,
             )
@@ -1479,6 +1479,7 @@ class SQLiteRelayMixin:
         codex_wake_endpoint_id: str | None = None,
         codex_wake_generation: int | None = None,
         opencode_wake: dict[str, Any] | None = None,
+        complete_payloads: bool = False,
         max_response_chars: int = 0,
         register_session: bool = True,
         previous_container_ref: str | None = None,
@@ -1513,6 +1514,31 @@ class SQLiteRelayMixin:
                     check_claim_expiry()  # Still inside the transaction: expiration rolls everything back.
                 return result
 
+            def eligible_deliveries(endpoint_id):
+                return (
+                    select(RelayDeliveryRecord, RelayMessageRecord)
+                    .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                    .where(
+                        RelayDeliveryRecord.recipient_endpoint_id == endpoint_id,
+                        RelayDeliveryRecord.recipient_runtime == runtime,
+                        RelayDeliveryRecord.recipient_session_ref == session_ref,
+                        RelayDeliveryRecord.recipient_container_ref == container_ref,
+                        RelayMessageRecord.expires_at > current,
+                        or_(
+                            RelayDeliveryRecord.state == "pending",
+                            and_(
+                                RelayDeliveryRecord.state == "claimed",
+                                RelayDeliveryRecord.lease_expires_at <= current,
+                            ),
+                        ),
+                    )
+                )
+
+            def count_eligible(query):
+                return db.execute(
+                    query.with_only_columns(func.count(), maintain_column_froms=True)
+                ).scalar_one()
+
             wake = None
             if opencode_wake is not None:
                 if runtime != "opencode" or register_session or exact_delivery_id is None:
@@ -1540,12 +1566,13 @@ class SQLiteRelayMixin:
                     reusable = reusable and _delivery_render_safe(delivery, message) and (
                         not max_chars or len(_delivery_text(delivery, message, view)) <= max_chars
                     )
+                    remaining = count_eligible(eligible_deliveries(registered.id)) if max_messages > 1 else 0
                     return finalize({
                         "session": self._relay_session_view(db, registered, current, RELAY_RECENT_SECONDS),
                         "wake": self._opencode_wake_view(wake),
                         "deliveries": [view] if reusable else [],
                         "restored": reusable and delivery.state == "delivered",
-                        "has_more": False, "remaining_count": 0,
+                        "has_more": remaining > 0, "remaining_count": remaining,
                     })
             current_scope = db.execute(
                 select(RelaySessionRecord, RelayEndpointGenerationRecord)
@@ -1639,27 +1666,17 @@ class SQLiteRelayMixin:
                 .execution_options(synchronize_session=False)
             )
 
-            eligible_query = (
-                select(RelayDeliveryRecord, RelayMessageRecord)
-                .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
-                .where(
-                    RelayDeliveryRecord.recipient_endpoint_id == registered.id,
-                    RelayMessageRecord.expires_at > current,
-                    or_(
-                        RelayDeliveryRecord.state == "pending",
-                        and_(
-                            RelayDeliveryRecord.state == "claimed",
-                            RelayDeliveryRecord.lease_expires_at <= current,
-                        ),
-                    ),
+            eligible_query = eligible_deliveries(registered.id)
+            eligible_count = count_eligible(eligible_query)
+            eligible_query = eligible_query.order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
+            required_trigger = exact_delivery_id
+            batch_trigger = required_trigger is not None and max_messages != 1
+            if batch_trigger:
+                eligible_query = eligible_query.order_by(None).order_by(
+                    case((RelayDeliveryRecord.id == required_trigger, 0), else_=1),
+                    RelayMessageRecord.created_at, RelayDeliveryRecord.id,
                 )
-                .order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
-            )
-            eligible_count = db.execute(
-                eligible_query.with_only_columns(func.count(), maintain_column_froms=True)
-                .order_by(None)
-            ).scalar_one()
-            if exact_delivery_id is None:
+            if exact_delivery_id is None or batch_trigger:
                 # Sort metadata, then load payloads only for candidates we examine.
                 eligible_query = eligible_query.options(defer(RelayMessageRecord.payload)).execution_options(yield_per=16)
             else:
@@ -1667,6 +1684,8 @@ class SQLiteRelayMixin:
             session_view = _session_view(registered, current, 24 * 60 * 60, generation)
             selected: list[tuple[RelayDeliveryRecord, RelayMessageRecord, dict[str, Any], int, str]] = []
             used = 0
+            reserve_envelopes = not complete_payloads and max_chars > 0 and max_messages > 1 and eligible_count > 1
+            lease_expires_at = current + timedelta(seconds=lease_seconds)
 
             def response(deliveries: list[dict[str, Any]]) -> dict[str, Any]:
                 remaining = eligible_count - len(deliveries)
@@ -1687,63 +1706,112 @@ class SQLiteRelayMixin:
                     check_claim_expiry()
                     return finalize(empty_response)
 
+            def project(delivery, message, token, prefix_chars, index, render_room, response_limit):
+                view = _delivery_view(
+                    delivery, message, registered.state,
+                    payload_limit=None if prefix_chars == len(message.payload) else prefix_chars,
+                )
+                view.update(
+                    state="claimed",
+                    claim_token=token,
+                    receipt=_delivery_receipt(token),
+                    claimed_at=_iso(current),
+                    lease_expires_at=_iso(lease_expires_at),
+                    attempts=int(delivery.attempts or 0) + 1,
+                )
+                attempt = view["attempts"]
+                attempt = attempt if 1 <= attempt <= 2**53 - 1 else None
+                view.update(
+                    claim_attempt=attempt,
+                    possible_redelivery=None if attempt is None else attempt > 1,
+                    redelivery_guidance=(
+                        "Check exact delivery_id in context/artifacts. "
+                        "Skip completed actions; if unknown, inspect target state before irreversible retry. "
+                        "Attempts do not prove emission/actions. ACK: receipt, not completion"
+                    ),
+                )
+                rendered_chars = len(_delivery_text(delivery, message, view)) + (2 if index else 0)
+                if render_room is not None and rendered_chars > render_room:
+                    return None
+                if response_limit is not None:
+                    prospective = [item[2] for item in selected]
+                    prospective[index:index + 1] = [view]
+                    if _compact_json_chars(response(prospective)) > response_limit:
+                        return None
+                return view, rendered_chars
+
+            def fit_prefix(project_prefix, low, high):
+                fitted = None
+                while low <= high:
+                    middle = (low + high) // 2
+                    candidate = project_prefix(middle)
+                    if candidate is None:
+                        high = middle - 1
+                    else:
+                        fitted = candidate
+                        low = middle + 1
+                return fitted
+
             with db.execute(eligible_query) as rows:
                 for delivery, message in rows:
+                    if required_trigger is not None and not selected and delivery.id != required_trigger:
+                        break
                     if not _delivery_render_safe(delivery, message):
+                        if required_trigger is not None and not selected:
+                            break
                         continue
                     token = f"relay-claim-{uuid.uuid4().hex}"
-                    lease_expires_at = current + timedelta(seconds=lease_seconds)
+                    payload_size = len(message.payload)
 
-                    def project(prefix_chars: int) -> tuple[dict[str, Any], int] | None:
-                        view = _delivery_view(
-                            delivery, message, registered.state,
-                            payload_limit=None if prefix_chars == len(message.payload) else prefix_chars,
+                    def project_prefix(size):
+                        return project(
+                            delivery, message, token, size, len(selected),
+                            max_chars - used if max_chars else None, max_response_chars or None,
                         )
-                        view.update(
-                            state="claimed",
-                            claim_token=token,
-                            receipt=_delivery_receipt(token),
-                            claimed_at=_iso(current),
-                            lease_expires_at=_iso(lease_expires_at),
-                            attempts=int(delivery.attempts or 0) + 1,
-                        )
-                        attempt = view["attempts"]
-                        attempt = attempt if 1 <= attempt <= 2**53 - 1 else None
-                        view.update(
-                            claim_attempt=attempt,
-                            possible_redelivery=None if attempt is None else attempt > 1,
-                            redelivery_guidance=(
-                                "Check exact delivery_id in context/artifacts. "
-                                "Skip completed actions; if unknown, inspect target state before irreversible retry. "
-                                "Attempts do not prove emission/actions. ACK: receipt, not completion"
-                            ),
-                        )
-                        rendered_chars = len(_delivery_text(delivery, message, view)) + (2 if selected else 0)
-                        if max_chars and used + rendered_chars > max_chars:
-                            return None
-                        prospective = [*(item[2] for item in selected), view]
-                        if max_response_chars and _compact_json_chars(response(prospective)) > max_response_chars:
-                            return None
-                        return view, rendered_chars
 
-                    projected = project(len(message.payload))
-                    if projected is None and not selected and len(message.payload) > 1:
-                        low, high = 1, len(message.payload) - 1
-                        while low <= high:
-                            middle = (low + high) // 2
-                            candidate = project(middle)
-                            if candidate is None:
-                                high = middle - 1
-                            else:
-                                projected = candidate
-                                low = middle + 1
+                    projected = project_prefix(payload_size)
+                    if reserve_envelopes and payload_size > 1:
+                        minimum = project_prefix(1)
+                        if minimum is not None and (
+                            projected is None or minimum[1] < projected[1]
+                            or (max_response_chars and minimum[1] == projected[1]
+                                and _compact_json_chars(minimum[0]) < _compact_json_chars(projected[0]))
+                        ):
+                            projected = minimum
+                    elif projected is None and not complete_payloads and not selected:
+                        projected = fit_prefix(project_prefix, 1, payload_size - 1)
                     if projected is None:
+                        if required_trigger is not None and not selected:
+                            break
                         continue
                     view, rendered_chars = projected
                     selected.append((delivery, message, view, rendered_chars, token))
                     used += rendered_chars
                     if max_messages and len(selected) >= max_messages:
                         break
+
+            if reserve_envelopes:
+                for index, (delivery, message, view, size, token) in enumerate(selected):
+                    if not view["content_truncated"]:
+                        continue
+                    remaining = sum(item[2]["content_truncated"] for item in selected[index:])
+                    render_room = size + (max_chars - used) // remaining
+                    response_limit = None
+                    if max_response_chars:
+                        current_response = _compact_json_chars(response([item[2] for item in selected]))
+                        response_limit = current_response + (max_response_chars - current_response) // remaining
+
+                    def expand_prefix(prefix_chars):
+                        return project(delivery, message, token, prefix_chars, index, render_room, response_limit)
+
+                    payload_size = len(message.payload)
+                    fitted = expand_prefix(payload_size) or fit_prefix(
+                        expand_prefix, len(view["payload"]) + 1, payload_size - 1,
+                    )
+                    if fitted is not None:
+                        grown, grown_size = fitted
+                        selected[index] = (delivery, message, grown, grown_size, token)
+                        used += grown_size - size
 
             claimed: list[dict[str, Any]] = []
             check_claim_expiry()
@@ -1753,7 +1821,7 @@ class SQLiteRelayMixin:
                 delivery.claimed_at = current
                 delivery.lease_expires_at = current + timedelta(seconds=lease_seconds)
                 delivery.attempts = int(delivery.attempts or 0) + 1
-                if wake is not None:
+                if wake is not None and delivery.id == required_trigger:
                     wake.claim_attempts = delivery.attempts
                     wake.payload_chars = len(view["payload"])
                 delivery.codex_wake_generation = (

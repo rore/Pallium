@@ -563,6 +563,36 @@ def _persisted_wake(ctx, session="ses_שלום"):
                 if key.startswith("wake:") and value.get("session_ref") == session)
 
 
+def test_hermes_exact_batch_observes_all_envelopes_and_replies_independently(client, plugin_context):
+    _, create, _ = plugin_context
+    ctx, marker, anchor = _plugin_wake(client, create, payload="wake anchor")
+    endpoint = _persisted_wake(ctx)["endpoint_id"]
+    siblings = [send(client, endpoint, payload=f"sibling {i} → 東京") for i in range(2)]
+    context = ctx.hooks["pre_llm_call"](
+        session_id="ses_שלום", turn_id="wake", user_message=marker,
+    )["context"]
+    request = {"input": marker + "\n\n" + context}
+    assert all(status(client, message)["deliveries"][0]["state"] == "claimed"
+               for message in [anchor, *siblings])
+
+    def provider(actual):
+        text = actual["input"]
+        assert len(text) <= 48_000
+        offsets = [text.index(message["payload"]) for message in [anchor, *siblings]]
+        assert offsets == sorted(offsets)
+        assert all(status(client, message)["deliveries"][0]["state"] == "delivered"
+                   for message in [anchor, *siblings])
+        return "observed"
+
+    assert _execute_request(ctx, request, provider) == "observed"
+    for index, message in enumerate([siblings[0], anchor, siblings[1]]):
+        delivery_id = message["deliveries"][0]["delivery_id"]
+        assert _plugin_reply(ctx, {"delivery_id": delivery_id, "payload": f"reply {index}"},
+                             session_id="ses_שלום", turn_id="wake") == "Relay reply sent."
+        assert _persisted_wake(ctx)["state"] == ("admitted" if index == 0 else "complete")
+    assert len(ctx.injections) == 1
+
+
 def test_native_wake_routes_are_captured_per_conversation(client, plugin_context, monkeypatch):
     import contextvars
 
