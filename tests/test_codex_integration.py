@@ -612,7 +612,7 @@ def test_codex_stop_hook_ingests_quietly(
     [
         "template", "alternate-template", "quoted", "edited", "sent-suggestion",
         "later-user", "later-user-without-reply", "ambiguous-new-turn",
-        "malformed-record", "malformed-user",
+        "malformed-record", "malformed-user", "malformed-legacy-user",
     ],
 )
 def test_codex_composer_suggestion_capture(
@@ -653,11 +653,12 @@ def test_codex_composer_suggestion_capture(
         if case == "later-user":
             later.append(entry("assistant", reply))
             expected_reply = reply
-    elif case in ("ambiguous-new-turn", "malformed-record", "malformed-user"):
+    elif case in ("ambiguous-new-turn", "malformed-record", "malformed-user", "malformed-legacy-user"):
         boundary = {
             "ambiguous-new-turn": '{"type":"event_msg","payload":{"type":"task_started"}}',
             "malformed-record": '{"incomplete":',
             "malformed-user": '{"type":"response_item","payload":{"type":"message","role":"user"}}',
+            "malformed-legacy-user": '{"message":{"role":"user","content":null}}',
         }[case]
         later, expected_reply = [boundary, entry("assistant", reply)], reply
 
@@ -706,7 +707,7 @@ def test_codex_composer_suggestion_capture(
         payload.update(prompt=genuine, turn_id="later-turn")
         run_submit()
         expected.append(("user", genuine))
-    elif case in ("ambiguous-new-turn", "malformed-record", "malformed-user"):
+    elif case in ("ambiguous-new-turn", "malformed-record", "malformed-user", "malformed-legacy-user"):
         # Legacy Stop payloads have no turn ID or server-side snapshot.
         payload.pop("turn_id")
 

@@ -2518,6 +2518,9 @@ def read_turn(transcript_path: str) -> TurnData | None:
         if decoded is not None:
             lines.append(decoded)
         else:
+            message = entry.get("message")
+            if isinstance(message, dict) and message.get("role") == "user":
+                last_uncertain_boundary = len(lines)
             payload = entry.get("payload")
             if isinstance(payload, dict):
                 if entry.get("type") == "event_msg" and payload.get("type") in (
