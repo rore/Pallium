@@ -960,9 +960,9 @@ def test_recovery_does_not_rearm_inflight_while_native_worker_is_active(
     monkeypatch.setattr(claude_wake, "claude_wake_transport", transport)
     original_recover_registration_intents = claude_wake.recover_claude_registration_intents
 
-    def observe_recovery_start(registry_arg, relay_arg):
+    def observe_recovery_start(registry_arg, relay_arg, **kwargs):
         recovery_started.set()
-        return original_recover_registration_intents(registry_arg, relay_arg)
+        return original_recover_registration_intents(registry_arg, relay_arg, **kwargs)
 
     monkeypatch.setattr(claude_wake, "recover_claude_registration_intents", observe_recovery_start)
     worker = claude_wake.schedule_claude_relay_wake(result, scope, registry=registry)
@@ -2366,3 +2366,184 @@ def test_recovery_defers_only_failed_registration_activation(client, tmp_path, m
     assert not _intent_path(registry._state_dir, "other-session").exists()
     recover_claude_relay_wakes(registry, relay)
     assert not failed.exists()
+
+
+@pytest.mark.parametrize("fault", [
+    "busy", "unavailable", "operational", "timeout", "validation", "os", "permission", "other",
+    "private-type", "busy-subclass", "nonbusy-metadata", "bad-caller", "unicode-caller",
+    "bad-stage", "unicode-stage", "hostile-stage", "getter-stage", "getter-phases", "handler",
+    "empty-phases", "unknown-phase", "too-many-phases", "negative", "over-max", "huge",
+    "bool", "float", "nan", "unicode-value", "dict-subclass", "hostile-key", "max-phases",
+] + ["stage-" + stage for stage in (
+    "local_gate", "pre_attempt_deadline", "setup_deadline", "late_begin", "retry_exhausted", "backoff_no_fit",
+)])
+def test_activation_warning_keeps_safe_fields_and_intent_recovery(
+    client, tmp_path, monkeypatch, caplog, fault,
+):
+    import sqlite3
+    from app import claude_wake
+    from core.errors import ImmediateTransactionBusyError
+    from core.relay import RelayService, RelayUnavailableError
+
+    secret = "private diagnostic 東京"
+    registry = ClaudeWakeRegistry(state_dir=tmp_path / "warning")
+    relay = RelayService(client.app.state.pallium_service._storage)
+    identity = {key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}
+    assert client.post("/relay/turn", json=identity).status_code == 200
+    _write_intent(registry._state_dir, PAYLOAD, "warning-pending")
+    intent = _intent_path(registry._state_dir, PAYLOAD["session_ref"])
+    error = ImmediateTransactionBusyError(secret, acquisition_stage="local_gate",
+        acquisition_phase_ms={"setup_pragma": 0, "session_connection": 60_000})
+    family, stage = "relay_acquisition", "local_gate"
+    phases = "{'session_connection': 60000, 'setup_pragma': 0}"
+    caller, expected_caller = "startup", "startup"
+    families = {
+        "unavailable": (RelayUnavailableError, "relay_unavailable"),
+        "operational": (sqlite3.OperationalError, "storage_operational"),
+        "timeout": (TimeoutError, "timeout"), "validation": (ValueError, "validation"),
+        "os": (OSError, "os_error"), "permission": (PermissionError, "os_error"),
+        "other": (RuntimeError, "other"),
+    }
+    if fault in families:
+        kind, family = families[fault]
+        error, stage, phases = kind(secret), "unknown", "unknown"
+    elif fault == "private-type":
+        error = type("private_type_東京", (RuntimeError,), {})(secret)
+        family, stage, phases = "other", "unknown", "unknown"
+    elif fault == "busy-subclass":
+        error = type("ValueError", (ImmediateTransactionBusyError,), {})(secret,
+            acquisition_stage="local_gate", acquisition_phase_ms=error.acquisition_phase_ms)
+    elif fault == "nonbusy-metadata":
+        error = RuntimeError(secret)
+        error.acquisition_stage = "local_gate"
+        error.acquisition_phase_ms = {"setup_pragma": 1}
+        family, stage, phases = "other", "unknown", "unknown"
+    elif fault in {"bad-caller", "unicode-caller"}:
+        caller = [] if fault == "bad-caller" else secret
+        expected_caller = "unknown"
+    elif fault in {"bad-stage", "unicode-stage", "hostile-stage"}:
+        class HostileString(str):
+            def __repr__(self):
+                raise RuntimeError(secret)
+        error.acquisition_stage = [] if fault == "bad-stage" else secret if fault == "unicode-stage" else HostileString(secret)
+        stage = "unknown"
+    elif fault in {"getter-stage", "getter-phases"}:
+        hidden = "acquisition_stage" if fault == "getter-stage" else "acquisition_phase_ms"
+        class FaultyGetter(ImmediateTransactionBusyError):
+            def __getattribute__(self, name):
+                if name == hidden:
+                    raise RuntimeError(secret)
+                return super().__getattribute__(name)
+        error = FaultyGetter(secret, acquisition_stage="local_gate", acquisition_phase_ms=error.acquisition_phase_ms)
+        if fault == "getter-stage":
+            stage = "unknown"
+        else:
+            phases = "unknown"
+    elif fault.startswith("stage-"):
+        stage = error.acquisition_stage = fault.removeprefix("stage-")
+    elif fault not in {"busy", "handler"}:
+        class Dictionary(dict):
+            pass
+        class HostileKey(str):
+            def __repr__(self):
+                raise RuntimeError(secret)
+        values = {
+            "empty-phases": {}, "unknown-phase": {secret: 1},
+            "too-many-phases": {str(i): i for i in range(5)},
+            "negative": {"setup_pragma": -1}, "over-max": {"setup_pragma": 60_001},
+            "huge": {"setup_pragma": 10**1000}, "bool": {"setup_pragma": True},
+            "float": {"setup_pragma": 1.0}, "nan": {"setup_pragma": float("nan")},
+            "unicode-value": {"setup_pragma": secret},
+            "dict-subclass": Dictionary(setup_pragma=1), "hostile-key": {HostileKey("setup_pragma"): 1},
+            "max-phases": {key: 60_000 for key in (
+                "session_factory", "session_connection", "setup_pragma", "begin_immediate",
+            )},
+        }
+        error.acquisition_phase_ms = values[fault]
+        phases = ("{'begin_immediate': 60000, 'session_connection': 60000, "
+                  "'session_factory': 60000, 'setup_pragma': 60000}") if fault == "max-phases" else "unknown"
+
+    calls = []
+    def refuse(**scope):
+        calls.append(scope)
+        raise error
+    with monkeypatch.context() as controlled:
+        controlled.setattr(relay, "mark_active", refuse)
+        if fault == "handler":
+            controlled.setattr(claude_wake.logger, "warning", lambda *a, **k: (_ for _ in ()).throw(RuntimeError(secret)))
+        claude_wake.recover_claude_registration_intents(registry, relay, caller=caller)
+    assert calls == [identity]
+    assert intent.exists()
+    assert registry.recovery_candidates()[0]["session_ref"] == PAYLOAD["session_ref"]
+    messages = [record.getMessage() for record in caplog.records if record.name == "app.claude_wake"]
+    assert messages == ([] if fault == "handler" else [
+        f"Claude registration activation deferred caller={expected_caller} error_family={family} "
+        f"acquisition_stage={stage} acquisition_phase_ms={phases}"
+    ])
+    assert all(value not in " ".join(messages) for value in (
+        secret, "private_type_東京", PAYLOAD["token"], PAYLOAD["socket_path"], str(tmp_path),
+    ))
+    claude_wake.recover_claude_registration_intents(registry, relay)
+    assert not intent.exists()
+    readback = client.get("/relay/sessions", params={**identity, "include_inactive": True})
+    assert readback.status_code == 200
+    assert readback.json()[0]["destination_health"] == "active"
+
+
+def test_activation_warning_startup_and_reconcile_preserve_real_intent(tmp_path, monkeypatch, caplog):
+    from app import main, claude_wake
+    from app.config import AppConfig
+    from core.errors import ImmediateTransactionBusyError
+    from core.relay import RelayService
+    from storage.vector_index import VectorIndexConfig
+    from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+
+    state_dir = tmp_path / "warning-startup"
+    monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(state_dir))
+    monkeypatch.setattr(main, "start_claude_wake_reconciler", lambda *a, **k: None)
+    config = AppConfig(storage_backend="sqlite", sqlite_url=f"sqlite:///{tmp_path / 'warning.db'}",
+        default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False))
+    app = main.create_app(config)
+    _write_intent(state_dir, PAYLOAD, "startup-pending")
+    calls = []
+    def refuse(**scope):
+        calls.append(scope)
+        raise ImmediateTransactionBusyError("private activation detail", acquisition_stage="setup_deadline")
+    with monkeypatch.context() as controlled:
+        controlled.setattr(RelayService, "mark_active", lambda self, **scope: refuse(**scope))
+        with TestClient(app, client=("127.0.0.1", 50000)) as http:
+            registry = http.app.state.claude_wake_registry
+            intent = _intent_path(state_dir, PAYLOAD["session_ref"])
+            assert intent.exists()
+            relay = RelayService(http.app.state.pallium_service._storage)
+            claude_wake.recover_claude_relay_wakes(registry, relay)
+            assert intent.exists()
+    assert len(calls) == 2
+    warnings = [record.getMessage() for record in caplog.records if record.name == "app.claude_wake"]
+    assert warnings == [
+        f"Claude registration activation deferred caller={caller} error_family=relay_acquisition "
+        "acquisition_stage=setup_deadline acquisition_phase_ms=unknown"
+        for caller in ("startup", "reconcile")
+    ]
+    with TestClient(main.create_app(config), client=("127.0.0.1", 50000)) as recovered:
+        assert not intent.exists()  # Actual NotFound completion still consumes the pre-enrollment intent.
+        readback = recovered.get("/relay/sessions", params={"container_ref": PAYLOAD["container_ref"]})
+        assert readback.status_code == 200 and readback.json() == []
+        assert recovered.app.state.claude_wake_registry.recovery_candidates()[0]["session_ref"] == PAYLOAD["session_ref"]
+    assert len([record for record in caplog.records if record.name == "app.claude_wake"]) == 2
+
+
+def test_activation_warning_preserves_base_exception(tmp_path, monkeypatch, caplog):
+    from app import claude_wake
+
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    _write_intent(tmp_path, PAYLOAD, "interrupt-pending")
+    interrupted = KeyboardInterrupt("controlled activation interruption")
+    def interrupt(**scope):
+        raise interrupted
+    with pytest.raises(KeyboardInterrupt) as caught:
+        claude_wake.recover_claude_registration_intents(registry, SimpleNamespace(mark_active=interrupt))
+    assert caught.value is interrupted
+    assert _intent_path(tmp_path, PAYLOAD["session_ref"]).exists()
+    assert not [record for record in caplog.records if record.name == "app.claude_wake"]

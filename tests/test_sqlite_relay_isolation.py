@@ -205,7 +205,7 @@ def test_http_relay_remains_available_during_main_writer(tmp_path: Path, monkeyp
 
     main = tmp_path / "main.db"
     relay = tmp_path / "relay.db"
-    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", lambda _: None)
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", lambda *_args, **_kwargs: None)
     app = create_app(AppConfig(storage_backend="sqlite", sqlite_url=f"sqlite:///{main}", relay_sqlite_url=f"sqlite:///{relay}", default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(enabled=False)))
     with TestClient(app) as client:
         scope = {"container_ref": "c",}

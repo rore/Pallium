@@ -979,7 +979,7 @@ def http_wake(client, retained, monkeypatch, tmp_path):
     monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", codex_wake.schedule_codex_relay_wake)
     app = FastAPI()
     app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
-                                   codex_wake_registry=registry))
+                                   codex_wake_registry=registry, relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event)))
     http = TestClient(app)
     from itertools import count
     from storage import sqlite_queue
@@ -2543,6 +2543,7 @@ def test_spent_wake_retries_after_cooldown_and_real_hook_acks_backlog(
             client.app.state.pallium_service,
             relay_storage=client.app.state.pallium_service._storage,
             codex_wake_registry=restarted,
+            relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
         ))
         http.close()
         http = TestClient(app)
@@ -2658,14 +2659,14 @@ def test_retry_cas_loses_to_hook_claim_after_fresh_native_read(http_wake, client
     ))
     # This CAS contract does not depend on diagnostics contending with native admission.
     service = client.app.state.pallium_service
-    original_enqueue = service.enqueue_relay_trace_event
+    original_enqueue = client.app.state.relay_trace_writer.enqueue
 
     def settled_enqueue(writer, event):
         accepted = original_enqueue(writer, event)
-        service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+        client.app.state.relay_trace_writer._executor.submit(lambda: None).result(timeout=2)
         return accepted
 
-    monkeypatch.setattr(service, "enqueue_relay_trace_event", settled_enqueue)
+    monkeypatch.setattr(client.app.state.relay_trace_writer, "enqueue", settled_enqueue)
     desktop.state = "idle"
     delivery = send()
     for worker in workers:
@@ -3957,8 +3958,8 @@ def test_native_state_read_contract_failure_releases_without_transport(
 
     http, relay, registry, service, desktop, send, _ = http_wake
     pallium_service = client.app.state.pallium_service
-    executor = pallium_service._relay_trace_executor
-    original_trace_job = pallium_service._run_relay_trace_job
+    executor = client.app.state.relay_trace_writer._executor
+    original_trace_job = client.app.state.relay_trace_writer._run
     trace_jobs = []
 
     def observed_trace_job(writer, event):
@@ -3975,7 +3976,7 @@ def test_native_state_read_contract_failure_releases_without_transport(
         finally:
             job["state"] = "finished"
 
-    monkeypatch.setattr(pallium_service, "_run_relay_trace_job", observed_trace_job)
+    monkeypatch.setattr(client.app.state.relay_trace_writer, "_run", observed_trace_job)
     original_read = desktop.read
     def read(deadline):
         envelope = original_read(deadline)
