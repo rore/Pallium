@@ -23,7 +23,7 @@
 - Repository validation → run the test selector and full non-slow suite.
 **Plan review:** Agent technical review: independent suggestion-plan review of base fba314a4 and this Work Record. Initial review identified a Stop pairing gap. Revised latest-boundary and ambiguity handling and corresponding verification accepted.
 **Approvals:** Not required at this risk level. Live changes need separate authorization.
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -37,7 +37,8 @@ Added the exact-template check to submit and to the existing latest-turn parser.
 Implementation revision `23122945dc80add3147b0d0ff157db1e4546f5d8`.
 
 - The Codex integration and wake suites passed all 335 tests, including 10 new hook-to-History cases.
-- The test selector selected the full lane. After resolving local dependency setup, the full Windows run stopped at 5,122 passed on an unchanged Hermes Relay test whose request reported a busy connection. That exact test passed in isolation on both the baseline and this branch. The parallel full run remains inconclusive. Draft PR CI will supply fresh full-lane evidence.
+- The test selector selected the full lane. After resolving local dependency setup, the full Windows run stopped at 5,122 passed on an unchanged Hermes Relay test whose request reported a busy connection. That exact test passed in isolation on both the baseline and this branch. The parallel local Windows run remains inconclusive.
+- PR [application CI](https://github.com/rore/Pallium/actions/runs/42015813614) passed the full Linux 3.12 and 3.13 suites and Windows smoke at `af151e317b1f8ad9ec565b924af225c931307269`. [Workflow and Redline](https://github.com/rore/Pallium/actions/runs/42015813501) also passed. The subsequent Work Record update leaves the reviewed and tested product and test files identical.
 - Import boundaries passed and Redline reported the expected gray hook paths. No protected behavior contracts were edited.
 - The scoped legacy preview matched both known fingerprints. Cleanup and rollout require separate live-environment approval.
 
