@@ -2339,6 +2339,27 @@ def _decode_line(entry: dict) -> _Line | None:
     return None
 
 
+_COMPOSER_SUGGESTION_PREFIX = "This is an app-generated request for a suggested next user message."
+# shortcut: match known full Codex templates until the hook supplies prompt origin.
+_COMPOSER_SUGGESTION_DIGESTS = frozenset({
+    "027732056e3b10e239c4616f5ec25f5c872ebc2305169c244af7a451fdf0697b",
+    "e2f56b41d41988ff9bdbcccec02236be5e03c0b384d2614c952dd155000deb45",
+})
+
+
+def is_composer_suggestion_prompt(content: Any) -> bool:
+    """Recognize an entire prompt, including its schema, without saving its text."""
+    if isinstance(content, list) and len(content) == 1:
+        block = content[0]
+        if isinstance(block, dict) and block.get("type") in ("input_text", "text"):
+            content = block.get("text")
+    if not isinstance(content, str) or not content.startswith(_COMPOSER_SUGGESTION_PREFIX):
+        return False
+    normalized = content.replace("\r\n", "\n").rstrip("\n")
+    digest = hashlib.sha256(normalized.encode("utf-8", errors="surrogatepass")).hexdigest()
+    return digest in _COMPOSER_SUGGESTION_DIGESTS
+
+
 def _is_real_user_prompt(content: Any) -> bool:
     """True if user content is anything other than exclusively tool_result blocks."""
     if not isinstance(content, list):
@@ -2481,6 +2502,7 @@ def read_turn(transcript_path: str) -> TurnData | None:
         return None
 
     lines: list[_Line] = []
+    last_uncertain_boundary = -1
     for index, raw_line in enumerate(raw_lines):
         if index % 128 == 0 and remaining_safe_time() <= 0:
             return None
@@ -2490,15 +2512,38 @@ def read_turn(transcript_path: str) -> TurnData | None:
         try:
             entry = json.loads(raw_line)
         except (json.JSONDecodeError, ValueError):
+            last_uncertain_boundary = len(lines)
             continue
         decoded = _decode_line(entry)
         if decoded is not None:
             lines.append(decoded)
+        else:
+            message = entry.get("message")
+            if isinstance(message, dict) and message.get("role") == "user":
+                last_uncertain_boundary = len(lines)
+            payload = entry.get("payload")
+            if isinstance(payload, dict):
+                if entry.get("type") == "event_msg" and payload.get("type") in (
+                    "task_started", "turn_started", "user_message",
+                ):
+                    last_uncertain_boundary = len(lines)
+                elif (
+                    entry.get("type") == "response_item"
+                    and payload.get("type") == "message"
+                    and payload.get("role") == "user"
+                ):
+                    last_uncertain_boundary = len(lines)
 
     if not lines:
         return None
 
     start_idx = _find_turn_start_index(lines)
+    if (
+        start_idx > 0
+        and last_uncertain_boundary < start_idx
+        and is_composer_suggestion_prompt(lines[start_idx - 1].content)
+    ):
+        return None
     turn_lines = lines[start_idx:]
     if not turn_lines:
         return None

@@ -112,6 +112,8 @@ def main() -> None:
             wake_match.group("delivery_id") if wake_match is not None else None
         )
         internal_wake = prompt == RELAY_WAKE_PROMPT or wake_match is not None
+        if not internal_wake and _common.is_composer_suggestion_prompt(prompt):
+            return
         if wake_delivery_id is not None:
             record_codex_wake_event(
                 script=__file__,

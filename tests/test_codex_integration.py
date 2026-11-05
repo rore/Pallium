@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import os
 import subprocess
@@ -604,6 +605,123 @@ def test_codex_stop_hook_ingests_quietly(
     if expected_turn_key is not None:
         expected_item["source_turn_id"] = expected_turn_key
     assert item == expected_item
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "template", "alternate-template", "quoted", "edited", "sent-suggestion",
+        "later-user", "later-user-without-reply", "ambiguous-new-turn",
+        "malformed-record", "malformed-user", "malformed-legacy-user",
+    ],
+)
+def test_codex_composer_suggestion_capture(
+    case, client, monkeypatch, tmp_path, isolated_hook_transport,
+) -> None:
+    from integrations.codex.hooks import stop, user_prompt_submit as submit
+
+    opening = "This is an app-generated request for a suggested next user message."
+    template = opening + "\n\nSynthetic composer fixture."
+    alternate = opening + "\n\nSynthetic alternate fixture."
+    fingerprints = frozenset(
+        hashlib.sha256(text.encode()).hexdigest() for text in (template, alternate)
+    )
+    thread = "composer-test"
+    container = "git:example.test/composer"
+    genuine = "Please show the résumé checklist."
+    reply = "Here is the checklist."
+
+    def entry(role, text):
+        return json.dumps({"type": "response_item", "payload": {
+            "type": "message", "role": role,
+            "content": [{"type": "input_text" if role == "user" else "output_text", "text": text}],
+        }})
+
+    prompt, expected_reply = template, None
+    earlier = [entry("user", genuine), entry("assistant", "Earlier unrelated answer.")]
+    later = [entry("assistant", '{"suggestion":"Please show the checklist."}')]
+    if case == "alternate-template":
+        prompt = alternate.replace("\n", "\r\n") + "\r\n"
+    elif case == "quoted":
+        prompt, later, expected_reply = "What does this prompt do?\n" + template, [entry("assistant", reply)], reply
+    elif case == "edited":
+        prompt, later, expected_reply = template + "\nExtra user context.", [entry("assistant", reply)], reply
+    elif case == "sent-suggestion":
+        prompt, later, expected_reply = genuine, [entry("assistant", reply)], reply
+    elif case in ("later-user", "later-user-without-reply"):
+        later.append(entry("user", genuine))
+        if case == "later-user":
+            later.append(entry("assistant", reply))
+            expected_reply = reply
+    elif case in ("ambiguous-new-turn", "malformed-record", "malformed-user", "malformed-legacy-user"):
+        boundary = {
+            "ambiguous-new-turn": '{"type":"event_msg","payload":{"type":"task_started"}}',
+            "malformed-record": '{"incomplete":',
+            "malformed-user": '{"type":"response_item","payload":{"type":"message","role":"user"}}',
+            "malformed-legacy-user": '{"message":{"role":"user","content":null}}',
+        }[case]
+        later, expected_reply = [boundary, entry("assistant", reply)], reply
+
+    transcript = tmp_path / "turn.jsonl"
+    user_record = (
+        json.dumps({"type": "event_msg", "payload": {"type": "user_message", "message": prompt}})
+        if case == "alternate-template" else entry("user", prompt)
+    )
+    transcript.write_text("\n".join([*earlier, user_record, *later]), encoding="utf-8")
+    payload = {"cwd": str(tmp_path), "session_id": thread, "turn_id": "turn",
+               "prompt": prompt, "transcript_path": str(transcript)}
+    requests, relay, context = [], [], []
+
+    def request(method, path, body, **_kwargs):
+        requests.append(path)
+        response = client.request(method, path, json=body)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    for hook in (submit, stop):
+        monkeypatch.setattr(hook._common, "_COMPOSER_SUGGESTION_DIGESTS", fingerprints)
+        monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
+        monkeypatch.setattr(hook, "pallium_request", request)
+        monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: container)
+        monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "test-actor")
+    monkeypatch.setattr(submit, "record_codex_hook_execution", lambda **_: None)
+    monkeypatch.setattr(submit, "relay_turn", lambda *_, **_kw: relay.append("check-in"))
+    monkeypatch.setattr(submit, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(submit, "emit_context", lambda *_: context.append("scope"))
+    monkeypatch.setattr(stop, "fetch_confirmed_work_refs", lambda *_: ([], "complete"))
+
+    def run_submit():
+        submit._HOOK_STARTED_AT = time.monotonic()
+        try:
+            submit.main()
+        except SystemExit as exc:
+            assert exc.code == 0
+
+    run_submit()
+    genuine_submit = case in ("quoted", "edited", "sent-suggestion")
+    assert requests == (["/item-and-query"] if genuine_submit else [])
+    assert bool(relay) == bool(context) == genuine_submit
+
+    expected = [("user", prompt)] if genuine_submit else []
+    if case in ("later-user", "later-user-without-reply"):
+        payload.update(prompt=genuine, turn_id="later-turn")
+        run_submit()
+        expected.append(("user", genuine))
+    elif case in ("ambiguous-new-turn", "malformed-record", "malformed-user", "malformed-legacy-user"):
+        # Legacy Stop payloads have no turn ID or server-side snapshot.
+        payload.pop("turn_id")
+
+    with pytest.raises(SystemExit) as exc:
+        stop.main()
+    assert exc.value.code == 0
+    assert requests.count("/items") == int(expected_reply is not None)
+    found = client.get("/dashboard/api/sources", params={
+        "container_ref": container, "query_visibility": "private", "thread_ref": thread,
+    })
+    assert found.status_code == 200
+    if expected_reply is not None:
+        expected.append(("assistant", expected_reply))
+    assert sorted((row["role"], row["content"]) for row in found.json()["sources"]) == sorted(expected)
 
 
 def test_codex_transcript_parser_reads_desktop_response_item_shape(tmp_path: Path) -> None:
