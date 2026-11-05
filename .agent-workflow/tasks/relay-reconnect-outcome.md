@@ -51,3 +51,17 @@ Agent technical review: Independent review of the revised Shared Relay batching 
 - The retained mocked OpenCode V1 and V2 adapter cases each passed with exit zero. They establish bounded adapter behavior only.
 - Earlier local Windows full evidence applies to the Codex-only composition. The current shared composition has no complete local Python full result. Its earlier focused attempts did not establish the held Windows exact result.
 - The prior Codex-only draft and its existing CI evidence remain separate. This candidate uses ordinary PR jobs for its first full qualification after source review and publication authorization.
+
+## First ordinary Linux CI correction
+
+Both Linux matrix jobs stopped with the same two failures. The protected ordinary page fixture's rendered budget could fit only one envelope. Its setup changes from 1,350 to 1,401 characters, enough for two envelopes and first-body growth, while excluding the third. Every assertion and the protected CI link remain in place.
+
+The inherited Claude case exposed a production regression. The shared selector was equating each delivery's historical container with the current endpoint container. Confirmed Codex and Claude Code scope moves keep endpoint custody and preserve delivery snapshots. Preserve registered endpoint, runtime and session checks, restore selection of queued deliveries after the move for those two runtimes, and keep container equality for pinned runtimes. Existing transition, generation, exact-trigger, lease, native-spend and receipt checks continue to apply. Keep the Claude assertion unchanged.
+
+The task remains High risk and Moderate complexity under the same owning workflow. The correction touches one persistence selector and one protected fixture. Independent technical plan review is pending. Verify with the exact protected envelope, Claude D1/D2/D3, Codex move and stale generation, and foreign-trigger cases. Preserve the first CI failures and run the next full qualification through the ordinary PR after source review.
+
+Agent technical review: On 2026-11-05 an independent reviewer accepted the exact endpoint eligibility correction, the equivalent protected fixture budget, and the four focused regression cases. The approved task requires the original scope-move contract and all protected assertions. Source review and the persistence, API and architecture checkpoints are separate.
+
+### Focused verification
+
+Windows Python 3.13 serial pytest passed the protected two-envelope fixture, Claude D1/D2/D3, Codex scope move and stale generation, and foreign-trigger negative case. An earlier restricted attempt stopped before any assertion during asyncio loopback setup. The fresh isolated run completed four tests with direct exit zero. The original Linux results remain retained. Independent source review and the next ordinary full PR CI run are pending.

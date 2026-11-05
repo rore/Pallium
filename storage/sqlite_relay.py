@@ -1515,14 +1515,13 @@ class SQLiteRelayMixin:
                 return result
 
             def eligible_deliveries(endpoint_id):
-                return (
+                query = (
                     select(RelayDeliveryRecord, RelayMessageRecord)
                     .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
                     .where(
                         RelayDeliveryRecord.recipient_endpoint_id == endpoint_id,
                         RelayDeliveryRecord.recipient_runtime == runtime,
                         RelayDeliveryRecord.recipient_session_ref == session_ref,
-                        RelayDeliveryRecord.recipient_container_ref == container_ref,
                         RelayMessageRecord.expires_at > current,
                         or_(
                             RelayDeliveryRecord.state == "pending",
@@ -1533,6 +1532,10 @@ class SQLiteRelayMixin:
                         ),
                     )
                 )
+                # Authenticated project moves keep endpoint custody and historical delivery scope.
+                if runtime in {"claude-code", "codex"}:
+                    return query
+                return query.where(RelayDeliveryRecord.recipient_container_ref == container_ref)
 
             def count_eligible(query):
                 return db.execute(

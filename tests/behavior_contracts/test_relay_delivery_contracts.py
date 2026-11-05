@@ -58,7 +58,8 @@ def test_ordinary_pageable_turn_reserves_a_sibling_envelope_before_payload_growt
     second = _send(client, "opencode:target", "small")
     third = _send(client, "opencode:target", "wait")
 
-    batch = _turn(client, "opencode", "target", max_chars=1350)
+    # Fit two rendered envelopes and grow the first prefix without admitting a third.
+    batch = _turn(client, "opencode", "target", max_chars=1401)
     left, right = batch["deliveries"]
     assert [left["message_id"], right["message_id"]] == [first["message_id"], second["message_id"]]
     assert left["content_truncated"] and 1 < left["next_offset"] < 4000
