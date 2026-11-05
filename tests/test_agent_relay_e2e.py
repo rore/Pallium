@@ -1424,6 +1424,8 @@ def test_maximum_message_and_identity_envelope_is_claimable(client):
     assert _ack(client, claimed[0]).status_code == 200
 
 def test_expiry_boundaries_and_complete_message_turn_budget(client):
+    from integrations.codex.hooks.common import format_relay
+
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "target")
     assert _send(client, "claude-code", "sender", "codex:target", expires_in_seconds=59).status_code == 422
@@ -1438,16 +1440,30 @@ def test_expiry_boundaries_and_complete_message_turn_budget(client):
             "x" * 1000, message_id=f"budget-{index}",
         )
         assert response.status_code == 200
-    first_turn = client.post(
-        "/relay/turn",
-        json={"runtime": "codex", "session_ref": "budget-target", "max_chars": 2000, **SCOPE},
-    )
-    assert first_turn.status_code == 200
-    claimed = first_turn.json()["deliveries"]
-    assert len(claimed) == 1
-    assert len(claimed[0]["payload"]) == 1000
-    assert _ack(client, claimed[0]).status_code == 200
-    assert _turn(client, "codex", "budget-target")["deliveries"]
+    budget = 2000
+    first_turn = _turn(client, "codex", "budget-target", max_chars=budget)
+    claimed = first_turn["deliveries"]
+    assert [row["message_id"] for row in claimed] == ["budget-0", "budget-1"]
+    for row in claimed:
+        assert row["content_truncated"] and row["payload_offset"] == 0
+        assert row["payload_total_chars"] == 1000
+        assert 0 < row["next_offset"] == len(row["payload"]) < 1000
+        assert row["payload"] == "x" * row["next_offset"]
+    rendered, attached = format_relay(claimed, budget_chars=budget)
+    assert attached == claimed and len(rendered) <= budget
+    assert first_turn["has_more"] is True and first_turn["remaining_count"] == 1
+    overflow = _status(client, "budget-2")
+    assert overflow.status_code == 200, overflow.text
+    pending, = overflow.json()["deliveries"]
+    assert (pending["state"], pending["attempts"]) == ("pending", 0)
+    for row in claimed:
+        assert _ack(client, row).status_code == 200
+
+    last_turn = _turn(client, "codex", "budget-target", max_chars=budget)
+    complete, = last_turn["deliveries"]
+    assert complete["message_id"] == "budget-2" and complete["payload"] == "x" * 1000
+    assert complete["content_truncated"] is False and complete["next_offset"] is None
+    assert last_turn["has_more"] is False and last_turn["remaining_count"] == 0
 
 
 def test_turn_message_cap_alias_release_and_queued_close_reactivation(client):

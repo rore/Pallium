@@ -3132,6 +3132,7 @@ def test_storage_budget_reserves_notice_without_dropping_claim(client, monkeypat
 
     near_id = send("b" * 128, payload)
     fits_id = send("fits", "fits")
+    spill_id = send("spill", "fits")
     turn = client.post("/relay/turn", json={
         "runtime": "claude-code", "session_ref": target, "max_chars": common.RELAY_TURN_BUDGET, **scope,
     }).json()
@@ -3142,12 +3143,19 @@ def test_storage_budget_reserves_notice_without_dropping_claim(client, monkeypat
     )
 
     assert baseline_id != near_id
-    assert [delivery["message_id"] for delivery in turn["deliveries"]] == [near_id]
+    assert [delivery["message_id"] for delivery in turn["deliveries"]] == [near_id, fits_id]
+    near, fits = turn["deliveries"]
+    assert near["content_truncated"] and 0 < near["next_offset"] == len(near["payload"]) < len(payload)
+    assert fits["payload"] == "fits" and not fits["content_truncated"]
     assert rendered_deliveries == turn["deliveries"]
     assert rendered.endswith("[Relay: 1 more; Pallium continues.]")
     assert len(rendered) <= common.RELAY_OUTPUT_BUDGET
     assert fits_id != near_id
     assert turn["has_more"] is True and turn["remaining_count"] == 1
+    overflow = client.get(f"/relay/messages/{spill_id}", params=scope)
+    assert overflow.status_code == 200, overflow.text
+    pending, = overflow.json()["deliveries"]
+    assert (pending["state"], pending["attempts"]) == ("pending", 0)
 
 
 @pytest.mark.parametrize(
