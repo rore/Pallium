@@ -41,9 +41,12 @@ Implementation revision `23122945dc80add3147b0d0ff157db1e4546f5d8`.
 - PR [application CI](https://github.com/rore/Pallium/actions/runs/42015813614) passed the full Linux 3.12 and 3.13 suites and Windows smoke at `af151e317b1f8ad9ec565b924af225c931307269`. [Workflow and Redline](https://github.com/rore/Pallium/actions/runs/42015813501) also passed. The subsequent Work Record update leaves the reviewed and tested product and test files identical.
 - Import boundaries passed and Redline reported the expected gray hook paths. No protected behavior contracts were edited.
 - The scoped legacy preview matched both known fingerprints. Cleanup and rollout require separate live-environment approval.
+- After the legacy boundary follow-up, the new case passed and the affected Codex integration and wake suites passed all 336 tests. The selector still requires full PR CI for the follow-up.
 
 ## Result review
 
 Agent technical review: independent suggestion-result review of the exact product and test diff.
-Reviewed revision: 23122945dc80add3147b0d0ff157db1e4546f5d8
+Reviewed revision: 4c785c44e7b8f8132cba4a7b4b51a37abfd5deeb
 Verification adequacy: The reviewer accepted the hook-to-History coverage and the boundary handling. Codex's current hook payload leaves a verbatim submission of a known app template indistinguishable from the background request. The agreed full-template fallback excludes either instance; quoted or modified text remains eligible.
+
+The initial implementation review covered `23122945dc80add3147b0d0ff157db1e4546f5d8`. The incremental review accepted treating undecodable legacy user records as uncertain boundaries. The new end-to-end case reproduced the suppressed reply before the fix and verified capture afterward.
