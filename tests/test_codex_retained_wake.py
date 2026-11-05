@@ -2507,6 +2507,7 @@ def test_spent_wake_retries_after_cooldown_and_real_hook_acks_backlog(
             return None, ""
 
     def launch(session, prompt):
+        assert session == TARGET
         prompts.append(prompt)
         if len(prompts) == 1 and first_outcome == "uncertain":
             return None, ("ambiguous", "timeout", None)
@@ -2565,12 +2566,25 @@ def test_spent_wake_retries_after_cooldown_and_real_hook_acks_backlog(
         worker.join(5)
         assert not worker.is_alive()
 
-    assert len(prompts) == 3  # Initial wake, recovered wake, then the next hook batch.
-    assert [event[0] for event in events] == ["emit", "ack", "emit", "ack"]
-    assert "private-payload-東京" in events[0][2]
-    assert "later-payload-東京" in events[2][2]
-    assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
-    assert http.get(f"/relay/messages/{later['message_id']}", params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
+    assert len(prompts) == 2  # Initial wake, then one recovered hook batch for both messages.
+    assert prompts == [codex_wake._wake_prompt(first["delivery_id"])] * 2
+    assert [event[0] for event in events] == ["emit", "ack"]
+    assert events[0][1] == "UserPromptSubmit"
+    packet = events[0][2]
+    assert packet.count("[Pallium Relay message from ") == 2
+    assert [line for line in packet.splitlines() if line.startswith("message_id: ")] == [
+        "message_id: retained-journey", f"message_id: {later['message_id']}",
+    ]
+    later_id = later["deliveries"][0]["delivery_id"]
+    assert [line for line in packet.splitlines() if line.startswith("delivery_id: ")] == [
+        f"delivery_id: {first['delivery_id']}", f"delivery_id: {later_id}",
+    ]
+    assert packet.count("private-payload-東京") == 1
+    assert packet.count("later-payload-東京") == 1
+    first_status = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
+    later_status = http.get(f"/relay/messages/{later['message_id']}", params=SCOPE).json()["deliveries"][0]
+    assert (first_status["delivery_id"], first_status["state"], first_status["attempts"]) == (first["delivery_id"], "delivered", 1)
+    assert (later_status["delivery_id"], later_status["state"], later_status["attempts"]) == (later_id, "delivered", 1)
     assert restarted.reservations() == ()
     assert not codex_wake._scheduled_delivery_ids
     assert not codex_wake._scheduled_session_generations

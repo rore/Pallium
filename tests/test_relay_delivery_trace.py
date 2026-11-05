@@ -912,7 +912,7 @@ def test_cleanup_marks_every_known_associate_and_discloses_page_gap(relay):
     for message in (first, second):
         claimed = service.turn(
             runtime="codex", session_ref="receiver", container_ref="git:test",
-            exact_delivery_id=message["deliveries"][0]["delivery_id"],
+            exact_delivery_id=message["deliveries"][0]["delivery_id"], max_messages=1,
         )["deliveries"][0]
         service.acknowledge(
             delivery_id=claimed["delivery_id"], claim_token=claimed["claim_token"],
@@ -979,7 +979,7 @@ def test_cleanup_retains_claimed_and_shared_pending_attempts(relay):
     assert _event(storage, second, attempt, "associated")["recorded"]
     claimed = service.turn(
         runtime="codex", session_ref="receiver", container_ref="git:test",
-        exact_delivery_id=first["deliveries"][0]["delivery_id"],
+        exact_delivery_id=first["deliveries"][0]["delivery_id"], max_messages=1,
     )["deliveries"][0]
     assert claimed["delivery_id"] == first["deliveries"][0]["delivery_id"]
     assert storage.relay_cleanup_trace(now=now) == 0
@@ -1057,7 +1057,7 @@ def test_cleanup_retains_whole_attempt_with_broken_association(relay, broken_ref
     for expected in (first, second):
         claimed = service.turn(
             runtime="codex", session_ref="receiver", container_ref="git:test",
-            exact_delivery_id=expected["deliveries"][0]["delivery_id"],
+            exact_delivery_id=expected["deliveries"][0]["delivery_id"], max_messages=1,
         )["deliveries"][0]
         service.acknowledge(
             delivery_id=claimed["delivery_id"], claim_token=claimed["claim_token"],

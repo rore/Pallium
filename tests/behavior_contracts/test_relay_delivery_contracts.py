@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from storage.sqlite_schema import RelayDeliveryRecord
+from tests.test_agent_relay_hooks import batch_hook, exact_client
 
 
 SOURCE = {"container_ref": "git:example.test/relay-source"}
@@ -69,6 +70,33 @@ def test_default_backlog_drains_after_acknowledged_first_page(client):
     last = _turn(client, "codex", "target")
     assert [item["message_id"] for item in last["deliveries"]] == [sent[3]["message_id"]]
     assert last["has_more"] is False and last["remaining_count"] == 0
+
+
+def test_codex_prompt_batch_emits_required_trigger_before_individual_receipts(batch_hook):
+    """Codex prompt override batches eight; ordinary HTTP still defaults to three."""
+    from app.codex_wake import _wake_prompt
+    from tests.test_relay_exact_claim_e2e import send, status
+
+    state = batch_hook
+    messages = [send(state.client, payload=f"item {index} →") for index in range(9)]
+    trigger = messages[-1]
+    emitted = []
+
+    def before_ack():
+        assert state.ack_count == 0
+        selected = state.turns[-1]["deliveries"]
+        assert selected[0]["message_id"] == trigger["message_id"]
+        assert len(selected) == 8
+        assert all(status(state.client, item)["state"] == "claimed" for item in [trigger, *messages[:7]])
+        emitted.extend(row["message_id"] for row in selected)
+
+    state.on_emit = before_ack
+    assert state.run(_wake_prompt(trigger["deliveries"][0]["delivery_id"])) == 0
+    assert emitted == [trigger["message_id"], *(item["message_id"] for item in messages[:7])]
+    assert state.ack_count == 8
+    assert all(status(state.client, item)["state"] == "delivered" for item in [trigger, *messages[:7]])
+    assert (status(state.client, messages[7])["state"], status(state.client, messages[7])["attempts"]) == ("pending", 0)
+    assert state.turns[-1]["remaining_count"] == 1
 
 
 def test_reply_targets_original_sender_and_retries_once(client):

@@ -24,6 +24,9 @@ _spec.loader.exec_module(_common)  # type: ignore[union-attr]
 AGENT_REF = _common.AGENT_REF
 RELAY_OUTPUT_BUDGET = _common.RELAY_OUTPUT_BUDGET
 RELAY_TURN_BUDGET = _common.RELAY_TURN_BUDGET
+RELAY_BATCH_MAX_MESSAGES = 8
+RELAY_BATCH_OUTPUT_BUDGET = 12000
+RELAY_BATCH_TURN_BUDGET = RELAY_BATCH_OUTPUT_BUDGET - _common.RELAY_NOTICE_RESERVE
 SOURCE_TYPE = _common.SOURCE_TYPE
 acknowledge_relay = _common.acknowledge_relay
 check_dedup = _common.check_dedup
@@ -177,7 +180,8 @@ def main() -> None:
                 )
                 relay_response = relay_turn(
                     "codex", session_id, container_ref,
-                    max_chars=RELAY_TURN_BUDGET,
+                    max_chars=RELAY_BATCH_TURN_BUDGET,
+                    max_messages=RELAY_BATCH_MAX_MESSAGES,
                     structural_work_refs=(
                         None if wake_delivery_id else structural_work_refs_payload(
                             container_ref, discovery, cwd
@@ -204,7 +208,7 @@ def main() -> None:
                     deliveries = relay_response.get("deliveries") or []
                     relay_output, rendered_deliveries = format_relay(
                         deliveries,
-                        budget_chars=RELAY_OUTPUT_BUDGET,
+                        budget_chars=RELAY_BATCH_OUTPUT_BUDGET,
                         remaining_count=(
                             relay_response.get("remaining_count")
                             if relay_response.get("has_more") is True else 0
@@ -234,6 +238,12 @@ def main() -> None:
                     if isinstance(delivery, dict)
                 )
             )
+            if not exact_rendered:
+                record_codex_wake_event(
+                    script=__file__, delivery_id=wake_delivery_id,
+                    stage="hook_failed", reason="malformed_response",
+                )
+                _exit_blocked_wake()
             try:
                 emit_context(
                     "\n\n".join((relay_output, relay_scope)),

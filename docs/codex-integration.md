@@ -247,6 +247,21 @@ than promising exactly-once execution.
 
 Three hooks run automatically during Codex tasks:
 
+UserPromptSubmit collects a bounded Relay batch before optional memory work on
+ordinary prompts and exact wakes: up to eight blocks in a 12,000-character Relay
+packet, plus the separately bounded scope block. An exact wake requires its
+eligible trigger first, then eligible siblings for that endpoint; a missing or
+unrenderable trigger, or one held by an unexpired claim, cannot be replaced by
+other pending work. Expired claim leases remain recoverable.
+Long messages use attributed prefixes and existing status-page continuations.
+SessionStart and other integrations retain their existing budgets.
+
+Emission and flush precede per-message ACKs under the shared hook deadline. A lost
+or partial ACK can cause emitted messages to return after lease expiry; receipt
+does not prove task execution. The backlog notice is a selection-time count, and
+remaining messages need later eligible hook turns. Batching does not force a busy
+task to accept a native wake or bypass its generation and no-replay fences.
+
 | Hook | What it does |
 |---|---|
 | **SessionStart** | Registers or resumes the task and can provide orientation from earlier work. |
