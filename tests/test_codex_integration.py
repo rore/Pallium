@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1974,10 +1975,62 @@ def test_codex_setup_then_actual_hook_execution_verifies_matching_entrypoint(
     assert marker["state"] == "review_required"
     monkeypatch.setattr(hook, "read_hook_input", lambda: {"prompt": ""})
 
+    diagnostic = {"marker_lock": "not_attempted", "marker_presence_check_passed": False}
+    definition = codex_readiness.expected(sys.executable, hook.__file__)
+    run_before_deadline = hook._common._run_before_deadline
+    record_execution = hook.record_codex_hook_execution
+    observer_results = []
+
+    def track_deadline(operation, deadline=None):
+        def observe():
+            result = None
+            try:
+                result = operation()
+                return result
+            finally:
+                observer_results.append(result)
+
+        return run_before_deadline(observe, deadline)
+
+    def track_execution(*, script):
+        result = record_execution(script=script)
+        diagnostic["observer_return"] = result
+        return result
+
+    marker_lock = codex_readiness._marker_lock
+    read_marker = codex_readiness._read
+
+    @contextmanager
+    def track_lock(*args, **kwargs):
+        diagnostic["marker_presence_check_passed"] = True
+        try:
+            with marker_lock(*args, **kwargs):
+                diagnostic["marker_lock"] = "acquired"
+                yield
+        except TimeoutError:
+            diagnostic["marker_lock"] = "timeout"
+            raise
+        except Exception:
+            diagnostic["marker_lock"] = "error"
+            raise
+
+    def track_read(path):
+        value = read_marker(path)
+        diagnostic["marker_parsed_and_validated"] = value is not None
+        diagnostic["marker_definition_matches"] = value is not None and value["definition"] == definition
+        return value
+
+    monkeypatch.setattr(codex_readiness, "_marker_lock", track_lock)
+    monkeypatch.setattr(codex_readiness, "_read", track_read)
+
+    monkeypatch.setattr(hook._common, "_run_before_deadline", track_deadline)
+    monkeypatch.setattr(hook, "record_codex_hook_execution", track_execution)
     hook._HOOK_STARTED_AT = hook.time.monotonic()
     hook.main()
-
-    assert codex_readiness.read(tmp_path)["state"] == "verified"
+    completed = tuple(observer_results)
+    diagnostic["observer_completed_at_hook_return"] = bool(completed)
+    diagnostic["observer_operation_return"] = completed[0] if completed else None
+    assert codex_readiness.read(tmp_path)["state"] == "verified", diagnostic
 
 
 def test_codex_user_prompt_marker_failure_does_not_block_relay_delivery(

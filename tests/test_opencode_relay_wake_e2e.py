@@ -73,8 +73,10 @@ def test_context_batch_loss_restores_only_anchor_then_collects_expired_sibling(
     monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: real_now(value) if value is not None else clock[0])
     base = _setup(client, relay_admission_clock=relay_admission_clock)
     anchor = _send(client, base, payload="anchor", relay_admission_clock=relay_admission_clock).json()
+    clock[0] += timedelta(seconds=1)
     sibling = _send(client, base, payload="sibling", relay_admission_clock=relay_admission_clock).json()
     wake = _wake(client, base, "poll").json()["wake"]
+    assert wake["delivery_id"] == anchor["deliveries"][0]["delivery_id"]
     snap = _snapshot(base, wake)
     assert _wake(client, base, "poll", max_messages=1).status_code == 422
     assert _wake(client, base, "context", **snap, max_messages=True).status_code == 422

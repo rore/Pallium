@@ -89,3 +89,15 @@ Agent technical review: On 2026-11-05 the independent reviewer approved this exa
 ### Focused verification
 
 The named Claude capture, output and individual acknowledgment test passed on Windows Python 3.13 in the isolated serial run, with direct exit zero. Exact source review and the next ordinary full PR CI are pending.
+
+## OpenCode anchor fixture and Codex readiness evidence
+
+The fourth ordinary CI run passed the full Linux Python 3.12 suite. The Linux Python 3.13 run first failed when the two frozen-clock sends had the same creation time and the delivery ID tie-break selected the intended sibling as the wake anchor. The Windows smoke run first failed when the real Codex hook readiness test observed unknown on its first public read. The cause of the Windows result remains unknown. The original CI results remain the evidence for that revision.
+
+Independent technical plan review approved two separate test deltas. In `tests/test_opencode_relay_wake_e2e.py`, advance the fake clock by one second between the sends and check the actual poll anchor against the first send. Preserve the expiry, recovery and acknowledgment assertions. In `tests/test_codex_integration.py`, add bounded diagnostic fields to the existing first-read assertion while preserving the actual hook, observer, lock and read. The second change is selected only for the next revision justified by the first. The two exact test postimages were approved before editing. The existing High risk and Moderate complexity classification and all whole-change gates still apply.
+
+Run the existing semantic context-loss test and the real Codex hook readiness test with the writer-lock refusal and public read uncertainty controls in one isolated serial invocation. Preserve any first failure and submit the exact source and focused result for independent review before considering publication.
+
+### Focused verification
+
+The isolated Windows Python 3.13 serial invocation exited zero with all seven selected cases passing. It covered the OpenCode semantic context-loss case, the real Codex hook and first public read, writer-lock refusal, and all four public read uncertainty variants. Source and import checks matched the selected candidate. The prior hosted results remain retained and the Windows failure's cause remains unknown. Exact source and focused result review precede any publication.
