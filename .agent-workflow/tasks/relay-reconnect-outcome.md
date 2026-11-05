@@ -77,3 +77,15 @@ Agent technical review: On 2026-11-05 the independent reviewer approved both tes
 ### Focused verification
 
 Windows Python 3.13 serial pytest passed the pageable budget and expiry case, the Claude backlog notice case, and the unchanged neighboring oversized-message overflow control. All three passed with direct exit zero. Production, protected contracts and the earlier custody evidence are preserved. Exact independent source review and the next ordinary full PR CI remain pending.
+
+## Claude prompt capture fixture correction
+
+Both Linux jobs in the third ordinary PR run stopped on the same real Claude capture assertion. The fixture supplied a non-UUID prompt identifier. The hook's canonical UUID parser returned no source turn key, so the hook skipped the capture branch. The existing product order is claim, capture, output flush, then individual acknowledgments.
+
+Use a canonical fixed UUID in the existing test and compare the captured identifier directly with the fixture value. Keep the real HTTP and durable History readback, rendering, deadline and per-delivery receipt checks. The whole change stays non-exempt and the owning High risk and Moderate complexity classification remains. This correction touches one ordinary test and this record.
+
+Agent technical review: On 2026-11-05 the independent reviewer approved this exact fixture correction and the one existing focused case. Preserve earlier hosted results and defer publication and the next full PR CI until exact source review.
+
+### Focused verification
+
+The named Claude capture, output and individual acknowledgment test passed on Windows Python 3.13 in the isolated serial run, with direct exit zero. Exact source review and the next ordinary full PR CI are pending.

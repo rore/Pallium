@@ -2384,6 +2384,7 @@ def test_claude_ordinary_batch_captures_then_flushes_before_individual_ack(clien
         sent.append(result.json())
     events, saved = [], []
     prompt = "Capture the current ordinary prompt before returning the Relay batch."
+    prompt_id = "00000000-0000-4000-8000-000000000001"
 
     class HTTP(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -2414,7 +2415,7 @@ def test_claude_ordinary_batch_captures_then_flushes_before_individual_ack(clien
         monkeypatch.setitem(common, "PALLIUM_BASE_URL", f"http://127.0.0.1:{server.server_port}")
         monkeypatch.setitem(common, "SESSIONS_DIR", tmp_path / "sessions")
         monkeypatch.setattr(hook, "read_hook_input", lambda: {
-            "cwd": str(tmp_path), "session_id": "target", "prompt_id": "prompt-one", "prompt": prompt,
+            "cwd": str(tmp_path), "session_id": "target", "prompt_id": prompt_id, "prompt": prompt,
         })
         monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(hook, "resolve_container_ref", lambda *_args: scope["container_ref"])
@@ -2434,7 +2435,7 @@ def test_claude_ordinary_batch_captures_then_flushes_before_individual_ack(clien
 
     capture = [(when, body) for path, when, body in events if path == "/items"]
     assert len(capture) == len(saved) == 1
-    assert capture[0][1][0]["source_turn_id"] == hook.source_turn_key("prompt-one")
+    assert capture[0][1][0]["source_turn_id"] == prompt_id
     assert not any(path == "/item-and-query" for path, _, _ in events)
     assert [event for event, _, _ in events if event in {"/items", "flush", "/relay/deliveries/ack"}] == [
         "/items", "flush", "/relay/deliveries/ack", "/relay/deliveries/ack",
