@@ -2736,10 +2736,12 @@ def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
     assert registration.state == "idle" and registration.delivery_id is None
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("force_claim_refusals", [False, True])
 @pytest.mark.parametrize("with_prompt_id", [False, True])
 def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
     client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys, force_claim_refusals, with_prompt_id,
+    relay_admission_clock,
 ) -> None:
     import time
     from core.errors import ImmediateTransactionBusyError
@@ -2768,9 +2770,11 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
         claude_wake_registry=registry,
     ))
     http = TestClient(app, client=("127.0.0.1", 50000))
-    relay = RelayService(client.app.state.pallium_service._storage)
-    relay.turn(runtime="codex", session_ref="sender", **scope)
-    relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
+    store = client.app.state.pallium_service._storage
+    relay = RelayService(store)
+    with relay_admission_clock(store, expected_admissions=2):
+        relay.turn(runtime="codex", session_ref="sender", **scope)
+        relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
     sent = relay.send(
         sender_runtime="codex",
         sender_session_ref="sender",

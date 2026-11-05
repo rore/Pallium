@@ -101,3 +101,15 @@ Run the existing semantic context-loss test and the real Codex hook readiness te
 ### Focused verification
 
 The isolated Windows Python 3.13 serial invocation exited zero with all seven selected cases passing. It covered the OpenCode semantic context-loss case, the real Codex hook and first public read, writer-lock refusal, and all four public read uncertainty variants. Source and import checks matched the selected candidate. The prior hosted results remain retained and the Windows failure's cause remains unknown. Exact source and focused result review precede any publication.
+
+## Initial registrations in two recovery fixtures
+
+The fifth ordinary CI run stopped in two distinct initial registration paths. Linux Python 3.13 failed before the writer transaction began in the Claude crash-recovery fixture. Linux Python 3.12 received an HTTP refusal after the writer acquisition deadline in the ACK callback recovery fixture. Both stopped before their recovery assertions. The physical causes remain unknown and the original results are retained.
+
+The independent reviewer approved the two exact test plans before editing. In `tests/test_claude_wake_dispatch.py`, use the existing counted admission clock for the two initial registrations before any message exists. In `tests/test_relay_capacity_isolation.py`, use the same fixture for the two initial HTTP registrations on the app's SQLite provider, retaining their status assertions. Both scopes close before seeding. Native timing and all send, claim, crash, refusal, ACK, recovery, fence and teardown assertions remain in force. The whole change remains High risk and Moderate complexity under the existing workflow.
+
+Verify the four Claude variants and both ACK callback variants in one isolated serial invocation. Preserve the first outcome and submit the exact source and focused result for independent review.
+
+### Focused verification
+
+One isolated Windows Python 3.13 serial run exited zero with all six selected cases passing. The four Claude variants and both ACK callback variants exercised the real initial registrations and the later recovery journeys. The reviewed test bytes and candidate import origins matched. Exact source and focused result review precede any publication.
