@@ -462,6 +462,13 @@ def _start_api_with_retry(
                 _kill_tree(proc, force=True, log=emit_runtime_log)
             except Exception:
                 pass
+            if proc.poll() is None:
+                emit_runtime_log(
+                    "supervisor",
+                    f"api cleanup unresolved (process still alive), refusing retry pid={proc.pid} attempt={attempt}/{_API_START_MAX_ATTEMPTS}",
+                    stderr=True,
+                )
+                return None
         else:
             emit_runtime_log(
                 "supervisor",

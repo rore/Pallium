@@ -156,7 +156,13 @@ def test_zero_processors_keeps_api_available_without_worker():
 
 def test_initial_api_retry_exhaustion_is_failure(monkeypatch):
     killed = []
-    monkeypatch.setattr("app.supervisor._kill_tree", lambda proc, **_kw: killed.append(proc.pid))
+
+    def successful_cleanup(proc, **_kw):
+        killed.append(proc.pid)
+        proc._poll_iter = iter([1])
+        proc._poll_exhausted = False
+
+    monkeypatch.setattr("app.supervisor._kill_tree", successful_cleanup)
     result = run_supervisor(
         ["--processors", "0", "--cleaners", "0"],
         popen_factory=lambda *_args, **_kwargs: FakePopen(),
@@ -167,6 +173,27 @@ def test_initial_api_retry_exhaustion_is_failure(monkeypatch):
 
     assert result == 1
     assert len(killed) == 5
+
+
+def test_unresolved_initial_api_cleanup_fails_before_worker_helpers(monkeypatch):
+    children = []
+
+    def spawn(*_args, **_kwargs):
+        process = FakePopen()
+        children.append(process)
+        return process
+
+    monkeypatch.setattr("app.supervisor._kill_tree", lambda *_args, **_kwargs: None)
+    result = run_supervisor(
+        ["--processors", "1", "--cleaners", "1"],
+        popen_factory=spawn,
+        sleep_fn=lambda _: None,
+        wait_for_api_fn=lambda *_args, **_kwargs: False,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 1
+    assert len(children) == 1
 
 
 def test_stop_during_initial_readiness_keeps_child_owned_and_skips_helpers(monkeypatch):
@@ -226,7 +253,11 @@ def test_runtime_api_retry_exhaustion_is_failure(monkeypatch):
         popen_calls.append(proc)
         return proc
 
-    monkeypatch.setattr("app.supervisor._kill_tree", lambda *_args, **_kwargs: None)
+    def successful_cleanup(proc, **_kwargs):
+        proc._poll_iter = iter([1])
+        proc._poll_exhausted = False
+
+    monkeypatch.setattr("app.supervisor._kill_tree", successful_cleanup)
     wait_calls = [0]
 
     def wait_for_api(*_args, **_kwargs):
@@ -1238,8 +1269,8 @@ def test_start_api_with_retry_kills_alive_unverified_proc(tmp_path, monkeypatch)
     killed = []
 
     class _AliveProc:
-        def __init__(self): self.pid = 7
-        def poll(self): return None  # never exits on its own
+        def __init__(self): self.pid = 7; self.exited = False
+        def poll(self): return 1 if self.exited else None
 
     procs = []
     def popen_factory(cmd, **kwargs):
@@ -1253,6 +1284,7 @@ def test_start_api_with_retry_kills_alive_unverified_proc(tmp_path, monkeypatch)
     # Patch _kill_tree at module level so we can observe kill calls
     def fake_kill(process, *, force=False, **kwargs):
         killed.append((process.pid, force))
+        process.exited = True
 
     monkeypatch.setattr("app.supervisor._kill_tree", fake_kill)
 
@@ -1274,6 +1306,75 @@ def test_start_api_with_retry_kills_alive_unverified_proc(tmp_path, monkeypatch)
     )
     # And the retry budget should have been exhausted (multiple Popen calls)
     assert len(procs) == 5, f"expected 5 attempts, got {len(procs)}"
+
+
+@pytest.mark.parametrize("cleanup_mode", ["no_effect", "raises"])
+def test_start_api_with_retry_stops_when_cleanup_leaves_child_alive(tmp_path, monkeypatch, cleanup_mode):
+    from app.supervisor import _start_api_with_retry
+
+    processes = []
+    cleanup_calls = []
+
+    class AliveProc:
+        pid = 77
+        returncode = None
+
+        def poll(self):
+            return None
+
+    def spawn(*_args, **_kwargs):
+        process = AliveProc()
+        processes.append(process)
+        return process
+
+    def cleanup(process, **_kwargs):
+        cleanup_calls.append(process)
+        if cleanup_mode == "raises":
+            raise RuntimeError("simulated cleanup failure")
+
+    monkeypatch.setattr("app.supervisor._kill_tree", cleanup)
+    result = _start_api_with_retry(
+        ["dummy"], "127.0.0.1", 19999,
+        popen_factory=spawn,
+        sleep_fn=lambda _delay: None,
+        wait_for_api_fn=lambda *_args, **_kwargs: False,
+        run_dir=tmp_path,
+        token_fn=lambda: "tk",
+    )
+
+    assert result is None
+    assert cleanup_calls == processes
+    assert len(processes) == 1
+
+
+def test_start_api_with_retry_retries_after_process_already_exited(tmp_path):
+    from app.supervisor import _start_api_with_retry
+
+    processes = []
+
+    class ExitedProc:
+        pid = 78
+        returncode = 1
+
+        def poll(self):
+            return 1
+
+    def spawn(*_args, **_kwargs):
+        process = ExitedProc()
+        processes.append(process)
+        return process
+
+    result = _start_api_with_retry(
+        ["dummy"], "127.0.0.1", 19999,
+        popen_factory=spawn,
+        sleep_fn=lambda _delay: None,
+        wait_for_api_fn=lambda *_args, **_kwargs: False,
+        run_dir=tmp_path,
+        token_fn=lambda: "tk",
+    )
+
+    assert result is None
+    assert len(processes) == 5
 
 
 @pytest.mark.parametrize("scenario", ["slow_ready", "timeout", "foreign", "stopped", "dead"])
@@ -1306,6 +1407,7 @@ def test_startup_budget_preserves_real_probe_fencing(tmp_path, monkeypatch, capl
 
     def spawn(*_args, **_kwargs):
         elapsed[0] = 0
+        process.returncode = 1 if scenario == "dead" else None
         spawned.append(process)
         return process
 
@@ -1317,7 +1419,11 @@ def test_startup_budget_preserves_real_probe_fencing(tmp_path, monkeypatch, capl
 
     monkeypatch.setattr("socket.socket", ProbeSocket)
     monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr("app.supervisor._kill_tree", lambda proc, **_kw: killed.append(proc))
+    def successful_cleanup(proc, **_kw):
+        killed.append(proc)
+        proc.returncode = 1
+
+    monkeypatch.setattr("app.supervisor._kill_tree", successful_cleanup)
     caplog.set_level("INFO")
     result = _start_api_with_retry(
         ["unused"], "127.0.0.1", 19999, popen_factory=spawn,
