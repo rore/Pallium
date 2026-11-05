@@ -2312,20 +2312,22 @@ def test_unreachable_and_closed_destinations_reject_without_new_state(client, re
     assert row_counts() == reply_before
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("phase", ("entry", "acquire", "candidate", "flush", "scope", "new-session", "missing", "closed"))
-def test_claim_expiry_rolls_back_waits_mutation_and_early_returns(client, monkeypatch, phase):
+def test_claim_expiry_rolls_back_waits_mutation_and_early_returns(client, monkeypatch, phase, relay_admission_clock):
     from types import SimpleNamespace
     import storage.sqlite_relay as module
     from storage.sqlite_schema import RelayEndpointGenerationRecord
 
-    _turn(client, "claude-code", "expiry-sender")
-    target = _turn(client, "codex", "expiry-target")["session"]
+    storage = client.app.state.pallium_service._storage
+    with relay_admission_clock(storage, expected_admissions=2):
+        _turn(client, "claude-code", "expiry-sender")
+        target = _turn(client, "codex", "expiry-target")["session"]
     sent = _send(client, "claude-code", "expiry-sender", "codex:expiry-target", "expiry 東京")
     assert sent.status_code == 200, sent.text
     if phase == "closed":
         closed = client.post("/relay/sessions/close", json={"runtime": "codex", "session_ref": "expiry-target", **SCOPE})
         assert closed.status_code == 200, closed.text
-    storage = client.app.state.pallium_service._storage
     records = (RelaySessionRecord, RelayEndpointGenerationRecord, RelayMessageRecord, RelayDeliveryRecord)
 
     def snapshot():

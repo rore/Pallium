@@ -1870,13 +1870,14 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("old_state,new_state", [
     ("busy", "idle"), ("idle", "busy"), ("idle", "closed"), ("closed", "idle"),
 ])
 @pytest.mark.parametrize("lost_http", [False, True], ids=["http", "recovery"])
 def test_create_app_preserves_new_intent_during_old_cleanup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-    old_state: str, new_state: str, lost_http: bool, *, before_cleanup=None,
+    old_state: str, new_state: str, lost_http: bool, relay_admission_clock, *, before_cleanup=None,
 ) -> None:
     from itertools import count
     from concurrent.futures import ThreadPoolExecutor
@@ -2024,11 +2025,12 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
                 )}
             return http.post(path, json=payload)
 
-        assert http.post("/relay/turn", json={
-            "runtime": "codex", "session_ref": "sender", **scope,
-        }).status_code == 200
-
-        turn(session)
+        setup_storage = app.state.pallium_service._storage
+        with relay_admission_clock(setup_storage, expected_admissions=2):
+            assert http.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "sender", **scope,
+            }).status_code == 200
+            turn(session)
         bootstrap = intent("busy", "bootstrap")
         assert common._write_wake_intent(bootstrap)
         assert apply(bootstrap).status_code == 204

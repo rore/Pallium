@@ -24,92 +24,26 @@
 
 **Complexity:** Moderate
 
-**Reason:** Relay coordination, HTTP API and persisted claim/receipt behavior are red paths. Architecture, API and persistence checkpoints remain open. The two protected test files cover the approved caller contract changes.
+**Reason:** Shared selection, the HTTP contract, and persisted claim and receipt behavior require architecture, API, and persistence review. The two protected contract files retain the approved behavior ledger.
 
-**Discovery:** Ordinary hooks already share selection. Exact wake routes also need eligible trigger-first batches while each host keeps native custody and delivery proof. Current main changes Codex composer-suggestion capture in two files touched by the retained Codex slice. The transfer applies without shared hunks and preserves the main capture guard.
+**Discovery:** The existing shared selection serves ordinary turns. Exact wake paths need bounded sibling selection while each host retains delivery custody. The latest correction scopes only fixture enrollment in two recovery tests.
 
-**Material assumptions:** The reviewed same-session selection composes with the current main capture changes without altering the native wake or suggestion paths. Static composition is insufficient to qualify caller behavior. The mixed change requires the full selector.
+**Material assumptions:** The shared batching change and current main preserve native wake and suggestion capture. A clean Git composition establishes source compatibility. Exact CI is still required.
 
-**Plan:** Reuse the reviewed shared selector and existing bounded claims and receipts. Carry the required Codex slice with exact shared batching postimages on current main. Preserve caller-specific budgets, complete Hermes payloads, OpenCode restoration, and output-before-ACK. Route the exact candidate through independent source review and ordinary draft PR validation when authorized.
+**Plan:** Preserve trigger priority, scoped selection, caller budgets, complete Hermes payloads, OpenCode restoration, and individual receipts. Use the existing counted fixture for the two prerequisite enrollments in each corrected test. Restore native execution before the behavior under test. Keep the production files and protected contracts unchanged by this fixture correction. Use ordinary PR CI for the first complete run of the corrected head.
 
 **Verification plan:**
-- Protected behavior in tests/behavior_contracts/test_relay_delivery_contracts.py and tests/behavior_contracts/test_codex_busy_wake.py → existing PR CI job `test`.
-- Full non-slow qualification → Linux Python 3.12 and 3.13 matrix, with first failures and retained XML. The PR also runs the existing Windows Python 3.13 smoke selection.
-- Held Windows Hermes exact claim outcome → separate Windows verification. The ordinary Windows PR smoke omits it. Windows full and slow native jobs have separate triggers.
-- OpenCode adapter behavior → retained mocked V1 and V2 cases. Released-host behavior and the remaining review checkpoints require separate evidence.
+- Protected caller behavior → run both protected batching files in the existing PR test job.
+- Exact fixture correction and full lane → run Linux 3.12 and 3.13 and confirm the corrected cases execute.
+- Windows and governance → use the existing Windows smoke and governance jobs. Full Windows and native host qualification remain separate.
 
-**Plan review:**
-Agent technical review: Independent review of the revised Shared Relay batching plan dated 2026-11-05. Independent source review of this current-main composition is pending.
+**Plan review:** Agent technical review: Independent review of the revised shared Relay batching plan, 2026-11-05. The independent reviewer also accepted the two fixture changes and the current main composition. The correction preserves the counted setup boundaries and native assertions.
 
-**Approvals:** Approved by user 2026-11-04: "we have two issues here. one, why did the messages wait. and second - it doesn't make sense to get them one by one - if we know there are multiple messages in queue for the session we should optimize and batch together. one by one takes too long" The existing task authority covers the reviewed shared batching source and corresponding protected coverage. Human result, required checkpoints, and publication disposition remain pending.
+**Approvals:** Approved by user 2026-11-04: "we have two issues here. one, why did the messages wait. and second - it doesn't make sense to get them one by one - if we know there are multiple messages in queue for the session we should optimize and batch together. one by one takes too long"
 
 **State:** Blocked
 <!-- agent-workflow:end -->
 
-## Evidence
+## Verification status
 
-- The retained mocked OpenCode V1 and V2 adapter cases each passed with exit zero. They establish bounded adapter behavior only.
-- Earlier local Windows full evidence applies to the Codex-only composition. The current shared composition has no complete local Python full result. Its earlier focused attempts did not establish the held Windows exact result.
-- The prior Codex-only draft and its existing CI evidence remain separate. This candidate uses ordinary PR jobs for its first full qualification after source review and publication authorization.
-
-## First ordinary Linux CI correction
-
-Both Linux matrix jobs stopped with the same two failures. The protected ordinary page fixture's rendered budget could fit only one envelope. Its setup changes from 1,350 to 1,401 characters, enough for two envelopes and first-body growth, while excluding the third. Every assertion and the protected CI link remain in place.
-
-The inherited Claude case exposed a production regression. The shared selector was equating each delivery's historical container with the current endpoint container. Confirmed Codex and Claude Code scope moves keep endpoint custody and preserve delivery snapshots. Preserve registered endpoint, runtime and session checks, restore selection of queued deliveries after the move for those two runtimes, and keep container equality for pinned runtimes. Existing transition, generation, exact-trigger, lease, native-spend and receipt checks continue to apply. Keep the Claude assertion unchanged.
-
-The task remains High risk and Moderate complexity under the same owning workflow. The correction touches one persistence selector and one protected fixture. Independent technical plan review is pending. Verify with the exact protected envelope, Claude D1/D2/D3, Codex move and stale generation, and foreign-trigger cases. Preserve the first CI failures and run the next full qualification through the ordinary PR after source review.
-
-Agent technical review: On 2026-11-05 an independent reviewer accepted the exact endpoint eligibility correction, the equivalent protected fixture budget, and the four focused regression cases. The approved task requires the original scope-move contract and all protected assertions. Source review and the persistence, API and architecture checkpoints are separate.
-
-### Focused verification
-
-Windows Python 3.13 serial pytest passed the protected two-envelope fixture, Claude D1/D2/D3, Codex scope move and stale generation, and foreign-trigger negative case. An earlier restricted attempt stopped before any assertion during asyncio loopback setup. The fresh isolated run completed four tests with direct exit zero. The original Linux results remain retained. Independent source review and the next ordinary full PR CI run are pending.
-
-## Finite pageable budget test correction
-
-Both Linux jobs in the second ordinary PR run stopped on the old first-full assertion. The approved selector admits two minimum envelopes within the existing 2,000-character budget and leaves the third pending. The bounded audit found the same one-claim assumption in the existing Claude notice test.
-
-Correct only the two existing test functions. Retain expiry, the finite budget, exact order and individual acknowledgments. Verify the renderer retains both HTTP claims and delivers the remaining full payload on a subsequent turn with the same budget. Add a distinct third envelope to the notice fixture so its unchanged output budget still produces a real one-more notice. Preserve all production and protected test bytes from the reviewed correction. The owning task remains High risk and Moderate complexity. The two test paths are ordinary coverage changes under the non-exempt full selector.
-
-Agent technical review: On 2026-11-05 the independent reviewer approved both test-only corrections and the strengthened renderer comparison. Focused tests and exact source review precede any separate publication decision. Prior CI failures and existing checkpoints remain.
-
-### Focused verification
-
-Windows Python 3.13 serial pytest passed the pageable budget and expiry case, the Claude backlog notice case, and the unchanged neighboring oversized-message overflow control. All three passed with direct exit zero. Production, protected contracts and the earlier custody evidence are preserved. Exact independent source review and the next ordinary full PR CI remain pending.
-
-## Claude prompt capture fixture correction
-
-Both Linux jobs in the third ordinary PR run stopped on the same real Claude capture assertion. The fixture supplied a non-UUID prompt identifier. The hook's canonical UUID parser returned no source turn key, so the hook skipped the capture branch. The existing product order is claim, capture, output flush, then individual acknowledgments.
-
-Use a canonical fixed UUID in the existing test and compare the captured identifier directly with the fixture value. Keep the real HTTP and durable History readback, rendering, deadline and per-delivery receipt checks. The whole change stays non-exempt and the owning High risk and Moderate complexity classification remains. This correction touches one ordinary test and this record.
-
-Agent technical review: On 2026-11-05 the independent reviewer approved this exact fixture correction and the one existing focused case. Preserve earlier hosted results and defer publication and the next full PR CI until exact source review.
-
-### Focused verification
-
-The named Claude capture, output and individual acknowledgment test passed on Windows Python 3.13 in the isolated serial run, with direct exit zero. Exact source review and the next ordinary full PR CI are pending.
-
-## OpenCode anchor fixture and Codex readiness evidence
-
-The fourth ordinary CI run passed the full Linux Python 3.12 suite. The Linux Python 3.13 run first failed when the two frozen-clock sends had the same creation time and the delivery ID tie-break selected the intended sibling as the wake anchor. The Windows smoke run first failed when the real Codex hook readiness test observed unknown on its first public read. The cause of the Windows result remains unknown. The original CI results remain the evidence for that revision.
-
-Independent technical plan review approved two separate test deltas. In `tests/test_opencode_relay_wake_e2e.py`, advance the fake clock by one second between the sends and check the actual poll anchor against the first send. Preserve the expiry, recovery and acknowledgment assertions. In `tests/test_codex_integration.py`, add bounded diagnostic fields to the existing first-read assertion while preserving the actual hook, observer, lock and read. The second change is selected only for the next revision justified by the first. The two exact test postimages were approved before editing. The existing High risk and Moderate complexity classification and all whole-change gates still apply.
-
-Run the existing semantic context-loss test and the real Codex hook readiness test with the writer-lock refusal and public read uncertainty controls in one isolated serial invocation. Preserve any first failure and submit the exact source and focused result for independent review before considering publication.
-
-### Focused verification
-
-The isolated Windows Python 3.13 serial invocation exited zero with all seven selected cases passing. It covered the OpenCode semantic context-loss case, the real Codex hook and first public read, writer-lock refusal, and all four public read uncertainty variants. Source and import checks matched the selected candidate. The prior hosted results remain retained and the Windows failure's cause remains unknown. Exact source and focused result review precede any publication.
-
-## Initial registrations in two recovery fixtures
-
-The fifth ordinary CI run stopped in two distinct initial registration paths. Linux Python 3.13 failed before the writer transaction began in the Claude crash-recovery fixture. Linux Python 3.12 received an HTTP refusal after the writer acquisition deadline in the ACK callback recovery fixture. Both stopped before their recovery assertions. The physical causes remain unknown and the original results are retained.
-
-The independent reviewer approved the two exact test plans before editing. In `tests/test_claude_wake_dispatch.py`, use the existing counted admission clock for the two initial registrations before any message exists. In `tests/test_relay_capacity_isolation.py`, use the same fixture for the two initial HTTP registrations on the app's SQLite provider, retaining their status assertions. Both scopes close before seeding. Native timing and all send, claim, crash, refusal, ACK, recovery, fence and teardown assertions remain in force. The whole change remains High risk and Moderate complexity under the existing workflow.
-
-Verify the four Claude variants and both ACK callback variants in one isolated serial invocation. Preserve the first outcome and submit the exact source and focused result for independent review.
-
-### Focused verification
-
-One isolated Windows Python 3.13 serial run exited zero with all six selected cases passing. The four Claude variants and both ACK callback variants exercised the real initial registrations and the later recovery journeys. The reviewed test bytes and candidate import origins matched. Exact source and focused result review precede any publication.
+The corrected candidate has no completed application test result. Exact Linux CI, Windows smoke, governance, and independent result review are pending. The authenticated disposition for architecture, API, and persistence and the task owner's completed-result decision remain separate for the corrected head. Earlier verification applies to its original revisions. Installed behavior and performance remain unverified.
