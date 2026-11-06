@@ -2,7 +2,9 @@
 import pytest
 import asyncio
 import json
+import os
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from tests.test_codex_retained_wake import (
     SCOPE, TARGET, _hook_runner, http_wake, recover, retained as retained_fixture,
@@ -106,27 +108,33 @@ async def test_actual_mcp_idle_recovers_same_epoch_enrollment_without_replay(
     "changed-bootstrap", "changed-continuity", "disposal-failure", "different-thread",
     "dispose-changed-pipe", "dispose-changed-bootstrap", "dispose-changed-continuity",
     "dispose-unresolved", "changed-source", "admission-register-failure",
-    "replacement-deadline", "replacement-transport-failed",
+    "replacement-deadline", "replacement-transport-failed", "replacement-generic-ready",
     "replacement-terminal", "replacement-unresolved", "replacement-pipe",
     "replacement-bootstrap", "replacement-continuity", "replacement-source",
     "replacement-dispose-unresolved", "replacement-dispose-failure",
     "replacement-dispose-pipe", "replacement-dispose-bootstrap",
     "replacement-dispose-continuity", "replacement-stop",
     "replacement-register-deadline", "replacement-register-transport-failed",
-    "replacement-exhaustion", "replacement-budget", "replacement-backoff-stop",
+    "replacement-register-refusal", "replacement-acquisition-startup",
+    "replacement-ready-busy", "replacement-diagnostic-sink-failure",
+    "replacement-backoff-wait-stop",
+    "replacement-exhaustion", "replacement-exhaustion-rotation", "replacement-budget",
+    "replacement-backoff-stop",
 ])
 async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
-    retained, monkeypatch, idle_result,
+    retained, monkeypatch, tmp_path, idle_result,
 ):
     from app import codex_bridge_pipe as bridge
     from app.mcp import codex_desktop_bridge as lifecycle
     from tests.test_codex_worker_reconnect import _protocol_server, _actual_status
     from tests.test_codex_mcp_desktop_bridge import _serve_protocol
 
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path / "private-home"))
     service, request, natives = retained
     source = service.source
     manifest = {"epoch": service.epoch}
     registrations, operations, workers, clients = [], [], [], []
+    acquisition_failures = 0
     registration_sources, source_resources, recoveries = [], [], []
     idle_observed, disposed = threading.Event(), threading.Event()
     recovery_completed, replacement_observed = threading.Event(), threading.Event()
@@ -134,15 +142,31 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
     monkeypatch.setattr(bridge, "_read_private", lambda *args: json.dumps(manifest).encode())
     replacement_failure = idle_result.startswith("replacement-")
     replacement_fault = idle_result.removeprefix("replacement-")
-    replacement_recovers = replacement_fault in {"deadline", "transport-failed"}
-    expected_clients = 3 if replacement_recovers else 2
+    replacement_recovers = replacement_fault in {
+        "deadline", "transport-failed", "acquisition-startup", "ready-busy", "diagnostic-sink-failure"}
+    expected_clients = 3 if replacement_recovers else 4 if replacement_fault == "exhaustion" else (
+        21 if replacement_fault == "exhaustion-rotation" else 2)
     if replacement_failure:
         monkeypatch.setattr(lifecycle, "RECONNECT_INITIAL_BACKOFF_SECONDS", .001)
         if replacement_fault == "exhaustion":
             monkeypatch.setattr(lifecycle, "RECONNECT_MAX_ATTEMPTS", 3)
+        elif replacement_fault == "exhaustion-rotation":
+            monkeypatch.setattr(lifecycle, "RECONNECT_MAX_ATTEMPTS", 20)
+            monkeypatch.setattr(lifecycle, "RECONNECT_MAX_BACKOFF_SECONDS", .001)
         elif replacement_fault == "budget":
             monkeypatch.setattr(lifecycle, "RECONNECT_WINDOW_SECONDS", .02)
             monkeypatch.setattr(lifecycle, "RECONNECT_INITIAL_BACKOFF_SECONDS", .04)
+        if replacement_fault == "diagnostic-sink-failure":
+            def fail_diagnostic_sink(*_args):
+                raise OSError("controlled diagnostic sink failure")
+            monkeypatch.setattr(lifecycle, "_write_client_diagnostic", fail_diagnostic_sink)
+        elif replacement_fault == "backoff-wait-stop":
+            write_diagnostic = lifecycle._write_client_diagnostic
+            def stop_during_backoff(name, message, args):
+                write_diagnostic(name, message, args)
+                if name == "pallium.codex.recovery" and args[6] == "ready-retry":
+                    workers[0].stop_event.set()
+            monkeypatch.setattr(lifecycle, "_write_client_diagnostic", stop_during_backoff)
 
     class Worker(worker_type):
         def __init__(self, *args, **kwargs):
@@ -172,7 +196,8 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                 idle_observed.set()
                 if (replacement_failure and self.index > 0
                         and not replacement_fault.startswith("register-")
-                        and (self.index == 1 or replacement_fault == "exhaustion")):
+                        and replacement_fault != "ready-busy"
+                        and (self.index == 1 or replacement_fault.startswith("exhaustion"))):
                     if replacement_fault == "unresolved":
                         self.unresolved = True
                     elif replacement_fault == "pipe":
@@ -185,6 +210,8 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                         clients[-1].source.gone = True
                     elif replacement_fault == "stop":
                         workers[0].stop_event.set()
+                    if replacement_fault == "generic-ready":
+                        raise RuntimeError("private generic READY failure")
                     raise bridge.ShadowUnavailable(
                         "invalid-response" if replacement_fault == "terminal"
                         else "transport-failed" if replacement_fault == "transport-failed" else "deadline")
@@ -207,13 +234,19 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                     raise bridge.ShadowUnavailable(category)
             if value["verb"] == "register" and registrations and idle_result == "admission-register-failure":
                 raise bridge.ShadowUnavailable("transport-failed")
-            result = service._process(value, service.source, value["sequence"] - 1, deadline)
+            result = (bridge._inventory_public("unavailable", "native-failed")
+                      if value["verb"] == "register" and registrations
+                      and replacement_fault == "register-refusal"
+                      else service._process(value, service.source, value["sequence"] - 1, deadline))
             if value["verb"] == "register":
                 registrations.append(dict(value))
                 registration_sources.append(self.index)
-                if self.index == 1 and replacement_fault.startswith("register-"):
+                if (self.index == 1 and replacement_fault.startswith("register-")
+                        and replacement_fault != "register-refusal"):
                     raise bridge.ShadowUnavailable(replacement_fault.removeprefix("register-"))
-            elif registrations and idle_result == "busy":
+            elif registrations and (idle_result == "busy" or
+                                    replacement_fault == "ready-busy" and self.index == 1
+                                    and value["verb"] == "ready"):
                 result = {**result, "status": "unavailable", "reason": "busy"}
             return {**result, "version": 1, "epoch": service.epoch,
                     "sequence": value["sequence"]}
@@ -247,6 +280,10 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                 self.unresolved = True
 
     def native(path, stop, *, retained):
+        nonlocal acquisition_failures
+        if replacement_fault == "acquisition-startup" and clients and acquisition_failures == 0:
+            acquisition_failures += 1
+            raise bridge.ShadowUnavailable("startup-unavailable")
         client = object.__new__(native_type)
         client.w, client.sid = service.w, service.sid
         client.bootstrap_path, client.manifest = path, dict(manifest)
@@ -321,7 +358,7 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
             await asyncio.to_thread(worker._thread.join, 1)
             assert not worker._thread.is_alive() and worker.stop_event.is_set()
             assert len(operations) == 1, "reconnect replayed the original MCP call"
-            assert len(clients) == (4 if replacement_fault == "exhaustion" else 2)
+            assert len(clients) == expected_clients
             assert registration_sources == ([0, 1] if replacement_fault.startswith("register-") else [0])
             assert service.retained_registration is None and service.custody is None
             assert all(resource.closed for resource in source_resources[0])
@@ -350,6 +387,58 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
             await worker.stop()
             await asyncio.to_thread(worker._thread.join, 1)
             assert not worker._thread.is_alive()
+    if replacement_failure and replacement_fault != "diagnostic-sink-failure":
+        diagnostic = (tmp_path / "private-home" / "logs" /
+                      f"codex-retained-client-{os.getpid()}.log").read_text(encoding="utf-8")
+        records = [line for line in diagnostic.splitlines() if "event=recovery " in line]
+        assert records
+        assert all(len(line) < 4096 and "worker=" in line and "episode=" in line
+                   and "attempt=" in line and "acquisition=" in line and "ready=" in line
+                   and "register=" in line and "terminal=" in line
+                   and "restart_allowed=" in line and "unresolved=" in line for line in records)
+        assert request["endpoint"] not in diagnostic
+        assert "actual-runtime" not in diagnostic and "turn_ref" not in diagnostic
+        fields = [dict(field.split("=", 1) for field in line.split() if "=" in field)
+                  for line in records]
+        assert len({field["worker"] for field in fields}) == 1
+        assert len({field["episode"] for field in fields}) == 1
+        assert all(field["worker"].isdigit() and len(field["worker"]) <= 9
+                   and field["episode"].isdigit() and len(field["episode"]) <= 6
+                   and field["attempt"].isdigit() and 1 <= int(field["attempt"]) <= 20
+                   for field in fields)
+        if replacement_fault in {"deadline", "transport-failed"}:
+            assert "terminal=ready-retry" in diagnostic and "terminal=success" in diagnostic
+        elif replacement_fault == "generic-ready":
+            assert any(field["ready"] == "terminal" and field["register"] == "not-attempted"
+                       and field["terminal"] == "ready-terminal" for field in fields)
+        elif replacement_fault == "acquisition-startup":
+            assert "acquisition=startup-unavailable" in diagnostic
+            assert "terminal=retry" in diagnostic and "terminal=success" in diagnostic
+        elif replacement_fault == "ready-busy":
+            assert "ready=busy" in diagnostic and "terminal=retry" in diagnostic
+            assert "terminal=success" in diagnostic
+        elif replacement_fault.startswith("register-"):
+            assert ("register=refused" if replacement_fault == "register-refusal"
+                    else "register=error") in diagnostic
+            assert "terminal=register-terminal" in diagnostic
+        elif replacement_fault == "exhaustion":
+            assert "terminal=exhausted" in diagnostic
+        elif replacement_fault == "exhaustion-rotation":
+            rotated = diagnostic + (tmp_path / "private-home" / "logs" /
+                f"codex-retained-client-{os.getpid()}.log.1").read_text(encoding="utf-8")
+            assert "terminal=exhausted" in diagnostic and len(diagnostic.encode("utf-8")) <= 4096
+            assert len(rotated.encode("utf-8")) <= 8192
+        elif replacement_fault == "budget":
+            assert "terminal=window-exhausted" in diagnostic
+        elif replacement_fault == "backoff-stop":
+            assert "terminal=stopped" in diagnostic
+        elif replacement_fault == "backoff-wait-stop":
+            assert "terminal=ready-retry" in diagnostic and "terminal=stopped" in diagnostic
+        elif replacement_fault == "stop":
+            assert any(field["terminal"] == "stopped" for field in fields)
+        if replacement_fault == "unresolved":
+            assert any(field["unresolved"] == "True" and field["terminal"] == "ready-terminal"
+                       for field in fields)
 
 
 def test_missing_saved_registration_is_not_reported_as_peer_mismatch(retained):
@@ -717,3 +806,93 @@ def test_post_owner_failure_keeps_spent_delivery_fenced(http_wake, response, cap
         assert "category=native-tool-failed" in failure_log and "stage=owner-result" in failure_log
     assert http.get("/relay/messages/retained-journey", params={
         "container_ref": "git:example.test/retained-東京"}).json()["deliveries"][0]["state"] == "pending"
+
+
+def test_inventory_worker_construction_does_not_depend_on_diagnostic_sink(monkeypatch):
+    from app.mcp import codex_desktop_bridge as lifecycle
+
+    monkeypatch.setattr(lifecycle.InventoryWorker, "_run", lambda _self: None)
+
+    def construct():
+        return lifecycle.InventoryWorker(None, retained=True)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with lifecycle._close_log_lock:
+            worker = pool.submit(construct).result(timeout=2)
+    worker._thread.join(1)
+    assert not worker._thread.is_alive() and type(worker._diagnostic_worker_id) is int
+
+    def fail_allocator():
+        raise RuntimeError("controlled allocator failure")
+
+    monkeypatch.setattr(lifecycle, "_next_client_worker_id", fail_allocator)
+    worker = lifecycle.InventoryWorker(None, retained=True)
+    worker._thread.join(1)
+    assert not worker._thread.is_alive() and worker._diagnostic_worker_id == "unknown"
+
+
+def test_recovery_diagnostic_correlations_and_scalar_sanitization(monkeypatch, tmp_path):
+    from app.mcp import codex_desktop_bridge as lifecycle
+
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path / "private-home"))
+    monkeypatch.setattr(lifecycle.InventoryWorker, "_run", lambda _self: None)
+    first = lifecycle.InventoryWorker(None, retained=True)
+    second = lifecycle.InventoryWorker(None, retained=True)
+    first.stop_event.set()
+    second.stop_event.set()
+    native_calls = []
+
+    def native(*_args, **_kwargs):
+        native_calls.append(True)
+
+    assert first._auto_reconnect(native, "unused", {}, "continuity") is None
+    assert first._auto_reconnect(native, "unused", {}, "continuity") is None
+    assert second._auto_reconnect(native, "unused", {}, "continuity") is None
+    first._thread.join(1)
+    second._thread.join(1)
+    assert not first._thread.is_alive() and not second._thread.is_alive()
+    assert native_calls == []
+    first_id, second_id = first._diagnostic_worker_id, second._diagnostic_worker_id
+    assert first != second
+    emit = lifecycle._client_recovery_diagnostic
+    emit(999999999, 999999, lifecycle.RECONNECT_MAX_ATTEMPTS, "ready", "ready", "registered",
+         "success", True, False)
+    emit(True, True, True, "secret=C:/private/token", "raw-payload", "raw-error",
+         "terminal exception", 1, 0)
+    emit(0, 0, 0, "ready", "ready", "registered", "success", True, False)
+    emit(1000000000, 1000000, lifecycle.RECONNECT_MAX_ATTEMPTS + 1, "invalid", "invalid",
+         "invalid", "invalid", False, True)
+
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("diagnostics must not stringify hostile values")
+
+        def __repr__(self):
+            raise AssertionError("diagnostics must not repr hostile values")
+
+    hostile = Hostile()
+    emit(hostile, hostile, hostile, hostile, hostile, hostile, hostile, hostile, hostile)
+    path = tmp_path / "private-home" / "logs" / f"codex-retained-client-{os.getpid()}.log"
+    rows = [dict(field.split("=", 1) for field in line.split() if "=" in field)
+            for line in path.read_text(encoding="utf-8").splitlines() if "event=recovery " in line]
+
+    assert [(row["worker"], row["episode"]) for row in rows[:3]] == [
+        (str(first_id), "1"), (str(first_id), "2"), (str(second_id), "1")]
+    assert type(first_id) is int and type(second_id) is int and first_id != second_id
+    assert all(row["attempt"] == "1" and row["terminal"] == "stopped"
+               and row["acquisition"] == row["ready"] == row["register"] == "not-attempted"
+               for row in rows[:3])
+    assert (rows[3]["worker"], rows[3]["episode"], rows[3]["attempt"]) == (
+        "999999999", "999999", str(lifecycle.RECONNECT_MAX_ATTEMPTS))
+    assert all(rows[4][field] == "unknown" for field in (
+        "worker", "episode", "attempt", "acquisition", "ready", "register", "terminal",
+        "restart_allowed", "unresolved"))
+    assert rows[5]["episode"] == "unknown" and rows[5]["attempt"] == "unknown"
+    assert all(rows[6][field] == "unknown" for field in (
+        "worker", "episode", "attempt", "acquisition", "ready", "register", "terminal"))
+    assert all(rows[7][field] == "unknown" for field in (
+        "worker", "episode", "attempt", "acquisition", "ready", "register", "terminal",
+        "restart_allowed", "unresolved"))
+    text = path.read_text(encoding="utf-8")
+    assert all(value not in text for value in (
+        "secret", "private", "token", "C:/", "raw-payload", "raw-error", "terminal exception"))
