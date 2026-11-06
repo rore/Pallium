@@ -27,34 +27,22 @@
 
 **Material assumptions:** The endpoint key and child-row relationships support one joined read. A lower SELECT count establishes query cost for this lookup. Installed response time and recovery need separate evidence.
 
-**Plan:** Use one SQLite SELECT with outer joins for the binding lookup. Preserve ORM row identity, missing-row handling, validation order, both existing transactions, enrollment and lease checks, and claim and receipt behavior. Limit the code and regression changes to the two named files and this record. Return material composition drift to review.
+**Plan:** Use one SQLite SELECT with outer joins for the binding lookup. Preserve ORM row identity, missing-row handling, validation order, both existing transactions, enrollment and lease checks, and claim and receipt behavior. Keep the binding implementation and its regression coverage in the two named files. In `tests/test_relay_shadow_snapshot.py`, apply the counted fixture only to the initial HTTP registration. In `tests/test_codex_wake_lifecycle.py`, apply it only to the two initial direct registrations in each offline upgrade case. Restore native timing before the behavior under test. Return material composition drift to review.
 
 **Verification plan:**
 - Verify one SELECT per binding through HTTP enrollment, poll, stale snapshot, exact claim, ACK, and response replay.
 - Verify missing and mismatched bindings and preserve the 404 precedence over a stale scope generation.
 - Verify the exact proposed tree through ordinary full Linux CI, Windows smoke, and governance. Verify the changed cases in the Linux results and keep full Windows and installed qualification separate.
 
-**Plan review:** Agent technical review: Independent OpenCode Relay binding plan review, 2026-11-05. The reviewer’s statement appears below.
+**Plan review:** Agent technical review: Independent review of the OpenCode binding plan, prerequisite scopes, and exact composition.
 
-**Approvals:** Approved by user 2026-11-05: "Approve the exact isolated plan". This approval covers the reviewed binding change and its isolated verification.
+**Approvals:** Approved by user 2026-11-05: "Approve the exact isolated plan". This approval covers the original two-file binding plan and its isolated verification. Completed-result approval is pending.
 
 **Exceptions:** —
 
 **State:** Blocked
 <!-- agent-workflow:end -->
 
-## Scope and decisions carried forward
+## Verification status
 
-The linked reliability work covers queue summary, Relay write settlement, and reconnect behavior. This binding change preserves those decisions and the existing delivery, privacy, idempotency, and custody contracts. It makes no new causal or installed performance claim for the prior work.
-
-## Independent binding plan review
-
-I independently reviewed the plan for the OpenCode Relay binding change. I approved replacing the three endpoint lookups with one SQLite SELECT in the existing transaction. The review covered both callers and preserved validation order, missing-row handling, enrollment, and wake ownership.
-
-## Verification and result review
-
-I independently reviewed the exact production and test changes and accepted their focused result and technical persistence scope. Eight focused Windows Python 3.13 cases passed on the projection before PR #385 merged. The HTTP tests verified one SELECT per binding lookup, error precedence, and the claim and acknowledgment lifecycle. I also reviewed the composition onto merged PR #385. The production and test changes carried over unchanged. The earlier Windows passes remain evidence for the earlier tree.
-
-Ordinary CI for the exact publication candidate is pending. This review supports the technical persistence disposition. Authenticated maintainer attestation and the human decision on the completed result are separate. Installed behavior and performance remain unverified.
-
-Full Windows qualification remains open.
+Eight focused Windows cases passed on the earlier binding projection, before PR #385 merged. They covered one SELECT per lookup, error precedence, and claim and acknowledgment behavior. The binding source and its regression tests carried over unchanged. The exact candidate still needs ordinary CI, full Windows qualification, the authenticated persistence checkpoint, and separate result review. Installed behavior and performance remain unverified.
