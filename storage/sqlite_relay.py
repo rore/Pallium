@@ -1498,19 +1498,25 @@ class SQLiteRelayMixin:
                 raise ValueError("invalid Relay claim expiry")
             claim_deadline = time.monotonic() + (claim_expires_at_ms / 1000 - time.time())
 
-        def check_claim_expiry():
+        def check_claim_expiry(checkpoint: str):
             if claim_deadline is not None and time.monotonic() >= claim_deadline:
-                raise RelayConflictError("Relay claim request expired")
+                error = RelayConflictError("Relay claim request expired")
+                try:
+                    error.expiry_detected_at = checkpoint
+                except BaseException:
+                    # Diagnostics must not replace the expiry error.
+                    pass
+                raise error
 
-        check_claim_expiry()
+        check_claim_expiry("before_acquisition")
         current = _now(now)
         with self._begin_relay_immediate() as db:
-            check_claim_expiry()
+            check_claim_expiry("after_acquisition")
 
             def finalize(result):
                 if claim_deadline is not None:
                     db.flush()
-                    check_claim_expiry()  # Still inside the transaction: expiration rolls everything back.
+                    check_claim_expiry("post_flush_precommit")  # Still inside the transaction: expiration rolls everything back.
                 return result
 
             wake = None
@@ -1746,7 +1752,7 @@ class SQLiteRelayMixin:
                         break
 
             claimed: list[dict[str, Any]] = []
-            check_claim_expiry()
+            check_claim_expiry("pre_claim_mutation")
             for delivery, message, view, _, token in selected:
                 delivery.state = "claimed"
                 delivery.claim_token = token
