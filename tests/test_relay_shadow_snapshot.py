@@ -147,12 +147,14 @@ def test_active_endpoint_without_deliveries_is_valid_for_enrollment(client):
     }
 
 
-def test_claimed_delivery_is_held(client):
-    session = _register(client)
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_claimed_delivery_is_held(client, relay_admission_clock):
+    storage = client.app.state.pallium_service._storage
+    with relay_admission_clock(storage, expected_admissions=1):
+        session = _register(client)
     _send(client)
     claimed = client.post("/relay/turn", json={"runtime": RUNTIME, "session_ref": SESSION, **SCOPE})
     assert claimed.status_code == 200 and claimed.json()["deliveries"]
-    storage = client.app.state.pallium_service._storage
     assert _snapshot(storage, session) == {
         "category": "held", "reason": "delivery_not_pending", "endpoint_valid": True
     }
