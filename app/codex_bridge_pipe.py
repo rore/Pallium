@@ -1920,7 +1920,7 @@ class InventoryService:
                         and (time.monotonic() >= self.ready_deadline
                              or self.w.event.WaitForSingleObject(self.source.handle, 0) == self.w.event.WAIT_OBJECT_0)):
                     if self.retained:
-                        self._clear_registration()
+                        self._transition_registration("source-exited")
                     self.source.close()
                     self.source = None
                     self.ready_announced = False
@@ -2541,39 +2541,93 @@ class RetainedService(InventoryService):
             if reason in _INVENTORY_FAILURE_CATEGORIES | {"timeout", "native-tool-failed"}:
                 self._publish_enrollment_diagnostics(failure=(stage, reason))
 
-    def _clear_registration(self) -> None:
-        with self._custody_lock:
-            self.retained_registration = None
-            self._publish_enrollment_diagnostics(
-                registration_remembered=False,
-                custody_present=self.custody is not None,
-                unresolved_handles=self.unresolved or bool(self.custody and self.custody.unresolved),
-            )
-
-    def _drop(self, *, preserve_registration=False, diagnostic_failure=None) -> None:
+    def _transition_registration(self, reason, *, endpoint=None, caller=None,
+                                 continuity_opted_in=False, state_read_started=False,
+                                 category=None, diagnostic_failure=None, release_transport=None):
+        if type(reason) is not str or reason not in {
+                "authenticated-registration", "caller-refreshed", "dispatch-failed", "source-closed",
+                "source-exited", "stop", "custody-failed", "continuity-mismatch",
+                "endpoint-mismatch", "registration-failed"}:
+            reason = "unknown"
+        if release_transport is not None and reason in {"authenticated-registration", "caller-refreshed"}:
+            reason = "unknown"
+        # Dispatch already owns custody here; retain its pre-drop evaluation position.
+        preserve = (reason == "dispatch-failed" and state_read_started and category in {
+            "deadline", "transport-failed", "native-tool-failed"}
+                    and self.custody is not None and not self.custody.unresolved
+                    and self._registration_live())
         with self._custody_lock:
             if diagnostic_failure is not None:
                 self._record_enrollment_failure(*diagnostic_failure)
-            if not preserve_registration or self.unresolved or self.stop_event.is_set() or _native_uncertain:
-                self._clear_registration()
-            super()._drop()
-            self.read_tool = False
-            self.archive_schema = None
-            self._archive_snapshot = None
-            if not self.unresolved:
-                for peer in self.ancestors:
-                    peer.close()
-                self.ancestors = []
-            self._publish_enrollment_diagnostics(
-                registration_remembered=self.retained_registration is not None,
-                custody_present=self.custody is not None,
-                unresolved_handles=self.unresolved or bool(self.custody and self.custody.unresolved),
-            )
+            had_registration = self.retained_registration is not None
+            if reason == "authenticated-registration":
+                self.retained_registration = {
+                    "epoch": self.epoch, "source": self.source,
+                    "source_identity": (self.source.pid, self.source.creation),
+                    "endpoint": endpoint, "caller": caller,
+                    "desktop_identity": self._registration_identity(self.desktop, self.ancestors),
+                }
+                self._publish_enrollment_diagnostics(
+                    accepted=True, registration_remembered=True, custody_present=True,
+                    unresolved_handles=False, continuity_opted_in=continuity_opted_in,
+                )
+                outcome = "remembered"
+            elif reason == "caller-refreshed":
+                changed = self.caller != caller
+                self.caller = caller
+                if self.retained_registration is not None:
+                    self.retained_registration["caller"] = caller
+                self._publish_enrollment_diagnostics(
+                    accepted=True, registration_remembered=self.retained_registration is not None,
+                    custody_present=True, unresolved_handles=False,
+                    continuity_opted_in=continuity_opted_in,
+                )
+                outcome = "refreshed" if changed else "unchanged"
+            elif not preserve or self.unresolved or self.stop_event.is_set() or _native_uncertain:
+                self.retained_registration = None
+                self._publish_enrollment_diagnostics(
+                    registration_remembered=False,
+                    custody_present=self.custody is not None,
+                    unresolved_handles=self.unresolved or bool(self.custody and self.custody.unresolved),
+                )
+                outcome = "invalidated" if had_registration else "unchanged"
+            else:
+                outcome = "preserved"
+            if release_transport is not None:
+                release_transport()
+            if outcome not in {"unchanged", "remembered"}:
+                try:
+                    _log.warning("codex_retained_registration_decision reason=%s outcome=%s", reason, outcome)
+                except Exception:
+                    pass
+            return outcome
+
+    def _drop(self, *, reason="source-closed", state_read_started=False,
+              category=None, diagnostic_failure=None) -> None:
+        self._transition_registration(
+            reason, state_read_started=state_read_started, category=category,
+            diagnostic_failure=diagnostic_failure, release_transport=self._release_transport,
+        )
+
+    def _release_transport(self) -> None:
+        super()._drop()
+        self.read_tool = False
+        self.archive_schema = None
+        self._archive_snapshot = None
+        if not self.unresolved:
+            for peer in self.ancestors:
+                peer.close()
+            self.ancestors = []
+        self._publish_enrollment_diagnostics(
+            registration_remembered=self.retained_registration is not None,
+            custody_present=self.custody is not None,
+            unresolved_handles=self.unresolved or bool(self.custody and self.custody.unresolved),
+        )
 
     def stop(self) -> None:
         self._explicit_stop.set()
         self.stop_event.set()
-        self._clear_registration()
+        self._transition_registration("stop")
         super().stop()
         if self.unresolved:
             self._invalidate_enrollment_diagnostics()
@@ -2611,18 +2665,6 @@ class RetainedService(InventoryService):
         return (desktop.pid, desktop.creation, policy.desktop_user_sid,
                 os.path.normcase(policy.desktop_executable), policy.desktop_version,
                 tuple((peer.pid, peer.creation) for peer in ancestors))
-
-    def _remember_registration(self, endpoint, caller, *, continuity_opted_in=False):
-        self.retained_registration = {
-            "epoch": self.epoch, "source": self.source,
-            "source_identity": (self.source.pid, self.source.creation),
-            "endpoint": endpoint, "caller": caller,
-            "desktop_identity": self._registration_identity(self.desktop, self.ancestors),
-        }
-        self._publish_enrollment_diagnostics(
-            accepted=True, registration_remembered=True, custody_present=True,
-            unresolved_handles=False, continuity_opted_in=continuity_opted_in,
-        )
 
     def _continuity_fingerprint(self):
         identity = (self.source.pid, self.source.creation,
@@ -2752,7 +2794,7 @@ class RetainedService(InventoryService):
                              category, self.unresolved or bool(self.custody and self.custody.unresolved),
                              self.stop_event.is_set(), datetime.now(timezone.utc).isoformat())
                 self._record_enrollment_failure("maintenance", _inventory_reason(exc))
-                self._drop()
+                self._drop(reason="custody-failed")
         finally:
             self._custody_lock.release()
 
@@ -2900,20 +2942,15 @@ class RetainedService(InventoryService):
                     raise
                 if continuity is not None and self._continuity_fingerprint() != continuity:
                     self._record_enrollment_failure("register", "peer-mismatch")
-                    self._drop()
+                    self._drop(reason="continuity-mismatch")
                     raise ShadowUnavailable("peer-mismatch")
                 if (self.retained_registration is not None
                         and endpoint != self.retained_registration["endpoint"]):
                     self._record_enrollment_failure("register", "peer-mismatch")
-                    self._clear_registration()
+                    self._transition_registration("endpoint-mismatch")
                     raise ShadowUnavailable("peer-mismatch")
-                self.caller = caller
-                if self.retained_registration is not None:
-                    self.retained_registration["caller"] = caller
-                self._publish_enrollment_diagnostics(
-                    accepted=True, registration_remembered=self.retained_registration is not None,
-                    custody_present=True, unresolved_handles=False,
-                    continuity_opted_in=opted_in,
+                self._transition_registration(
+                    "caller-refreshed", caller=caller, continuity_opted_in=opted_in,
                 )
                 result = self._result(inventory_ok=True)
                 if opted_in:
@@ -2922,7 +2959,10 @@ class RetainedService(InventoryService):
             try:
                 self.caller = caller
                 self._open_custody(endpoint, deadline, continuity=continuity)
-                self._remember_registration(endpoint, caller, continuity_opted_in=opted_in)
+                self._transition_registration(
+                    "authenticated-registration", endpoint=endpoint, caller=caller,
+                    continuity_opted_in=opted_in,
+                )
                 _log.warning("codex_retained_registration outcome=registered continuity_opted_in=%s",
                              opted_in)
                 result = self._result(inventory_ok=True)
@@ -2936,7 +2976,7 @@ class RetainedService(InventoryService):
                     "registration_remembered=%s custody_present=%s",
                     _inventory_reason(exc), self.retained_registration is not None, self.custody is not None,
                 )
-                self._drop()
+                self._drop(reason="registration-failed")
                 raise ShadowUnavailable("native-failed") from None
         finally:
             self._custody_lock.release()
@@ -3068,12 +3108,8 @@ class RetainedService(InventoryService):
                     diagnostic_category, stage, delivery_ref, generation,
                     self.retained_registration is not None, self.custody is not None,
                 )
-                preserve = (state_read_started and category in {
-                    "deadline", "transport-failed", "native-tool-failed"}
-                            and self.custody is not None and not self.custody.unresolved
-                            and self._registration_live())
-                self._drop(preserve_registration=preserve,
-                           diagnostic_failure=(stage, diagnostic_category))
+                self._drop(reason="dispatch-failed", state_read_started=state_read_started,
+                           category=category, diagnostic_failure=(stage, diagnostic_category))
                 return ActivationAttemptResult(
                     "uncertain" if spent else "deferred", "native_unavailable",
                     ("submission_attempted",) if spent else (),
