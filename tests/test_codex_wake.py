@@ -1046,7 +1046,7 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
                     *model.__table__.primary_key.columns)).all()))
         return tuple(values), tuple(native_prompts)
 
-    def send(name: str, *, expiry=None, retry_busy=False) -> dict:
+    def send(name: str, *, expiry=None, retry_busy=False, retry_deadline=None) -> dict:
         body = {
             "sender_runtime": "claude-code",
             "sender_session_ref": "sender",
@@ -1093,7 +1093,7 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
         with monkeypatch.context() as admission:
             admission.setattr(storage, "relay_send", observe_send)
             admission.setattr(storage, "_begin_relay_immediate", observe_begin)
-            deadline = time.monotonic() + 5
+            deadline = retry_deadline if retry_deadline is not None else time.monotonic() + 5
             response = route.post("/relay/messages", json=body)
             expected_attempts = 1
             if response.status_code == 503:
@@ -1243,11 +1243,26 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
     observed = threading.local()
     native_attempts = []
     forced_refusal = None
+    schedule_reserved = codex_wake._schedule_reserved_codex_relay_wake
+    scheduled_workers = []
+
+    def observe_schedule(reservation, wake_registry, **kwargs):
+        worker = schedule_reserved(reservation, wake_registry, **kwargs)
+        scheduled_workers.append((reservation, worker))
+        return worker
+
+    def settle_scheduled_workers():
+        for _, worker in scheduled_workers:
+            if worker is not None:
+                worker.join(timeout=max(0, deadline - time.monotonic()))
+        assert all(worker is None or not worker.is_alive() for _, worker in scheduled_workers)
 
     def observe_transition(*, operation, **kwargs):
         if operation != "begin_native_attempt":
             return transition(operation=operation, **kwargs)
         attempt = {"reservation": kwargs["reservation"], "entered": False}
+        if force_initial_refusal:
+            attempt["worker"] = threading.current_thread()
         native_attempts.append(attempt)
         observed.attempt = attempt
         try:
@@ -1279,17 +1294,27 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
                 attempt["error"] = error
             raise
 
+    if force_initial_refusal:
+        deadline = time.monotonic() + 5
+        monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", observe_schedule)
+        monkeypatch.setattr(storage, "relay_codex_wake_transition", observe_transition)
+        monkeypatch.setattr(storage, "_begin_relay_immediate", observe_begin)
+
     try:
         with monkeypatch.context() as admission:
-            admission.setattr(storage, "relay_codex_wake_transition", observe_transition)
-            admission.setattr(storage, "_begin_relay_immediate", observe_begin)
+            if not force_initial_refusal:
+                admission.setattr(storage, "relay_codex_wake_transition", observe_transition)
+                admission.setattr(storage, "_begin_relay_immediate", observe_begin)
             replacement = send("delivered")
-            queued_behind_it = send("delivered", retry_busy=True)
-            deadline = time.monotonic() + 2
-            for worker in workers:
-                if worker is not None:
-                    worker.join(timeout=max(0, deadline - time.monotonic()))
-                    assert not worker.is_alive()
+            if force_initial_refusal:
+                settle_scheduled_workers()
+            else:
+                queued_behind_it = send("delivered", retry_busy=True)
+                deadline = time.monotonic() + 2
+                for worker in workers:
+                    if worker is not None:
+                        worker.join(timeout=max(0, deadline - time.monotonic()))
+                        assert not worker.is_alive()
         if force_initial_refusal:
             assert forced_refusal is not None and not native_prompts
         wake_path = "direct"
@@ -1307,6 +1332,10 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
             assert prepared.outcome == "prepared"
             assert prepared.correlated_claim_attempts is None and prepared.retry_not_before is None
             assert registry.snapshot(endpoints["delivered"]) == prepared
+            if force_initial_refusal:
+                (initial_reservation, initial_worker), = scheduled_workers
+                assert initial_reservation == prepared and initial_worker is not None
+                assert attempt["worker"] is initial_worker
             pending = route.get(f"/relay/messages/{replacement['message_id']}", params=scope)
             assert pending.status_code == 200, pending.text
             delivery, = pending.json()["deliveries"]
@@ -1314,32 +1343,28 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
                 prepared.delivery_id, "pending", 0,
             )
 
-            schedule_reserved = codex_wake._schedule_reserved_codex_relay_wake
-            recovery_workers = []
-
-            def observe_schedule(reservation, wake_registry, **kwargs):
-                worker = schedule_reserved(reservation, wake_registry, **kwargs)
-                recovery_workers.append((reservation, worker))
-                return worker
-
+            recovery_index = len(scheduled_workers)
             resumed = prepared
             assert time.monotonic() < deadline
             try:
                 with monkeypatch.context() as recovery:
-                    recovery.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", observe_schedule)
+                    if not force_initial_refusal:
+                        recovery.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", observe_schedule)
                     assert codex_wake.reconcile_codex_relay_wake_reservations(
                         relay, registry=registry, reservations=(prepared,),
                     ) == 1
             finally:
-                for _, worker in recovery_workers:
-                    if worker is not None:
-                        worker.join(timeout=max(0, deadline - time.monotonic()))
-            (scheduled, worker), = recovery_workers
+                settle_scheduled_workers()
+            (scheduled, worker), = scheduled_workers[recovery_index:]
             assert scheduled == prepared and worker is not None
             assert not worker.is_alive() and time.monotonic() < deadline
             spent, = launch_fences
             assert spent is not None and spent.retry_not_before is not None
             assert spent == replace(prepared, outcome="uncertain", retry_not_before=spent.retry_not_before)
+            if force_initial_refusal:
+                assert worker is not initial_worker
+                _, recovered_attempt = native_attempts
+                assert recovered_attempt == {"reservation": prepared, "entered": True, "worker": worker}
             wake_path = "forced-recovery" if force_initial_refusal else "natural-recovery"
         assert len(native_prompts) == 1
         assert native_prompts[0] == (
@@ -1349,6 +1374,15 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
         assert registry.snapshot(endpoints["delivered"]).delivery_id == (
             replacement["deliveries"][0]["delivery_id"]
         )
+        if force_initial_refusal:
+            settled_fence = registry.snapshot(endpoints["delivered"])
+            assert settled_fence in (spent, replace(spent, outcome="accepted"))
+            queued_behind_it = send("delivered", retry_busy=True, retry_deadline=deadline)
+            settle_scheduled_workers()
+            assert time.monotonic() < deadline
+            assert len(scheduled_workers) == len(native_attempts) == 2
+            assert len(native_prompts) == 1
+            assert registry.snapshot(endpoints["delivered"]) == settled_fence
         queued_status = route.get(
             f"/relay/messages/{queued_behind_it['message_id']}", params=scope
         )
@@ -1356,9 +1390,12 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
         assert queued_status.json()["deliveries"][0]["state"] == "pending"
         record_property("replacement_wake_path", wake_path)
     finally:
-        for worker in workers:
-            if worker is not None:
-                worker.join()
+        if force_initial_refusal:
+            settle_scheduled_workers()
+        else:
+            for worker in workers:
+                if worker is not None:
+                    worker.join()
 
 def test_reconciliation_generation_cas_preserves_newer_fence(tmp_path) -> None:
     registry = CodexWakeRegistry()
