@@ -2686,6 +2686,7 @@ def relay_turn(
     title: str | None = None,
     structural_work_refs: object = None,
     wake_delivery_id: str | None = None,
+    max_messages: int | None = None,
     register_session: bool = True,
     deadline: HookDeadline | None = None,
     request: Callable[..., dict[str, Any] | list[Any] | None] | None = None,
@@ -2846,6 +2847,8 @@ def relay_turn(
                 # A one-character HTTP budget is below the smallest rendered delivery,
                 # so the final destination owns the single claim budget.
                 payload["max_messages"] = 1
+            elif max_messages is not None:
+                payload["max_messages"] = max_messages
             if title is not None:
                 payload["title"] = title
             if structural_work_refs is not None and not intermediate:

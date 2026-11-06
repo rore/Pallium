@@ -3162,36 +3162,44 @@ def test_actual_codex_hook_drains_bounded_backlog_and_arrival_once(
         },
     )
 
-    for index in range(4):
+    for index in range(9):
         send(index)
-    assert len(scheduled) == 4
+    assert len(scheduled) == 9
     scheduled.clear()
 
     with pytest.raises(SystemExit):
         hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
-    assert len(scheduled) == 3
+    assert len(scheduled) == 8
     assert {
         call[0]["deliveries"][0]["delivery_id"] for call in scheduled
-    } == {sent[3]["deliveries"][0]["delivery_id"]}
+    } == {sent[8]["deliveries"][0]["delivery_id"]}
+    assert all(call[1] == scope for call in scheduled)
     first_relay, first_scope = contexts[0].rsplit("\n\n", 1)
-    assert first_relay.count("[Pallium Relay message") == 3
+    assert first_relay.count("[Pallium Relay message") == 8
     assert first_relay.endswith("[Relay: 1 more; Pallium continues.]")
+    assert len(first_relay) <= hook.RELAY_BATCH_OUTPUT_BUDGET
     assert first_scope.startswith("[Pallium scope — ")
 
-    send(4)
-    assert len(scheduled) == 4
+    send(9)
+    assert len(scheduled) == 9
     with pytest.raises(SystemExit):
         hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
-    assert len(scheduled) == 4
+    assert len(scheduled) == 9
+    assert len(contexts) == 2
     assert contexts[1].count("[Pallium Relay message") == 2
     assert "[Relay:" not in contexts[1]
     combined = "\n".join(contexts)
-    for index in range(5):
+    for index in range(10):
         assert combined.count(f"message_id: drain-{index}\n") == 1
+        assert combined.count(f"\nwork-{index} →\n") == 1
+        delivery_id = sent[index]["deliveries"][0]["delivery_id"]
+        assert combined.count(f"delivery_id: {delivery_id}\n") == 1
         status = client.get(f"/relay/messages/{sent[index]['message_id']}", params=scope)
-        assert status.json()["deliveries"][0]["state"] == "delivered"
+        assert status.status_code == 200, status.text
+        row = status.json()["deliveries"][0]
+        assert (row["delivery_id"], row["state"], row["attempts"]) == (delivery_id, "delivered", 1)
 
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
@@ -3251,9 +3259,18 @@ def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
         "recipient": f"codex:{target}",
         "message_id": "m" * 128,
         "in_reply_to": parent_id,
-        "payload": "😀" * 1500,
+        "payload": "😀" * 16000,
         **scope,
     }).json()
+    siblings = []
+    for index in range(7):
+        response = client.post("/relay/messages", json={
+            "sender_runtime": "claude-code", "sender_session_ref": sender,
+            "recipient": f"codex:{target}", "message_id": f"envelope-sibling-{index}",
+            "payload": "sibling", **scope,
+        })
+        assert response.status_code == 200, response.text
+        siblings.append(response.json())
     later = client.post("/relay/messages", json={
         "sender_runtime": "claude-code",
         "sender_session_ref": sender,
@@ -3290,29 +3307,52 @@ def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
 
     assert len(contexts) == 1
     relay_text, scope_line = contexts[0].rsplit("\n\n", 1)
+    message_ids = [
+        line.removeprefix("message_id: ")
+        for line in relay_text.splitlines() if line.startswith("message_id: ")
+    ]
+    backlog = [maximum, *siblings, later]
+    assert 1 <= len(message_ids) <= hook.RELAY_BATCH_MAX_MESSAGES == 8
+    assert message_ids == [item["message_id"] for item in backlog[:len(message_ids)]]
     preview_chars = relay_text.count("😀")
-    assert 0 < preview_chars < 1500
-    assert f"{1500 - preview_chars} characters omitted" in relay_text
+    assert 0 < preview_chars < 16000
+    assert f"{16000 - preview_chars} characters omitted" in relay_text
     assert f'pallium_relay_status(message_id="{maximum["message_id"]}", offset={preview_chars})' in relay_text
-    page = client.get(
-        f"/relay/messages/{maximum['message_id']}",
-        params={**scope, "offset": preview_chars, "page_size": 1500},
-    )
-    assert page.status_code == 200, page.text
-    continuation = page.json()
-    assert continuation["payload_offset"] == preview_chars
-    assert continuation["payload_total_chars"] == 1500
-    assert continuation["next_offset"] is None
-    assert "😀" * preview_chars + continuation["payload"] == maximum["payload"]
-    assert relay_text.endswith("[Relay: 1 more; Pallium continues.]")
-    assert len(relay_text) <= hook.RELAY_OUTPUT_BUDGET
+    restored = "😀" * preview_chars
+    offset = preview_chars
+    while offset is not None:
+        page = client.get(
+            f"/relay/messages/{maximum['message_id']}",
+            params={**scope, "offset": offset, "page_size": 1500},
+        )
+        assert page.status_code == 200, page.text
+        continuation = page.json()
+        assert continuation["payload_offset"] == offset
+        assert continuation["payload_total_chars"] == 16000
+        assert 0 < len(continuation["payload"]) <= 1500
+        restored += continuation["payload"]
+        end = offset + len(continuation["payload"])
+        assert offset < end <= 16000
+        offset = continuation["next_offset"]
+        if offset is None:
+            assert end == 16000
+        else:
+            assert offset == end
+    assert restored == maximum["payload"]
+    remaining = len(backlog) - len(message_ids)
+    assert remaining >= 1
+    assert relay_text.endswith(f"[Relay: {remaining} more; Pallium continues.]")
+    assert len(relay_text) <= hook.RELAY_BATCH_OUTPUT_BUDGET
     assert len(scope_line) <= hook.RELAY_OUTPUT_BUDGET
-    assert client.get(
-        f"/relay/messages/{maximum['message_id']}", params=scope,
-    ).json()["deliveries"][0]["state"] == "delivered"
-    assert client.get(
-        f"/relay/messages/{later['message_id']}", params=scope,
-    ).json()["deliveries"][0]["state"] == "pending"
+    for item in backlog:
+        status = client.get(f"/relay/messages/{item['message_id']}", params=scope)
+        assert status.status_code == 200, status.text
+        row = status.json()["deliveries"][0]
+        delivered = item["message_id"] in message_ids
+        assert row["delivery_id"] == item["deliveries"][0]["delivery_id"]
+        assert (row["state"], row["attempts"]) == (("delivered", 1) if delivered else ("pending", 0))
+    assert maximum["message_id"] in message_ids
+    assert later["message_id"] not in message_ids
 
 def test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract(client, monkeypatch) -> None:
     from itertools import count
@@ -3353,7 +3393,7 @@ def test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract(client, 
 
         schedule.reset_mock()
         turn = route.post("/relay/turn", json={
-            "runtime": "codex", "session_ref": "target", "max_chars": 2400, **SCOPE,
+            "runtime": "codex", "session_ref": "target", "max_chars": 2400, "max_messages": 1, **SCOPE,
         }).json()
         assert len(turn["deliveries"]) == 1 and turn["has_more"] is True
         claimed = turn["deliveries"][0]

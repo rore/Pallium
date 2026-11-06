@@ -1659,7 +1659,14 @@ class SQLiteRelayMixin:
                 eligible_query.with_only_columns(func.count(), maintain_column_froms=True)
                 .order_by(None)
             ).scalar_one()
-            if exact_delivery_id is None:
+            required_trigger = exact_delivery_id if runtime == "codex" else None
+            batch_trigger = required_trigger is not None and max_messages != 1
+            if batch_trigger:
+                eligible_query = eligible_query.order_by(None).order_by(
+                    case((RelayDeliveryRecord.id == required_trigger, 0), else_=1),
+                    RelayMessageRecord.created_at, RelayDeliveryRecord.id,
+                )
+            if exact_delivery_id is None or batch_trigger:
                 # Sort metadata, then load payloads only for candidates we examine.
                 eligible_query = eligible_query.options(defer(RelayMessageRecord.payload)).execution_options(yield_per=16)
             else:
@@ -1667,6 +1674,9 @@ class SQLiteRelayMixin:
             session_view = _session_view(registered, current, 24 * 60 * 60, generation)
             selected: list[tuple[RelayDeliveryRecord, RelayMessageRecord, dict[str, Any], int, str]] = []
             used = 0
+            share_chars = (max_chars // min(max_messages, eligible_count)
+                           if runtime == "codex" and max_chars and max_messages > 1 and eligible_count > 1
+                           else None)
 
             def response(deliveries: list[dict[str, Any]]) -> dict[str, Any]:
                 remaining = eligible_count - len(deliveries)
@@ -1689,12 +1699,16 @@ class SQLiteRelayMixin:
 
             with db.execute(eligible_query) as rows:
                 for delivery, message in rows:
+                    if required_trigger is not None and not selected and delivery.id != required_trigger:
+                        break
                     if not _delivery_render_safe(delivery, message):
+                        if required_trigger is not None and not selected:
+                            break
                         continue
                     token = f"relay-claim-{uuid.uuid4().hex}"
                     lease_expires_at = current + timedelta(seconds=lease_seconds)
 
-                    def project(prefix_chars: int) -> tuple[dict[str, Any], int] | None:
+                    def project(prefix_chars: int, limit: int | None) -> tuple[dict[str, Any], int] | None:
                         view = _delivery_view(
                             delivery, message, registered.state,
                             payload_limit=None if prefix_chars == len(message.payload) else prefix_chars,
@@ -1719,6 +1733,8 @@ class SQLiteRelayMixin:
                             ),
                         )
                         rendered_chars = len(_delivery_text(delivery, message, view)) + (2 if selected else 0)
+                        if limit is not None and rendered_chars > limit:
+                            return None
                         if max_chars and used + rendered_chars > max_chars:
                             return None
                         prospective = [*(item[2] for item in selected), view]
@@ -1726,18 +1742,26 @@ class SQLiteRelayMixin:
                             return None
                         return view, rendered_chars
 
-                    projected = project(len(message.payload))
-                    if projected is None and not selected and len(message.payload) > 1:
-                        low, high = 1, len(message.payload) - 1
-                        while low <= high:
-                            middle = (low + high) // 2
-                            candidate = project(middle)
-                            if candidate is None:
-                                high = middle - 1
-                            else:
-                                projected = candidate
-                                low = middle + 1
+                    def fit(limit):
+                        projected = project(len(message.payload), limit)
+                        if projected is None and (not selected or share_chars is not None) and len(message.payload) > 1:
+                            low, high = 1, len(message.payload) - 1
+                            while low <= high:
+                                middle = (low + high) // 2
+                                candidate = project(middle, limit)
+                                if candidate is None:
+                                    high = middle - 1
+                                else:
+                                    projected = candidate
+                                    low = middle + 1
+                        return projected
+
+                    projected = fit(share_chars)
+                    if projected is None and not selected and share_chars is not None:
+                        projected = fit(None)
                     if projected is None:
+                        if required_trigger is not None and not selected:
+                            break
                         continue
                     view, rendered_chars = projected
                     selected.append((delivery, message, view, rendered_chars, token))

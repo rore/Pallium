@@ -45,8 +45,9 @@ def isolate_codex_wake(monkeypatch):
     ):
         state.clear()
 
+@pytest.mark.parametrize("backlog", [1, 8])
 def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overtaken_wake(
-    client, monkeypatch, tmp_path, capsys, isolate_codex_wake, retained, request,
+    client, monkeypatch, tmp_path, capsys, isolate_codex_wake, retained, request, backlog,
 ) -> None:
     """RW-022: accepted busy Codex wakes retry only after durable cooldown.
 
@@ -119,6 +120,10 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
             "payload": "consume before queued wake executes →",
             **scope,
         }).json()
+        siblings = [route.post("/relay/messages", json={
+            "sender_runtime": "claude-code", "sender_session_ref": "sender",
+            "recipient": "codex:target", "payload": f"sibling {index} →", **scope,
+        }).json() for index in range(backlog - 1)]
         assert len(workers) == 1
 
         codex_home = tmp_path / "codex-home"
@@ -189,6 +194,10 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
         f"/relay/messages/{sent['message_id']}", params=scope
     ).json()["deliveries"][0]
     assert delivered["state"] == "delivered" and delivered["attempts"] == 1
+    assert contexts[0].count("[Pallium Relay message from ") == backlog
+    for sibling in siblings:
+        state = route.get(f"/relay/messages/{sibling['message_id']}", params=scope).json()["deliveries"][0]
+        assert state["state"] == "delivered" and state["attempts"] == 1
     assert not codex_wake._scheduled_session_generations
 
     contexts.clear()
