@@ -1078,6 +1078,38 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
                        for path, body in relay_forwarded if path == "/relay/deliveries/ack")
 
         gate_closed_candidate.set()
+        batch_payloads = ("NATIVE_BATCH_ONE → 東京", "NATIVE_BATCH_TWO → שלום")
+        batch = [http("POST", "/relay/messages", {
+            "sender_runtime": "claude-code", "sender_session_ref": "hermes-e2e-sender",
+            "recipient": endpoint, "payload": batch_payloads[0], **SCOPE,
+        })]
+        assert closed_candidate_waiting.wait(10), "Hermes did not poll the batch endpoint"
+        batch.append(http("POST", "/relay/messages", {
+            "sender_runtime": "claude-code", "sender_session_ref": "hermes-e2e-sender",
+            "recipient": endpoint, "payload": batch_payloads[1], **SCOPE,
+        }))
+        gate_closed_candidate.clear()
+        release_closed_candidate.set()
+        expected_ids = [message["deliveries"][0]["delivery_id"] for message in batch]
+        observed = eventually(lambda: next((item for item in provider_requests
+                            if any(isinstance(row.get("content"), str)
+                                   and all(payload in row["content"] for payload in batch_payloads)
+                                   for row in item.get("messages", []) if row.get("role") == "user")), None),
+                              "the released Hermes host did not observe both payloads in one input")
+        assert observed
+        selected = [(body, result) for body, result in claim_attempts
+                    if body.get("wake_delivery_id") in expected_ids and result]
+        assert len(selected) == 1 and selected[0][0]["wake_delivery_id"] == expected_ids[0]
+        assert [row["delivery_id"] for row in selected[0][1]["deliveries"]] == expected_ids
+        assert [row[1] for row in event_order if row[0] == "ack" and row[1] in expected_ids] == expected_ids
+        assert hashlib.sha256((integration / "__init__.py").read_bytes()).hexdigest() == plugin_sha256
+        for message in batch:
+            assert http("GET", "/relay/messages/" + message["message_id"]
+                        + "?container_ref=" + SCOPE["container_ref"])["deliveries"][0]["state"] == "delivered"
+
+        closed_candidate_waiting.clear()
+        release_closed_candidate.clear()
+        gate_closed_candidate.set()
         closed = http("POST", "/relay/messages", {
             "sender_runtime": "claude-code", "sender_session_ref": "hermes-e2e-sender",
             "recipient": endpoint, "payload": "CLOSED_SESSION_CONTROL", **SCOPE,

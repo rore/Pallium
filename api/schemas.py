@@ -911,13 +911,35 @@ class RelayTurnRequest(BaseModel):
     previous_endpoint_id: str | None = Field(default=None, min_length=1, max_length=128)
     previous_scope_generation: int | None = Field(default=None, ge=0)
 
+    @model_validator(mode="before")
+    @classmethod
+    def validate_hermes_claim_only(cls, value: Any) -> Any:
+        if (
+            isinstance(value, dict)
+            and value.get("runtime") == "hermes"
+            and value.get("wake_delivery_id") is not None
+            and value.keys() & {
+                "previous_container_ref", "previous_endpoint_id",
+                "previous_scope_generation", "structural_work_refs",
+                "codex_wake_endpoint_id", "codex_wake_generation",
+            }
+        ):
+            raise ValueError("Hermes exact claims cannot supply scope, work association, or Codex wake authority")
+        return value
+
     @model_validator(mode="after")
     def validate_transition_fields(self):
         values = (self.previous_container_ref, self.previous_endpoint_id, self.previous_scope_generation)
         if any(value is not None for value in values) and not all(value is not None for value in values):
             raise ValueError("previous_container_ref, previous_endpoint_id, and previous_scope_generation are required together")
-        if self.wake_delivery_id is not None and self.runtime != "codex":
-            raise ValueError("wake_delivery_id is supported only for codex")
+        if self.wake_delivery_id is not None:
+            if self.runtime not in {"codex", "hermes"}:
+                raise ValueError("wake_delivery_id is supported only for Codex and Hermes")
+            if self.runtime == "hermes" and (
+                self.register_session or not 1 <= self.max_messages <= 3
+                or not self.max_chars or not self.max_response_chars
+            ):
+                raise ValueError("Hermes exact claims require registration disabled and bounded budgets")
         return self
 
 
@@ -942,9 +964,12 @@ class RelayOpenCodeWakeRequest(BaseModel):
     native_input_id: str | None = Field(default=None, pattern=r"^msg_[A-Za-z0-9_-]+$", max_length=128)
     terminal_message_id: str | None = Field(default=None, pattern=r"^msg_[A-Za-z0-9_-]+$", max_length=128)
     max_chars: int = Field(default=2300, ge=1, le=2400, strict=True)
+    max_messages: int = Field(default=1, ge=1, le=3, strict=True)
 
     @model_validator(mode="after")
     def validate_wake_snapshot(self):
+        if self.operation != "context" and "max_messages" in self.model_fields_set:
+            raise ValueError("max_messages is supported only for OpenCode context")
         snapshot = (self.generation, self.delivery_id, self.native_input_id)
         needed = self.operation in {"admitted", "terminal", "context"}
         if needed and any(value is None for value in snapshot):

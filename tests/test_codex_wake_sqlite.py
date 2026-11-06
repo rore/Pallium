@@ -422,7 +422,7 @@ def test_http_ack_release_preserves_successor_and_commit_failure_boundaries(rela
             return original_transition(operation, **kwargs)
     with TestClient(app) as http:
         claim = http.post('/relay/turn', json={'runtime':'codex', 'session_ref':'target',
-            'wake_delivery_id':reservation.delivery_id, **SCOPE})
+            'wake_delivery_id':reservation.delivery_id, 'max_messages':1, **SCOPE})
         assert claim.status_code == 200, claim.text
         delivery, = claim.json()['deliveries']
         assert delivery['attempts'] == 1
@@ -1814,7 +1814,7 @@ def test_http_recovery_resumes_prepared_fence_after_restart(client, tmp_path, mo
     assert status.json()["deliveries"][0]["state"] == "pending"
     claim = http.post("/relay/turn", json={
         "runtime": "codex", "session_ref": "target",
-        "wake_delivery_id": delivery_a["delivery_id"], **SCOPE,
+        "wake_delivery_id": delivery_a["delivery_id"], "max_messages": 1, **SCOPE,
     })
     assert claim.status_code == 200, claim.text
     claimed = claim.json()["deliveries"][0]

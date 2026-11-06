@@ -316,9 +316,10 @@ def test_tcp_ack_receipt_precedes_owned_callback_and_shutdown_drains(
 
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("receipt_ack", [False, True])
 def test_failed_ack_callback_recovers_next_delivery_once_through_native_fence(
-    tmp_path, monkeypatch, caplog, receipt_ack,
+    tmp_path, monkeypatch, caplog, receipt_ack, relay_admission_clock,
 ) -> None:
     from contextlib import ExitStack
     from app import dependencies, main as app_main, codex_bridge_pipe, codex_wake
@@ -386,11 +387,12 @@ def test_failed_ack_callback_recovers_next_delivery_once_through_native_fence(
         client = cleanup.enter_context(TestClient(app))
         scope = {"container_ref": "git:example.test/ack-callback-recovery"}
 
-        for session in ("sender", "target"):
-            response = client.post("/relay/turn", json={
-                "runtime": "codex", "session_ref": session, **scope,
-            })
-            assert response.status_code == 200, response.text
+        with relay_admission_clock(app.state.pallium_service._storage, expected_admissions=2):
+            for session in ("sender", "target"):
+                response = client.post("/relay/turn", json={
+                    "runtime": "codex", "session_ref": session, **scope,
+                })
+                assert response.status_code == 200, response.text
         sent = []
         for payload in ("first café 東京", "next café 東京"):
             response = client.post("/relay/messages", json={

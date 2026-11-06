@@ -550,6 +550,32 @@ test("chat.message injects a near-budget Relay preview and acknowledges after mu
   );
 });
 
+test("V1 attaches a pageable prefix and its sibling before separate acknowledgements", async () => {
+  const makeDelivery = (id, payload) => ({
+    delivery_id: `d-${id}`, claim_token: `claim-${id}`, message_id: `m-${id}`,
+    sender_runtime: "claude-code", sender_session_ref: "sender-a", payload,
+    created_at: "2026-08-25T10:00:00+00:00", attempts: 1,
+  });
+  const first = { ...makeDelivery(1, "界".repeat(600)), payload_offset: 0,
+    payload_total_chars: 8000, content_truncated: true, next_offset: 600 };
+  const second = makeDelivery(2, "ordinary sibling");
+  installFetch({
+    "/relay/turn": { deliveries: [first, second], has_more: true, remaining_count: 1 },
+    "/relay/deliveries/ack": { state: "delivered" },
+  });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  const output = {
+    message: { sessionID: "sesBatch", role: "user" },
+    parts: [{ type: "text", text: "inspect this migration approach carefully" }],
+  };
+  await hooks["chat.message"]({}, output);
+  const acks = () => fetchCalls.filter((call) => call.url.includes("/relay/deliveries/ack"));
+  assert.equal(acks().length, 0);
+  const model = await messagesTransform(hooks, output.message, output.parts);
+  assert.match(model.parts[0].text, /offset=600[\s\S]*ordinary sibling[\s\S]*\[Relay: 1 more;/);
+  assert.deepEqual(acks().map((call) => call.body.delivery_id), ["d-1", "d-2"]);
+});
+
 test("chat.message with no delivery exposes current Relay identity", async () => {
   installFetch({ "/relay/turn": { deliveries: [] } });
   const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });

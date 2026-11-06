@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from storage.sqlite_schema import RelayDeliveryRecord
+from tests.test_agent_relay_hooks import batch_hook, exact_client
 
 
 SOURCE = {"container_ref": "git:example.test/relay-source"}
@@ -50,6 +51,29 @@ def test_response_budget_does_not_claim_pending_delivery(client):
     assert [item["message_id"] for item in recovered] == [sent["message_id"]]
 
 
+def test_ordinary_pageable_turn_reserves_a_sibling_envelope_before_payload_growth(client):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "opencode", "target")
+    first = _send(client, "opencode:target", "界" * 4000)
+    second = _send(client, "opencode:target", "small")
+    third = _send(client, "opencode:target", "wait")
+
+    # Fit two rendered envelopes and grow the first prefix without admitting a third.
+    batch = _turn(client, "opencode", "target", max_chars=1401)
+    left, right = batch["deliveries"]
+    assert [left["message_id"], right["message_id"]] == [first["message_id"], second["message_id"]]
+    assert left["content_truncated"] and 1 < left["next_offset"] < 4000
+    assert right["payload"] == "small" and not right["content_truncated"]
+    assert batch["has_more"] and batch["remaining_count"] == 1
+    assert left["receipt"] != right["receipt"]
+    ack = client.post("/relay/deliveries/mcp-ack", json={
+        "delivery_id": right["delivery_id"], "receipt": right["receipt"], **SOURCE,
+    })
+    assert ack.status_code == 200, ack.text
+    assert _status(client, first["message_id"])["deliveries"][0]["state"] == "claimed"
+    assert _status(client, third["message_id"])["deliveries"][0]["state"] == "pending"
+
+
 def test_default_backlog_drains_after_acknowledged_first_page(client):
     """docs/agent-relay.md Limits: default cap must expose and drain the fourth item."""
     _turn(client, "claude-code", "sender")
@@ -69,6 +93,33 @@ def test_default_backlog_drains_after_acknowledged_first_page(client):
     last = _turn(client, "codex", "target")
     assert [item["message_id"] for item in last["deliveries"]] == [sent[3]["message_id"]]
     assert last["has_more"] is False and last["remaining_count"] == 0
+
+
+def test_codex_prompt_batch_emits_required_trigger_before_individual_receipts(batch_hook):
+    """Codex prompt override batches eight; ordinary HTTP still defaults to three."""
+    from app.codex_wake import _wake_prompt
+    from tests.test_relay_exact_claim_e2e import send, status
+
+    state = batch_hook
+    messages = [send(state.client, payload=f"item {index} →") for index in range(9)]
+    trigger = messages[-1]
+    emitted = []
+
+    def before_ack():
+        assert state.ack_count == 0
+        selected = state.turns[-1]["deliveries"]
+        assert selected[0]["message_id"] == trigger["message_id"]
+        assert len(selected) == 8
+        assert all(status(state.client, item)["state"] == "claimed" for item in [trigger, *messages[:7]])
+        emitted.extend(row["message_id"] for row in selected)
+
+    state.on_emit = before_ack
+    assert state.run(_wake_prompt(trigger["deliveries"][0]["delivery_id"])) == 0
+    assert emitted == [trigger["message_id"], *(item["message_id"] for item in messages[:7])]
+    assert state.ack_count == 8
+    assert all(status(state.client, item)["state"] == "delivered" for item in [trigger, *messages[:7]])
+    assert (status(state.client, messages[7])["state"], status(state.client, messages[7])["attempts"]) == ("pending", 0)
+    assert state.turns[-1]["remaining_count"] == 1
 
 
 def test_reply_targets_original_sender_and_retries_once(client):
