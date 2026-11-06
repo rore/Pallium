@@ -203,6 +203,9 @@ def world(tmp_path, monkeypatch):
                 http.close()
         finally:
             try:
+                trace_writer = getattr(app.state, "relay_trace_writer", None)
+                if trace_writer is not None:
+                    trace_writer.close()
                 app.state.pallium_service.close()
             finally:
                 storage.close()

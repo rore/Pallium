@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -979,8 +980,9 @@ def test_claim_correlation_rejects_mismatched_or_ambiguous_results() -> None:
         expected_generation=reservation.generation,
     )
 
+@pytest.mark.parametrize("force_initial_refusal", [False, True], ids=["unforced", "forced-late-begin"])
 def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
-    client, monkeypatch: pytest.MonkeyPatch, tmp_path,
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path, force_initial_refusal, record_property,
 ) -> None:
     import time
     from contextlib import contextmanager
@@ -1015,6 +1017,7 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/real-reconcile"}
@@ -1186,12 +1189,21 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(recovered_app)
     workers = []
     native_prompts = []
+    resumed = None
+    launch_fences = []
+    replacement_delivery_id = None
 
     def schedule(result, wake_scope, **kwargs):
+        nonlocal replacement_delivery_id
+        if force_initial_refusal and replacement_delivery_id is None:
+            delivery = result["deliveries"][0]
+            if delivery["recipient_endpoint_id"] == endpoints["delivered"]:
+                replacement_delivery_id = delivery["delivery_id"]
         worker = codex_wake.schedule_codex_relay_wake(
             result, wake_scope, **kwargs
         )
@@ -1199,6 +1211,8 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
         return worker
 
     def launch(session_ref, prompt):
+        if resumed is not None:
+            launch_fences.append(registry.snapshot(resumed.recipient_endpoint_id))
         native_prompts.append((session_ref, prompt))
         return None, ("queued", None, 0)
 
@@ -1223,13 +1237,110 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
         )
         assert status.status_code == 200
         assert status.json()["deliveries"][0]["state"] == expected
+
+    transition = storage.relay_codex_wake_transition
+    begin = storage._begin_relay_immediate
+    observed = threading.local()
+    native_attempts = []
+    forced_refusal = None
+
+    def observe_transition(*, operation, **kwargs):
+        if operation != "begin_native_attempt":
+            return transition(operation=operation, **kwargs)
+        attempt = {"reservation": kwargs["reservation"], "entered": False}
+        native_attempts.append(attempt)
+        observed.attempt = attempt
+        try:
+            return transition(operation=operation, **kwargs)
+        finally:
+            del observed.attempt
+
+    @contextmanager
+    def observe_begin():
+        nonlocal forced_refusal
+        attempt = getattr(observed, "attempt", None)
+        try:
+            if force_initial_refusal and forced_refusal is None and attempt is not None:
+                reservation = attempt["reservation"]
+                if (reservation.recipient_endpoint_id, reservation.delivery_id,
+                        reservation.session_ref, reservation.container_ref) == (
+                    endpoints["delivered"], replacement_delivery_id, "delivered", scope["container_ref"],
+                ):
+                    forced_refusal = ImmediateTransactionBusyError(
+                        "controlled replacement admission refusal", acquisition_stage="late_begin",
+                    )
+                    raise forced_refusal
+            with begin() as db:
+                if attempt is not None:
+                    attempt["entered"] = True
+                yield db
+        except ImmediateTransactionBusyError as error:
+            if attempt is not None:
+                attempt["error"] = error
+            raise
+
     try:
-        replacement = send("delivered")
-        queued_behind_it = send("delivered", retry_busy=True)
-        for worker in workers:
-            if worker is not None:
-                worker.join(timeout=2)
-                assert not worker.is_alive()
+        with monkeypatch.context() as admission:
+            admission.setattr(storage, "relay_codex_wake_transition", observe_transition)
+            admission.setattr(storage, "_begin_relay_immediate", observe_begin)
+            replacement = send("delivered")
+            queued_behind_it = send("delivered", retry_busy=True)
+            deadline = time.monotonic() + 2
+            for worker in workers:
+                if worker is not None:
+                    worker.join(timeout=max(0, deadline - time.monotonic()))
+                    assert not worker.is_alive()
+        if force_initial_refusal:
+            assert forced_refusal is not None and not native_prompts
+        wake_path = "direct"
+        if not native_prompts:
+            attempt, = native_attempts
+            error = attempt.get("error")
+            assert not attempt["entered"]
+            assert type(error) is ImmediateTransactionBusyError and error.acquisition_stage == "late_begin"
+            assert not force_initial_refusal or error is forced_refusal
+            prepared = attempt["reservation"]
+            assert (prepared.recipient_endpoint_id, prepared.delivery_id) == (
+                endpoints["delivered"], replacement["deliveries"][0]["delivery_id"],
+            )
+            assert (prepared.session_ref, prepared.container_ref) == ("delivered", scope["container_ref"])
+            assert prepared.outcome == "prepared"
+            assert prepared.correlated_claim_attempts is None and prepared.retry_not_before is None
+            assert registry.snapshot(endpoints["delivered"]) == prepared
+            pending = route.get(f"/relay/messages/{replacement['message_id']}", params=scope)
+            assert pending.status_code == 200, pending.text
+            delivery, = pending.json()["deliveries"]
+            assert (delivery["delivery_id"], delivery["state"], delivery["attempts"]) == (
+                prepared.delivery_id, "pending", 0,
+            )
+
+            schedule_reserved = codex_wake._schedule_reserved_codex_relay_wake
+            recovery_workers = []
+
+            def observe_schedule(reservation, wake_registry, **kwargs):
+                worker = schedule_reserved(reservation, wake_registry, **kwargs)
+                recovery_workers.append((reservation, worker))
+                return worker
+
+            resumed = prepared
+            assert time.monotonic() < deadline
+            try:
+                with monkeypatch.context() as recovery:
+                    recovery.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", observe_schedule)
+                    assert codex_wake.reconcile_codex_relay_wake_reservations(
+                        relay, registry=registry, reservations=(prepared,),
+                    ) == 1
+            finally:
+                for _, worker in recovery_workers:
+                    if worker is not None:
+                        worker.join(timeout=max(0, deadline - time.monotonic()))
+            (scheduled, worker), = recovery_workers
+            assert scheduled == prepared and worker is not None
+            assert not worker.is_alive() and time.monotonic() < deadline
+            spent, = launch_fences
+            assert spent is not None and spent.retry_not_before is not None
+            assert spent == replace(prepared, outcome="uncertain", retry_not_before=spent.retry_not_before)
+            wake_path = "forced-recovery" if force_initial_refusal else "natural-recovery"
         assert len(native_prompts) == 1
         assert native_prompts[0] == (
             "delivered",
@@ -1243,6 +1354,7 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
         )
         assert queued_status.status_code == 200
         assert queued_status.json()["deliveries"][0]["state"] == "pending"
+        record_property("replacement_wake_path", wake_path)
     finally:
         for worker in workers:
             if worker is not None:
@@ -1481,6 +1593,9 @@ def test_queue_timeout_is_ambiguous(tmp_path) -> None:
     process.wait.assert_called_once_with(timeout=30)
 
 
+_DIAGNOSTIC_FIXTURE_PATH = "fixtures/glyph"
+
+
 @pytest.mark.parametrize(
     ("exit_code", "stderr", "category", "private_text"),
     (
@@ -1489,10 +1604,10 @@ def test_queue_timeout_is_ambiguous(tmp_path) -> None:
         (None, b"usage: codex " + b"x" * 3000, "cli_usage", ("x" * 100,)),
         (7, b"x" * 2048 + b" usage: codex", "other", ("x" * 100,)),
         (
-            0, b"\xffSECRET C:/private/" + "秘密".encode(), "other",
-            ("SECRET", "private", "秘密"),
+            0, b"\xffSAMPLE " + _DIAGNOSTIC_FIXTURE_PATH.encode("ascii") + "/秘密".encode(), "other",
+            ("SAMPLE", _DIAGNOSTIC_FIXTURE_PATH, "秘密"),
         ),
-        (7, "connection refused SECRET", "transport", ("connection refused", "SECRET")),
+        (7, "connection refused SAMPLE", "transport", ("connection refused", "SAMPLE")),
     ),
 )
 def test_timeout_logs_pre_cleanup_exit_and_safe_partial_stderr(
@@ -1567,7 +1682,7 @@ def test_timeout_fingerprints_unvalidated_delivery_reference(
     process.communicate.side_effect = [
         subprocess.TimeoutExpired([], 30), subprocess.TimeoutExpired([], 30),
     ]
-    delivery_id = "private-delivery-C:/secret"
+    delivery_id = f"sample-delivery/{_DIAGNOSTIC_FIXTURE_PATH}"
 
     with caplog.at_level(logging.INFO, logger="app.codex_wake"):
         codex_wake._finish_launch((process, None), delivery_id=delivery_id)
@@ -1682,11 +1797,11 @@ def test_launch_result_classifies_without_exposing_process_details(
         ("thread not found", "thread_unavailable", ("thread not found",)),
         ("connection refused", "transport", ("connection refused",)),
         (
-            "SECRET raw stderr C:/private/秘密/" + "x" * 4096,
+            f"SAMPLE raw stderr {_DIAGNOSTIC_FIXTURE_PATH}/秘密/" + "x" * 4096,
             "other",
-            ("SECRET", "raw stderr", "private", "秘密", "x" * 2048),
+            ("SAMPLE", "raw stderr", _DIAGNOSTIC_FIXTURE_PATH, "秘密", "x" * 2048),
         ),
-        ("�SECRET C:/private/秘密", "other", ("�", "SECRET", "private", "秘密")),
+        (f"�SAMPLE {_DIAGNOSTIC_FIXTURE_PATH}/秘密", "other", ("�", "SAMPLE", _DIAGNOSTIC_FIXTURE_PATH, "秘密")),
     ),
 )
 def test_nonzero_exit_logs_safe_stderr_category_and_retains_fence(
@@ -1738,32 +1853,32 @@ def test_nonzero_exit_logs_safe_stderr_category_and_retains_fence(
 @pytest.mark.parametrize(
     ("stderr", "category"),
     (
-        ("Error: failed to queue session message: thread/queue/add failed: SECRET (code -32600)", "queue_rpc_-32600"),
-        ("failed to queue session message: thread/queue/add failed: SECRET (code 0)", "queue_rpc_0"),
-        ("failed to queue session message: thread/queue/add failed: SECRET (code -2147483648)", "queue_rpc_-2147483648"),
-        ("failed to queue session message: thread/queue/add failed: SECRET (code 2147483647)", "queue_rpc_2147483647"),
-        (b"Error: failed to queue session message\n\nCaused by:\n    thread/queue/add failed: SECRET \xff (code -32000)\n", "queue_rpc_-32000"),
-        ("failed to queue session message: thread/queue/add transport error: SECRET C:/private/秘密 (code -1)", "queue_transport"),
-        ("failed to queue session message: thread/queue/add response decode error: SECRET C:/private/秘密", "queue_decode"),
-        ("failed to queue session message: thread/queue/add failed: SECRET (code -1), data: {\"private\": \"SECRET\"}", "queue_rpc_unknown"),
-        ("failed to queue session message: thread/queue/add failed: SECRET (code -1), data: \"forged (code -2)\"", "queue_rpc_unknown"),
-        ("failed to queue session message: thread/queue/add failed: SECRET", "queue_rpc_unknown"),
-        ("failed to queue session message: thread/queue/add failed: SECRET (code 2147483648)", "queue_rpc_unknown"),
-        ("failed to queue session message: thread/queue/add failed: SECRET (code -2147483649)", "queue_rpc_unknown"),
-        ("failed to queue session message: thread/queue/add failed: SECRET (code 10000000000)", "queue_rpc_unknown"),
-        ("failed to queue session message: thread/queue/add failed: SECRET (code +1)", "queue_rpc_unknown"),
-        ("failed to queue session message: thread/queue/add failed: SECRET (code 01)", "queue_rpc_unknown"),
-        ("failed to queue session message: thread/queue/add failed: SECRET (code -0)", "queue_rpc_unknown"),
-        ("failed to queue session message: thread/queue/add failed: SECRET (code 1.5)", "queue_rpc_unknown"),
-        ("failed to queue session message: thread/queue/add failed: SECRET\n(code -1)", "queue_rpc_unknown"),
-        ("failed to queue session message: thread/queue/add failed: SECRET " + "x" * 2048 + " (code -1)", "queue_rpc_unknown"),
-        ("failed to queue session message: thread/queue/add failed: SECRET ".ljust(2048 - len(" (code -7)"), "x") + " (code -7), data: SECRET", "queue_rpc_unknown"),
-        (("failed to queue session message: thread/queue/add failed: SECRET ".ljust(2048 - len(" (code -7)"), "x") + " (code -7) actual (code -9)").encode(), "queue_rpc_unknown"),
-        ("failed to queue session message: thread/read failed: SECRET (code -1)", "other"),
-        ("unrelated SECRET: thread/queue/add failed: SECRET (code -1)", "other"),
-        ("unrelated SECRET\nfailed to queue session message: thread/queue/add failed: SECRET (code -1)", "other"),
-        ("failed to queue session message: thread/queue/add failed: SECRET thread/queue/add transport error: SECRET (code -7)", "queue_rpc_-7"),
-        ("failed to queue session message: thread/queue/add failed: usage: SECRET C:/private/秘密 (code -9)", "queue_rpc_-9"),
+        ("Error: failed to queue session message: thread/queue/add failed: SAMPLE (code -32600)", "queue_rpc_-32600"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE (code 0)", "queue_rpc_0"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE (code -2147483648)", "queue_rpc_-2147483648"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE (code 2147483647)", "queue_rpc_2147483647"),
+        (b"Error: failed to queue session message\n\nCaused by:\n    thread/queue/add failed: SAMPLE \xff (code -32000)\n", "queue_rpc_-32000"),
+        (f"failed to queue session message: thread/queue/add transport error: SAMPLE {_DIAGNOSTIC_FIXTURE_PATH}/秘密 (code -1)", "queue_transport"),
+        (f"failed to queue session message: thread/queue/add response decode error: SAMPLE {_DIAGNOSTIC_FIXTURE_PATH}/秘密", "queue_decode"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE (code -1), data: {\"example\": \"SAMPLE\"}", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE (code -1), data: \"forged (code -2)\"", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE (code 2147483648)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE (code -2147483649)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE (code 10000000000)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE (code +1)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE (code 01)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE (code -0)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE (code 1.5)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE\n(code -1)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE " + "x" * 2048 + " (code -1)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE ".ljust(2048 - len(" (code -7)"), "x") + " (code -7), data: SAMPLE", "queue_rpc_unknown"),
+        (("failed to queue session message: thread/queue/add failed: SAMPLE ".ljust(2048 - len(" (code -7)"), "x") + " (code -7) actual (code -9)").encode(), "queue_rpc_unknown"),
+        ("failed to queue session message: thread/read failed: SAMPLE (code -1)", "other"),
+        ("unrelated SAMPLE: thread/queue/add failed: SAMPLE (code -1)", "other"),
+        ("unrelated SAMPLE\nfailed to queue session message: thread/queue/add failed: SAMPLE (code -1)", "other"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE thread/queue/add transport error: SAMPLE (code -7)", "queue_rpc_-7"),
+        (f"failed to queue session message: thread/queue/add failed: usage: SAMPLE {_DIAGNOSTIC_FIXTURE_PATH}/秘密 (code -9)", "queue_rpc_-9"),
     ),
 )
 def test_queue_error_chain_logs_only_fixed_stage_and_bounded_code(
@@ -1771,43 +1886,43 @@ def test_queue_error_chain_logs_only_fixed_stage_and_bounded_code(
 ) -> None:
     test_nonzero_exit_logs_safe_stderr_category_and_retains_fence(
         tmp_path, monkeypatch, caplog, stderr, category,
-        ("SECRET", "C:/private", "秘密", "thread/queue/add", "failed to queue", "data:", "x" * 100),
+        ("SAMPLE", _DIAGNOSTIC_FIXTURE_PATH, "秘密", "thread/queue/add", "failed to queue", "data:", "x" * 100),
     )
 
 
 @pytest.mark.parametrize(
     ("stderr", "category"),
     (
-        (b"failed to queue session message: thread/queue/add failed: SECRET (code -32000)", "queue_rpc_-32000"),
-        (b"failed to queue session message: thread/queue/add transport error: SECRET", "queue_transport"),
-        (b"failed to queue session message: thread/queue/add response decode error: SECRET", "queue_decode"),
+        (b"failed to queue session message: thread/queue/add failed: SAMPLE (code -32000)", "queue_rpc_-32000"),
+        (b"failed to queue session message: thread/queue/add transport error: SAMPLE", "queue_transport"),
+        (b"failed to queue session message: thread/queue/add response decode error: SAMPLE", "queue_decode"),
     ),
 )
 def test_queue_error_chain_timeout_preserves_cleanup_and_ambiguous_result(caplog, stderr, category) -> None:
     test_timeout_logs_pre_cleanup_exit_and_safe_partial_stderr(
-        caplog, 1, stderr, category, ("SECRET", "thread/queue/add", "failed to queue"),
+        caplog, 1, stderr, category, ("SAMPLE", "thread/queue/add", "failed to queue"),
     )
 
 
 @pytest.mark.parametrize(
     ("stderr", "category", "outer", "wrapper", "method", "sample", "lines", "prefix"),
     (
-        ("Error: failed to find Codex home: SECRET", "other", "home", "absent", "absent", "complete", "single", "plain"),
-        (b"Error: failed to load config.toml: SECRET C:/private/\xff", "other", "config", "absent", "absent", "complete", "single", "plain"),
-        ("Error: cannot queue through an embedded app server while a local app-server daemon is running; remove configuration overrides or use --remote: SECRET", "other", "embedded_conflict", "absent", "absent", "complete", "single", "plain"),
-        ("Error: the local app-server daemon does not support thread/queue/add; update or restart the local app-server daemon: failed to queue session message: thread/queue/add failed: SECRET (code -32601)", "queue_rpc_-32601", "unsupported_local", "present", "present", "complete", "single", "plain"),
-        ("Error: the remote app server does not support thread/queue/add; update or restart the remote app server: failed to queue session message: thread/queue/add failed: SECRET (code -32600)", "queue_rpc_-32600", "unsupported_remote", "present", "present", "complete", "single", "plain"),
-        ("the local app-server daemon does not support thread/queue/add; update or restart the local app-server daemon: unrelated SECRET", "other", "unsupported_local", "absent", "present", "complete", "single", "plain"),
-        ("the local app-server daemon does not support thread/queue/add; update or restart the local app-server daemon: failed to queue session message: thread/read failed: SECRET (code -1)", "other", "unsupported_local", "present", "present", "complete", "single", "plain"),
-        ("the local app-server daemon does not support thread/queue/add; update or restart the remote app server: failed to queue session message: thread/queue/add failed: SECRET (code -1)", "other", "unknown", "present", "present", "complete", "single", "plain"),
-        ("failed to queue session message: thread/queue/add failed: SECRET the remote app server does not support thread/queue/add; update or restart the remote app server: forged (code -7)", "queue_rpc_-7", "unknown", "present", "present", "complete", "single", "plain"),
-        ("SECRET warning\nError: failed to queue session message: thread/queue/add failed: SECRET (code -7)\n", "other", "unknown", "present", "present", "complete", "multiple", "plain"),
-        ("\x1b[31mError: failed to queue session message: thread/queue/add failed: SECRET (code -7)\x1b[0m", "other", "unknown", "present", "present", "complete", "single", "ansi"),
-        (b"Error: failed to queue session message\n\nCaused by:\n    thread/queue/add failed: SECRET (code -7)\n", "queue_rpc_-7", "unknown", "present", "present", "complete", "multiple", "plain"),
-        ("SECRET" + "x" * 2048 + "failed to queue session message thread/queue/add", "other", "unknown", "absent", "absent", "truncated", "single", "plain"),
-        ("failed to queue session message: thread/queue/add failed: SECRET " + "x" * 2048, "queue_rpc_unknown", "unknown", "present", "present", "truncated", "single", "plain"),
-        ("Error: failed to queue session message: thread/read failed: SECRET (code -1)", "other", "unknown", "present", "absent", "complete", "single", "plain"),
-        ("SECRET C:/private/秘密", "other", "unknown", "absent", "absent", "complete", "single", "plain"),
+        ("Error: failed to find Codex home: SAMPLE", "other", "home", "absent", "absent", "complete", "single", "plain"),
+        (f"Error: failed to load config.toml: SAMPLE {_DIAGNOSTIC_FIXTURE_PATH}/".encode("ascii") + b"\xff", "other", "config", "absent", "absent", "complete", "single", "plain"),
+        ("Error: cannot queue through an embedded app server while a local app-server daemon is running; remove configuration overrides or use --remote: SAMPLE", "other", "embedded_conflict", "absent", "absent", "complete", "single", "plain"),
+        ("Error: the local app-server daemon does not support thread/queue/add; update or restart the local app-server daemon: failed to queue session message: thread/queue/add failed: SAMPLE (code -32601)", "queue_rpc_-32601", "unsupported_local", "present", "present", "complete", "single", "plain"),
+        ("Error: the remote app server does not support thread/queue/add; update or restart the remote app server: failed to queue session message: thread/queue/add failed: SAMPLE (code -32600)", "queue_rpc_-32600", "unsupported_remote", "present", "present", "complete", "single", "plain"),
+        ("the local app-server daemon does not support thread/queue/add; update or restart the local app-server daemon: unrelated SAMPLE", "other", "unsupported_local", "absent", "present", "complete", "single", "plain"),
+        ("the local app-server daemon does not support thread/queue/add; update or restart the local app-server daemon: failed to queue session message: thread/read failed: SAMPLE (code -1)", "other", "unsupported_local", "present", "present", "complete", "single", "plain"),
+        ("the local app-server daemon does not support thread/queue/add; update or restart the remote app server: failed to queue session message: thread/queue/add failed: SAMPLE (code -1)", "other", "unknown", "present", "present", "complete", "single", "plain"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE the remote app server does not support thread/queue/add; update or restart the remote app server: forged (code -7)", "queue_rpc_-7", "unknown", "present", "present", "complete", "single", "plain"),
+        ("SAMPLE warning\nError: failed to queue session message: thread/queue/add failed: SAMPLE (code -7)\n", "other", "unknown", "present", "present", "complete", "multiple", "plain"),
+        ("\x1b[31mError: failed to queue session message: thread/queue/add failed: SAMPLE (code -7)\x1b[0m", "other", "unknown", "present", "present", "complete", "single", "ansi"),
+        (b"Error: failed to queue session message\n\nCaused by:\n    thread/queue/add failed: SAMPLE (code -7)\n", "queue_rpc_-7", "unknown", "present", "present", "complete", "multiple", "plain"),
+        ("SAMPLE" + "x" * 2048 + "failed to queue session message thread/queue/add", "other", "unknown", "absent", "absent", "truncated", "single", "plain"),
+        ("failed to queue session message: thread/queue/add failed: SAMPLE " + "x" * 2048, "queue_rpc_unknown", "unknown", "present", "present", "truncated", "single", "plain"),
+        ("Error: failed to queue session message: thread/read failed: SAMPLE (code -1)", "other", "unknown", "present", "absent", "complete", "single", "plain"),
+        (f"SAMPLE {_DIAGNOSTIC_FIXTURE_PATH}/秘密", "other", "unknown", "absent", "absent", "complete", "single", "plain"),
     ),
 )
 def test_queue_stderr_structure_keeps_full_nonzero_fence_and_privacy(
@@ -1815,7 +1930,7 @@ def test_queue_stderr_structure_keeps_full_nonzero_fence_and_privacy(
 ) -> None:
     test_nonzero_exit_logs_safe_stderr_category_and_retains_fence(
         tmp_path, monkeypatch, caplog, stderr, category,
-        ("SECRET", "C:/private", "秘密", "thread/queue/add", "failed to queue", "x" * 100),
+        ("SAMPLE", _DIAGNOSTIC_FIXTURE_PATH, "秘密", "thread/queue/add", "failed to queue", "x" * 100),
     )
     message = next(record.getMessage() for record in caplog.records
                    if record.getMessage().startswith("codex_relay_wake_stderr delivery_ref="))
@@ -1834,18 +1949,21 @@ def test_queue_stderr_structure_empty_preserves_timeout_cleanup(caplog, stderr) 
 def test_queue_stderr_structure_hostile_extraction_keeps_full_nonzero_fence(
     tmp_path, monkeypatch, caplog,
 ) -> None:
+    fixture_path = tmp_path / "glyph"
+    tail = "秘密"
+
     class Hostile(str):
         slices = 0
 
         def __getitem__(self, _):
             self.slices += 1
             if self.slices > 1:
-                raise RuntimeError("SECRET C:/private/秘密")
-            return "SECRET"
+                raise RuntimeError(f"SAMPLE {fixture_path / tail}")
+            return "SAMPLE"
 
-    stderr = Hostile("SECRET")
+    stderr = Hostile("SAMPLE")
     test_nonzero_exit_logs_safe_stderr_category_and_retains_fence(
-        tmp_path, monkeypatch, caplog, stderr, "other", ("SECRET", "C:/private", "秘密"),
+        tmp_path, monkeypatch, caplog, stderr, "other", ("SAMPLE", str(fixture_path), tail),
     )
     assert stderr.slices == 2
     assert any(record.getMessage().endswith("structure=unknown") for record in caplog.records)
@@ -1856,10 +1974,10 @@ def test_interleaved_wake_logs_correlate_without_free_form_identifiers(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    session = "session-secret-C:/private/token-é-" + "x" * 200
+    session = f"session-sample-{_DIAGNOSTIC_FIXTURE_PATH}-é-" + "x" * 200
     containers = (
-        "git:example.test/private-one-秘密-SECRET_ONE",
-        "C:/private/two/秘密/SECRET_TWO",
+        "git:example.test/fixture-one-秘密-SAMPLE_ONE",
+        f"{_DIAGNOSTIC_FIXTURE_PATH}/two/秘密/SAMPLE_TWO",
     )
     deliveries = (
         "relay-delivery-" + "a" * 32,
@@ -1915,7 +2033,7 @@ def test_interleaved_wake_logs_correlate_without_free_form_identifiers(
     assert session not in combined
     assert containers[0] not in combined
     assert containers[1] not in combined
-    assert "SECRET" not in combined
+    assert "SAMPLE" not in combined
     assert unreachable == []
     assert codex_wake._scheduled_delivery_ids == set(deliveries)
     assert isolated_codex_registry.reserved("relay-session-" + "a" * 32)
@@ -1933,16 +2051,43 @@ def test_missing_or_non_directory_neutral_cwd_does_not_spawn(monkeypatch, tmp_pa
         assert codex_wake._launch("target-session", "wake") == "failed"
     run.assert_not_called()
 
-@pytest.mark.parametrize("cwd", [r"\\server\share\.codex", r"\\?\C:\.codex", r"\\.\C:\.codex"])
-def test_windows_unsafe_neutral_cwd_does_not_spawn(monkeypatch, tmp_path, cwd) -> None:
-    monkeypatch.setattr(codex_wake.os, "name", "nt")
-    home = tmp_path / "home"
-    home.mkdir()
+# Only the synthetic roots carry Windows path grammar.
+@pytest.mark.parametrize("root", ["//fixture.invalid/share", "//?/Z:/", "//./Z:/"], ids=["unc", "extended", "device"])
+def test_windows_unsafe_neutral_cwd_does_not_spawn(monkeypatch, root) -> None:
+    import ntpath
+    from pathlib import PureWindowsPath
+
+    home = PureWindowsPath("Z:/fixture-home")
+    candidate = home / ".codex"
+    service_cwd = PureWindowsPath("Z:/service-checkout")
+    target = PureWindowsPath(root) / home.name / ".codex"
+    monkeypatch.setattr(codex_wake, "os", SimpleNamespace(name="nt", path=ntpath))
+    monkeypatch.setattr(codex_wake, "_windows_drive_is_local", lambda _: True)
     monkeypatch.setattr(codex_wake.Path, "home", classmethod(lambda cls: home))
-    monkeypatch.setattr(codex_wake.Path, "resolve", lambda self: type(self)(cwd))
-    with patch("app.codex_wake.subprocess.run") as run:
-        assert codex_wake._launch("target-session", "wake") == "failed"
-    run.assert_not_called()
+    monkeypatch.setattr(codex_wake.Path, "cwd", classmethod(lambda cls: service_cwd))
+    monkeypatch.setattr(
+        PureWindowsPath, "resolve", lambda path: target if path == candidate else path,
+        raising=False,
+    )
+
+    is_local = codex_wake._is_local_absolute_path
+    checks = []
+
+    def check_local(path):
+        accepted = is_local(path)
+        checks.append((path, accepted))
+        return accepted
+
+    monkeypatch.setattr(codex_wake, "_is_local_absolute_path", check_local)
+    with patch.object(codex_wake, "_popen") as popen:
+        assert codex_wake._start_launch("target-session", "wake") == (
+            None, ("failed", "invalid_codex_home", None),
+        )
+
+    assert target.is_absolute()
+    assert checks == [(candidate, True), (target, False)]
+    assert checks[1][0] is target
+    popen.assert_not_called()
 
 
 def test_windows_remote_drive_neutral_cwd_does_not_spawn(monkeypatch, tmp_path) -> None:
@@ -2041,7 +2186,7 @@ def test_thread_start_failure_releases_reservation(
 def test_alias_and_exact_selectors_start_one_child() -> None:
     with patch("app.codex_wake.threading.Thread") as thread:
         _schedule(_delivery())
-        _schedule({**_delivery("delivery-2"), "recipient": "codex:@relaydev"})
+        _schedule({**_delivery("delivery-2"), "recipient": "codex:@fixture-peer"})
     assert thread.call_count == 1
 
 
@@ -2125,8 +2270,8 @@ def test_recovery_log_correlates_without_free_form_identifiers(
     from core.claude_wake import ClaudeWakeRegistry
 
     delivery_id = "relay-delivery-" + "c" * 32
-    session_ref = "session-C:/private/SECRET-é-" + "x" * 2048
-    container_ref = "git:example.test/private\r\nSECRET\ud800"
+    session_ref = f"session-{_DIAGNOSTIC_FIXTURE_PATH}/SAMPLE-é-" + "x" * 2048
+    container_ref = "git:example.test/fixture\r\nSAMPLE\ud800"
     candidate = {
         "delivery_id": delivery_id,
         "recipient_endpoint_id": "relay-session-" + "d" * 32,
@@ -2169,7 +2314,7 @@ def test_recovery_log_correlates_without_free_form_identifiers(
     assert f"container_fp={_log_fp(container_ref)}" in message
     assert session_ref not in message
     assert container_ref not in message
-    assert "SECRET" not in message
+    assert "SAMPLE" not in message
     assert len(scheduled) == 1
 
 
@@ -2548,6 +2693,7 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     workers = []
@@ -2837,7 +2983,7 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
         for worker in workers:
             worker.join(2)
             assert not worker.is_alive(), "reply wake worker did not finish"
-        service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+        client.app.state.relay_trace_writer._executor.submit(lambda: None).result(timeout=2)
 
     monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", capture_schedule)
     assert client.post(
@@ -2889,6 +3035,7 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     storage = client.app.state.pallium_service._storage
@@ -3358,6 +3505,7 @@ def test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract(client, 
     app.include_router(build_router(
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     with patch("app.dependencies.schedule_codex_relay_wake") as schedule:
@@ -3481,6 +3629,7 @@ def test_build_router_normalizes_endpoint_send_for_codex_wake(client) -> None:
     app.include_router(build_router(
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     target_scope = {"container_ref": "git:example.test/target"}
@@ -3507,6 +3656,7 @@ def test_ack_rearm_after_scope_transition_uses_live_container_and_historical_del
     app.include_router(build_router(
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     old = {"container_ref": "git:example.test/wake-old"}
@@ -3769,13 +3919,14 @@ def test_relay_turn_logs_safe_failure_category(client, caplog, monkeypatch, fail
     from core.errors import ImmediateTransactionBusyError
     from core.relay import RelayConflictError, RelayNotFoundError
 
-    private = "private payload-token marker"
+    note = "fixture-note-alpha"
+    session_ref = "fixture-session-alpha"
     error = {
-        "conflict": RelayConflictError(private), "busy": ImmediateTransactionBusyError(private),
-        "missing": RelayNotFoundError(private), "invalid": ValueError(private),
-        "http": HTTPException(418, detail={"private": private}), "unexpected": RuntimeError(private),
-        "expiry_lookalike": RelayConflictError("Relay claim request expired: " + private),
-        "http_conflict": HTTPException(409, detail={"reason": "Relay claim request expired", "private": private}),
+        "conflict": RelayConflictError(note), "busy": ImmediateTransactionBusyError(note),
+        "missing": RelayNotFoundError(note), "invalid": ValueError(note),
+        "http": HTTPException(418, detail={"fixture-note": note}), "unexpected": RuntimeError(note),
+        "expiry_lookalike": RelayConflictError("Relay claim request expired: " + note),
+        "http_conflict": HTTPException(409, detail={"reason": "Relay claim request expired", "fixture-note": note}),
     }[failure]
     relay = RelayService(client.app.state.pallium_service._storage)
 
@@ -3787,7 +3938,7 @@ def test_relay_turn_logs_safe_failure_category(client, caplog, monkeypatch, fail
     app.include_router(create_router(client.app.state.pallium_service, relay_service=relay))
     caplog.set_level(logging.INFO, logger="api.routes")
     delivery_id = "relay-delivery-" + "e" * 32
-    body = {"runtime": "codex", "session_ref": "private-session", "wake_delivery_id": delivery_id, **SCOPE}
+    body = {"runtime": "codex", "session_ref": session_ref, "wake_delivery_id": delivery_id, **SCOPE}
     with TestClient(app) as route:
         if status is None:
             with pytest.raises(RuntimeError) as observed:
@@ -3797,9 +3948,9 @@ def test_relay_turn_logs_safe_failure_category(client, caplog, monkeypatch, fail
             response = route.post("/relay/turn", json=body)
             assert response.status_code == status
             if failure in {"conflict", "invalid"}:
-                assert response.json() == {"detail": private}
+                assert response.json() == {"detail": note}
             elif failure == "expiry_lookalike":
-                assert response.json() == {"detail": "Relay claim request expired: " + private}
+                assert response.json() == {"detail": "Relay claim request expired: " + note}
             elif failure in {"http", "http_conflict"}:
                 assert response.json() == {"detail": error.detail}
             elif failure == "busy":
@@ -3810,7 +3961,7 @@ def test_relay_turn_logs_safe_failure_category(client, caplog, monkeypatch, fail
     assert fields["error_status"] == (str(status) if status is not None else "none")
     assert fields["error_category"] == category
     assert int(fields["worker_start_ms"]) >= 0 and int(fields["snapshot_ms"]) >= 0
-    assert private not in records[0] and "private-session" not in records[0]
+    assert note not in records[0] and session_ref not in records[0]
     assert SCOPE["container_ref"] not in records[0]
 
 
@@ -3844,6 +3995,7 @@ def test_relay_turn_logs_failure_before_worker_entry(client, caplog, failure):
 
 
 def test_relay_turn_logs_actual_expiry_without_claim_then_preserves_delivery_lifecycle(client, caplog):
+    payload = "fixture-message-beta"
     endpoints = {}
     for session in ("metadata-sender", "metadata-target"):
         response = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE})
@@ -3851,7 +4003,7 @@ def test_relay_turn_logs_actual_expiry_without_claim_then_preserves_delivery_lif
         endpoints[session] = response.json()["session"]["endpoint_id"]
     message = client.post("/relay/messages", json={"sender_runtime": "codex",
         "sender_session_ref": "metadata-sender", "recipient": endpoints["metadata-target"],
-        "payload": "private payload-token marker", **SCOPE})
+        "payload": payload, **SCOPE})
     assert message.status_code == 200, message.text
     message_id = message.json()["message_id"]
     delivery_id = message.json()["deliveries"][0]["delivery_id"]
@@ -3867,11 +4019,11 @@ def test_relay_turn_logs_actual_expiry_without_claim_then_preserves_delivery_lif
     assert after == before and after["state"] == "pending" and after["attempts"] == 0
     records = [r.getMessage() for r in caplog.records if r.getMessage().startswith("relay_turn_timing")]
     assert len(records) == 1 and records[0].endswith("error_status=409 error_category=claim_expired")
-    assert "private payload-token marker" not in records[0] and SCOPE["container_ref"] not in records[0]
+    assert payload not in records[0] and SCOPE["container_ref"] not in records[0]
     fresh = client.post("/relay/turn", json=body)
     assert fresh.status_code == 200, fresh.text
     claim, = fresh.json()["deliveries"]
-    assert claim["delivery_id"] == delivery_id and claim["payload"] == "private payload-token marker"
+    assert claim["delivery_id"] == delivery_id and claim["payload"] == payload
     ack = client.post("/relay/deliveries/ack", json={"delivery_id": delivery_id,
         "claim_token": claim["claim_token"], **SCOPE})
     assert ack.status_code == 200, ack.text
@@ -3960,6 +4112,7 @@ def test_build_router_turn_never_releases_actual_codex_wake_state(client, monkey
         app.include_router(build_router(
             client.app.state.pallium_service,
             relay_storage=client.app.state.pallium_service._storage,
+            relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
         ))
         route = TestClient(app)
         assert route.post("/relay/turn", json={"runtime": "bad", "session_ref": "target-session", **SCOPE}).status_code == 422
@@ -4055,6 +4208,7 @@ def test_idempotent_send_schedules_one_codex_wake(client, monkeypatch) -> None:
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     assert route.post(
@@ -4096,6 +4250,7 @@ def test_exclusive_trial_endpoint_suppresses_send_and_recovery_native_wake(clien
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/exclusive-trial"}
@@ -4122,7 +4277,7 @@ def test_exclusive_trial_endpoint_suppresses_send_and_recovery_native_wake(clien
             db.execute(text(statement), {"endpoint": trial_endpoint})
     elif authority_state == "read-error":
         def failed_authority_read(_self, _endpoint):
-            raise OSError("private storage detail")
+            raise OSError("fixture-read-error")
         monkeypatch.setattr(RelayService, "codex_trial_native_suppressed", failed_authority_read)
     with patch("app.dependencies.schedule_codex_relay_wake") as schedule:
         sent = route.post("/relay/messages", json={
@@ -4152,7 +4307,7 @@ def test_exclusive_trial_install_waits_for_inflight_native_reservation(client, m
     registry = _sqlite_wake_registry(storage)
     app = FastAPI()
     app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
-                                    codex_wake_registry=registry))
+                                    codex_wake_registry=registry, relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event)))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/trial-install-race"}
     for runtime, session in (("claude-code", "sender"), ("codex", "target")):
@@ -4213,21 +4368,31 @@ def test_exclusive_trial_install_waits_for_inflight_native_reservation(client, m
 
 
 @pytest.mark.parametrize("durable", [False, True])
-def test_exclusive_trial_binding_and_spend_survive_restart_and_later_delivery(client, durable) -> None:
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_exclusive_trial_binding_and_spend_survive_restart_and_later_delivery(
+    client, durable, relay_admission_clock,
+) -> None:
+    from storage import sqlite_queue
+
     storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
     registry = _sqlite_wake_registry(storage)
     app = FastAPI()
     app.include_router(build_router(
         client.app.state.pallium_service, relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/trial-spent"}
-    for runtime, session in (("claude-code", "sender"), ("codex", "target")):
-        assert route.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}).status_code == 200
-    endpoint = route.post("/relay/turn", json={
-        "runtime": "codex", "session_ref": "target", **scope,
-    }).json()["session"]["endpoint_id"]
+    with relay_admission_clock(storage, expected_admissions=3):
+        for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+            assert route.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}).status_code == 200
+        endpoint = route.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target", **scope,
+        }).json()["session"]["endpoint_id"]
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
     relay = RelayService(storage)
     assert relay.enroll_codex_trial(
         endpoint_id=endpoint, session_ref="target", container_ref=scope["container_ref"],
@@ -4259,22 +4424,29 @@ def test_exclusive_trial_binding_and_spend_survive_restart_and_later_delivery(cl
     )
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("changed_before", ["bind", "spend"])
 @pytest.mark.parametrize("change", ["closed", "expired"])
 def test_exclusive_trial_rejects_stale_endpoint_or_delivery_before_native_action(
-    client, changed_before, change,
+    client, changed_before, change, relay_admission_clock,
 ) -> None:
+    from storage import sqlite_queue
+
     storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
     relay = RelayService(storage)
     app = FastAPI()
-    app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage))
+    app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage, relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event)))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/trial-closed"}
-    for runtime, session in (("claude-code", "sender"), ("codex", "target")):
-        assert route.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}).status_code == 200
-    endpoint = route.post("/relay/turn", json={
-        "runtime": "codex", "session_ref": "target", **scope,
-    }).json()["session"]["endpoint_id"]
+    with relay_admission_clock(storage, expected_admissions=3):
+        for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+            assert route.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}).status_code == 200
+        endpoint = route.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target", **scope,
+        }).json()["session"]["endpoint_id"]
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
     assert relay.enroll_codex_trial(
         endpoint_id=endpoint, session_ref="target", container_ref=scope["container_ref"],
         trial_id="closed-trial",
@@ -4313,7 +4485,7 @@ def test_exclusive_trial_rejects_endpoint_scope_generation_aba_before_action(cli
     storage = client.app.state.pallium_service._storage
     relay = RelayService(storage)
     app = FastAPI()
-    app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage))
+    app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage, relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event)))
     route = TestClient(app)
     old = {"container_ref": "git:example.test/trial-aba-old"}
     new = {"container_ref": "git:example.test/trial-aba-new"}
@@ -4346,6 +4518,105 @@ def test_exclusive_trial_rejects_endpoint_scope_generation_aba_before_action(cli
     assert returned.status_code == 200
     assert returned.json()["session"]["scope_generation"] == 2
     assert not relay.spend_codex_trial(endpoint_id=endpoint, trial_id="aba-trial", delivery_id=delivery_id)
+
+
+def _record_recovered_hook_evidence(evidence, boundary, phase, value=None, *, timeout=None):
+    try:
+        if len(evidence) >= 32:
+            return
+        event = {"boundary": boundary, "phase": phase}
+        if phase == "exception":
+            event["category"] = next((
+                category for kind, category in (
+                    (TimeoutError, "timeout"), (AssertionError, "assertion"),
+                    (OSError, "os_error"), (ValueError, "value_error"),
+                ) if isinstance(value, kind)
+            ), "other")
+        elif phase == "response" and type(value) is int:
+            event["status"] = value
+        elif phase == "return":
+            event["kind"] = (
+                "none" if value is None else "dict" if type(value) is dict
+                else "tuple" if type(value) is tuple else "other"
+            )
+            if boundary == "lock":
+                event["acquired"] = value is not None
+            elif boundary == "state_write":
+                event["written"] = value is True
+            elif boundary == "format" and type(value) is tuple and len(value) == 2 and type(value[1]) is list:
+                event["rendered_count"] = len(value[1])
+        if type(timeout) in (int, float) and 0 <= timeout <= 60:
+            event["timeout"] = timeout
+        evidence.append(event)
+    except BaseException:
+        pass
+
+
+@contextmanager
+def _observe_recovered_hook(monkeypatch, hook, evidence):
+    def observe(original, boundary):
+        def observed(*args, **kwargs):
+            _record_recovered_hook_evidence(evidence, boundary, "entry", timeout=kwargs.get("timeout"))
+            try:
+                result = original(*args, **kwargs)
+            except BaseException as error:
+                _record_recovered_hook_evidence(evidence, boundary, "exception", error)
+                raise
+            _record_recovered_hook_evidence(evidence, boundary, "return", result)
+            return result
+        return observed
+
+    with monkeypatch.context() as spies:
+        for namespace, name, boundary in (
+            (hook, "relay_turn", "turn"), (hook, "format_relay", "format"),
+            (hook._common, "_acquire_session_lock", "lock"),
+            (hook._common, "_write_session_state_locked", "state_write"),
+        ):
+            spies.setattr(namespace, name, observe(getattr(namespace, name), boundary))
+        yield
+
+
+@pytest.mark.parametrize("recording_fails", [False, True])
+def test_recovered_hook_evidence_preserves_calls_and_restores_spies(monkeypatch, recording_fails):
+    class BrokenEvidence(list):
+        def append(self, value):
+            raise RuntimeError("fixture-recording-error")
+
+    evidence = BrokenEvidence() if recording_fails else []
+    fixture_item = "fixture-item-gamma"
+    result = {"fixture-result": fixture_item}
+    formatted = ("fixture-format-gamma", [result])
+    lock = object()
+    error = RuntimeError("fixture-turn-error")
+    turn = MagicMock(side_effect=[result, error])
+    formatting = MagicMock(return_value=formatted)
+    acquire = MagicMock(return_value=lock)
+    write = MagicMock(return_value=True)
+    hook = SimpleNamespace(relay_turn=turn, format_relay=formatting, _common=SimpleNamespace(
+        _acquire_session_lock=acquire, _write_session_state_locked=write,
+    ))
+    with pytest.raises(RuntimeError) as failure:
+        with _observe_recovered_hook(monkeypatch, hook, evidence):
+            assert hook.relay_turn(timeout=1.5) is result
+            assert hook._common._acquire_session_lock(timeout=1.5) is lock
+            assert hook._common._write_session_state_locked() is True
+            assert hook.format_relay() is formatted
+            hook.relay_turn()
+    assert failure.value is error
+    assert hook.relay_turn is turn and hook.format_relay is formatting
+    assert hook._common._acquire_session_lock is acquire
+    assert hook._common._write_session_state_locked is write
+    assert turn.call_count == 2 and all(mock.call_count == 1 for mock in (formatting, acquire, write))
+    assert "fixture-" not in repr(evidence) and fixture_item not in repr(evidence)
+    if recording_fails:
+        assert evidence == []
+    else:
+        assert {"boundary": "lock", "phase": "return", "kind": "other", "acquired": True} in evidence
+        assert {"boundary": "state_write", "phase": "return", "kind": "other", "written": True} in evidence
+        assert {"boundary": "format", "phase": "return", "kind": "tuple", "rendered_count": 1} in evidence
+        for _ in range(40):
+            _record_recovered_hook_evidence(evidence, "http_turn", "response", 200)
+        assert len(evidence) == 32
 
 
 def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
@@ -4396,6 +4667,7 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     assert route.post("/relay/turn", json={
@@ -4494,6 +4766,7 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(recovered_app)
 
@@ -4519,10 +4792,27 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
         hook, "emit_context", lambda output, _event: contexts.append(output)
     )
 
+    evidence = []
+
     def relay_request(method: str, path: str, payload: dict, *, timeout: float, deadline=None):
-        response = route.request(method, path, json=payload)
-        assert response.status_code == 200, response.text
-        return response.json() if response.content else None
+        operation = "http_other"
+        try:
+            operation = {
+                ("POST", "/relay/turn"): "http_turn",
+                ("GET", "/relay/sessions"): "http_sessions",
+                ("POST", "/relay/deliveries/ack"): "http_ack",
+            }.get((method, path), "http_other")
+        except BaseException:
+            pass
+        _record_recovered_hook_evidence(evidence, operation, "entry", timeout=timeout)
+        try:
+            response = route.request(method, path, json=payload)
+            _record_recovered_hook_evidence(evidence, operation, "response", response.status_code)
+            assert response.status_code == 200, response.text
+            return response.json() if response.content else None
+        except BaseException as error:
+            _record_recovered_hook_evidence(evidence, operation, "exception", error)
+            raise
 
     monkeypatch.setattr(hook, "relay_request", relay_request)
     monkeypatch.setattr(hook._common, "relay_request", relay_request)
@@ -4533,11 +4823,14 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
         "prompt": codex_wake._wake_prompt(claimed["delivery_id"]),
     })
 
-    with pytest.raises(SystemExit):
-        hook._HOOK_STARTED_AT = hook.time.monotonic()
-        hook.main()
+    with _observe_recovered_hook(monkeypatch, hook, evidence):
+        with pytest.raises(SystemExit):
+            hook._HOOK_STARTED_AT = hook.time.monotonic()
+            hook.main()
 
-    assert len(contexts) == 1 and contexts[0].count("😀") == 1500
+    assert len(contexts) == 1 and contexts[0].count("😀") == 1500, (
+        "recovered_hook_evidence=" + json.dumps(evidence, separators=(",", ":"))
+    )
     delivered = relay.message_status(
         message_id=sent["message_id"], **SCOPE
     )["deliveries"][0]
@@ -4600,6 +4893,7 @@ def test_late_exact_hook_claim_is_correlated_before_expired_wake_sweep(
     app.include_router(build_router(
         client.app.state.pallium_service, relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     for runtime, session in (("claude-code", "sender"), ("codex", "late-target")):
@@ -5193,8 +5487,8 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
     native_calls: list[tuple[str, str]] = []
 
     monkeypatch.setattr(
-        service,
-        "enqueue_relay_trace_event",
+        client.app.state.relay_trace_writer,
+        "enqueue",
         lambda writer, event: bool(writer(event)),
     )
     monkeypatch.setattr(codex_wake, "_DEBOUNCE_SECONDS", 0)
@@ -5220,6 +5514,7 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
         service,
         relay_storage=storage,
         codex_wake_registry=registry_a,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route_a = TestClient(app_a)
     scope = {"container_ref": "git:example.test/restart-link"}
@@ -5250,7 +5545,7 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
         scope,
         relay_service=relay,
         registry=registry_a,
-        trace_callback=lambda event: service.enqueue_relay_trace_event(
+        trace_callback=lambda event: client.app.state.relay_trace_writer.enqueue(
             relay.record_trace_event, event
         ),
     ) is None
@@ -5285,6 +5580,7 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
         service,
         relay_storage=storage,
         codex_wake_registry=registry_b,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route_b = TestClient(app_b)
     if round_trip_scope:
@@ -5319,7 +5615,7 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
         relay,
         ClaudeWakeRegistry(),
         codex_registry=registry_b,
-        trace_callback=lambda event: service.enqueue_relay_trace_event(
+        trace_callback=lambda event: client.app.state.relay_trace_writer.enqueue(
             relay.record_trace_event, event
         ),
     )
@@ -5368,6 +5664,7 @@ def test_http_repeat_ack_mcp_ack_and_atomic_reply_release_exact_codex_reservatio
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
         codex_wake_registry=isolated_codex_registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/ack-release"}
@@ -5466,6 +5763,7 @@ def test_expired_atomic_reply_keeps_exact_codex_activation_reservation(
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
         codex_wake_registry=isolated_codex_registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     scope = {"container_ref": "git:example.test/expired-reply-fence"}
@@ -5537,6 +5835,7 @@ def _public_ack_route(client, runtime: str):
         relay_storage=client.app.state.pallium_service._storage,
         claude_wake_registry=claude_registry,
         codex_wake_registry=codex_registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     claim_app = FastAPI()
@@ -5559,8 +5858,8 @@ def _public_ack_route(client, runtime: str):
     if runtime == "claude-code":
         assert claude_registry.register(
             runtime="claude-code", session_ref="target",
-            container_ref=scope["container_ref"], socket_path="socket",
-            token="token", idle=True,
+            container_ref=scope["container_ref"], socket_path="fixture-socket",
+            token="fixture-handshake", idle=True,
         )
     registry = codex_registry if runtime == "codex" else claude_registry
     return route, claim_route, scope, source_runtime, endpoint_id, registry
@@ -5990,6 +6289,7 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     source = {"container_ref": "git:example.test/scope-source"}
@@ -6146,6 +6446,7 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=restarted,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     status = TestClient(read_app).get(
         f"/relay/messages/{sent['message_id']}", params=source,
@@ -6313,6 +6614,7 @@ def test_ordinary_and_mismatched_claims_keep_unrelated_wake_fences(
         client.app.state.pallium_service,
         relay_storage=storage,
         codex_wake_registry=isolated_codex_registry,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     for runtime, session in (
@@ -6433,6 +6735,7 @@ def test_old_inflight_claim_generation_cannot_unlock_replacement(
         relay_storage=storage,
         codex_wake_registry=registry,
         relay_runner=relay_runner,
+        relay_trace_enqueue=lambda writer, event: client.app.state.relay_trace_writer.enqueue(writer, event),
     ))
     route = TestClient(app)
     for runtime, session in (("claude-code", "sender"), ("codex", "target")):

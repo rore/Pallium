@@ -1073,7 +1073,7 @@ server.main()
         service.stop()
         assert not service.thread.is_alive() and not service.unresolved
         assert service.grant is None
-        client.app.state.pallium_service.close()
+        client.app.state._close_constructed()
         storage.close()
 
 
