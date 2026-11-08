@@ -3,7 +3,7 @@
 <!-- agent-workflow:start -->
 **Outcome:** Explain and fix the causes of accumulating waiting deliveries and repeated queue-summary timeouts without disrupting the user's installed environment.
 
-**Target:** OpenCode Relay binding lookup in `storage/sqlite_relay.py` and its HTTP coverage in `tests/test_opencode_relay_wake_e2e.py`.
+**Target:** The replacement-budget fixture in `tests/test_codex_retained_connection_recovery.py`.
 
 **Scope:** Bounded diagnosis from existing source/logs and safe read-only evidence; distinguish summary query cost from shared service/storage contention and delivery lifecycle failures. Implement the smallest supported root-cause correction with observable caller-surface coverage. Coordinate with the existing Codex reconnect patch owner and reuse its evidence without overlapping or duplicating that qualification. Preserve the separate Hermes parity checkpoint.
 
@@ -27,27 +27,34 @@
 
 **Material assumptions:** The endpoint key and child-row relationships support one joined read. A lower SELECT count establishes query cost for this lookup. Installed response time and recovery need separate evidence.
 
-**Plan:** Use one SQLite SELECT with outer joins for the binding lookup. Preserve ORM row identity, missing-row handling, validation order, both existing transactions, enrollment and lease checks, and claim and receipt behavior. Keep the binding implementation and its regression coverage in the two named files. In `tests/test_relay_shadow_snapshot.py`, apply the counted fixture only to the initial HTTP registration. In `tests/test_codex_wake_lifecycle.py`, apply it only to the two initial direct registrations in each offline upgrade case. Restore native timing before the behavior under test. Return material composition drift to review.
+**Plan:** Retain the accepted binding implementation and its verification. Add bounded monotonic phase observations at the existing replacement-budget fault, client construction, recovery, reconnect and close boundaries. Include the observed phases when the existing worker-stop assertion fails. Preserve its one-second join, stop predicate, protocol calls and cleanup. Keep the fixture changes within the existing test.
 
 **Verification plan:**
 - Verify one SELECT per binding through HTTP enrollment, poll, stale snapshot, exact claim, ACK, and response replay.
 - Verify missing and mismatched bindings and preserve the 404 precedence over a stale scope generation.
 - Verify the exact proposed tree through ordinary full Linux CI, Windows smoke, and governance. Verify the changed cases in the Linux results and keep full Windows and installed qualification separate.
+- Replacement-budget phase output → run the existing parameter through the full Windows 3.12 and 3.13 jobs and inspect its JUnit outcome and diagnostic output at the original assertion.
 
-**Plan review:** Agent technical review: Independent review of the OpenCode binding plan, prerequisite scopes, and exact composition.
+**Plan review:** Agent technical review: Independent review accepted the narrow phase-observation plan. Source review and runtime verification are separate from the accepted binding result.
 
 **Approvals:** Approved by user 2026-11-05: "Approve the exact isolated plan". This approval covers the original two-file binding plan and its isolated verification. On 2026-11-06 the task owner accepted the completed binding result for merge with ordinary PR CI. Full Windows qualification remains separate for rollout.
 
+Task-owner approval covers the reviewed test-only phase instrumentation and ordinary isolated verification. Production, installed and trust changes require separate authorization.
+
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Verification status
 
-[Ordinary PR CI](https://github.com/rore/Pallium/actions/runs/42207728386/attempts/2) passed on Linux 3.12 and 3.13, including all 11 binding and fixture cases in each lane. Windows smoke and [governance](https://github.com/rore/Pallium/actions/runs/42207728338) also passed. Full Windows and installed behavior and performance remain unverified. The persistence checkpoint is pending.
+The binding change merged in [PR #395](https://github.com/rore/Pallium/pull/395) after ordinary CI and its persistence checkpoint passed. The [post-merge Windows 3.12 retry](https://github.com/rore/Pallium/actions/runs/42263229677/attempts/2) still failed the worker-stop assertion. The phase-observation fixture has no execution result. Its ordinary CI, full Windows jobs and independent result review are pending. Phase observations may perturb timing and do not establish the cause of a worker delay. Installed behavior and performance remain unverified.
 
-## Result review
+## Phase source review
+
+Independent source review on 2026-11-08 accepted test blob `0650e114e229641f815f54f5fe00644337da2fa7`. The bounded failure-only observations preserve the original assertions, event and thread behavior, and worker cleanup. Runtime, full Windows and completed-result verification remain pending.
+
+## Accepted binding result review
 
 Agent technical review: Independent result review of the [OpenCode binding change](https://github.com/rore/Pallium/pull/395) on 2026-11-06.
 Reviewed revision: `8b81c8833abb69f93eb02f7b5cf6008554d9ad6c` with merge preview `8d5408da67603eefbda36fa6413e78158e389af2`.

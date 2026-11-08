@@ -118,6 +118,9 @@ async def test_actual_mcp_idle_recovers_same_epoch_enrollment_without_replay(
 async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
     retained, monkeypatch, idle_result,
 ):
+    from collections import deque
+    from time import monotonic
+
     from app import codex_bridge_pipe as bridge
     from app.mcp import codex_desktop_bridge as lifecycle
     from tests.test_codex_worker_reconnect import _protocol_server, _actual_status
@@ -136,6 +139,13 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
     replacement_fault = idle_result.removeprefix("replacement-")
     replacement_recovers = replacement_fault in {"deadline", "transport-failed"}
     expected_clients = 3 if replacement_recovers else 2
+    observe_budget = idle_result == "replacement-budget"
+    phases = deque(maxlen=16)
+
+    def phase(label, client_index=None):
+        if observe_budget:
+            phases.append((label, client_index, monotonic()))
+
     if replacement_failure:
         monkeypatch.setattr(lifecycle, "RECONNECT_INITIAL_BACKOFF_SECONDS", .001)
         if replacement_fault == "exhaustion":
@@ -149,7 +159,11 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
             super().__init__(*args, **kwargs)
             workers.append(self)
         def _recover_if_gone(self, *args, **kwargs):
-            result = super()._recover_if_gone(*args, **kwargs)
+            phase("recovery-enter")
+            try:
+                result = super()._recover_if_gone(*args, **kwargs)
+            finally:
+                phase("recovery-exit")
             if result[1]:
                 recoveries.append(result)
                 recovery_completed.set()
@@ -157,6 +171,12 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                   and len(registrations) == 2):
                 replacement_observed.set()
             return result
+        def _auto_reconnect(self, *args, **kwargs):
+            phase("reconnect-enter")
+            try:
+                return super()._auto_reconnect(*args, **kwargs)
+            finally:
+                phase("reconnect-exit")
 
     monkeypatch.setattr(lifecycle, "InventoryWorker", Worker)
 
@@ -185,6 +205,7 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                         clients[-1].source.gone = True
                     elif replacement_fault == "stop":
                         workers[0].stop_event.set()
+                    phase("replacement-ready-fault", self.index)
                     raise bridge.ShadowUnavailable(
                         "invalid-response" if replacement_fault == "terminal"
                         else "transport-failed" if replacement_fault == "transport-failed" else "deadline")
@@ -204,6 +225,7 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                     category = (idle_result if idle_result in {"peer-mismatch", "invalid-response"}
                                 else "deadline" if idle_result == "resolved-deadline"
                                 else "transport-failed")
+                    phase("original-ready-fault", self.index)
                     raise bridge.ShadowUnavailable(category)
             if value["verb"] == "register" and registrations and idle_result == "admission-register-failure":
                 raise bridge.ShadowUnavailable("transport-failed")
@@ -219,6 +241,7 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                     "sequence": value["sequence"]}
         def close(self):
             # The inherited loop EOF proof independently verifies this exact cleanup.
+            phase("close-enter", self.index)
             self.closed = True
             service._drop()
             disposed.set()
@@ -245,8 +268,10 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                 clients[0].continuity = "b" * 64
             elif idle_result == "dispose-unresolved":
                 self.unresolved = True
+            phase("close-exit", self.index)
 
     def native(path, stop, *, retained):
+        phase("construct-enter", len(clients))
         client = object.__new__(native_type)
         client.w, client.sid = service.w, service.sid
         client.bootstrap_path, client.manifest = path, dict(manifest)
@@ -261,6 +286,7 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
         client.continuity, client.unresolved = None, False
         source_resources.append((client.io, client.peer, client.source))
         clients.append(client)
+        phase("construct-exit", len(clients) - 1)
         return client
 
     server = _protocol_server(monkeypatch, native, operations)
@@ -319,7 +345,10 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                 assert recoveries == [(replacement, True)]
         elif replacement_failure:
             await asyncio.to_thread(worker._thread.join, 1)
-            assert not worker._thread.is_alive() and worker.stop_event.is_set()
+            assert not worker._thread.is_alive() and worker.stop_event.is_set(), (
+                {"phases": list(phases), "failure_stop_sample": worker.stop_event.is_set()}
+                if observe_budget else None
+            )
             assert len(operations) == 1, "reconnect replayed the original MCP call"
             assert len(clients) == (4 if replacement_fault == "exhaustion" else 2)
             assert registration_sources == ([0, 1] if replacement_fault.startswith("register-") else [0])
