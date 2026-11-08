@@ -19,7 +19,7 @@ def _wake(client, base, operation, **extra):
     return client.post("/relay/opencode/wake", json=body)
 
 
-def _setup(client, session="native", location="C:/work/session.json", relay_admission_clock=None):
+def _setup(client, session="native", location="C:/work/session.json", relay_admission_clock=None, *, enroll=True):
     if relay_admission_clock is None:
         turn = _turn(client, session)
     else:
@@ -34,8 +34,9 @@ def _setup(client, session="native", location="C:/work/session.json", relay_admi
         "native_location": location,
         "owner_id": "opencode-owner-0123456789abcdef0123456789abcdef",
     }
-    enrolled = _wake(client, base, "enroll")
-    assert enrolled.status_code == 200, enrolled.text
+    if enroll:
+        enrolled = _wake(client, base, "enroll")
+        assert enrolled.status_code == 200, enrolled.text
     return base
 
 
@@ -176,22 +177,57 @@ def test_terminal_before_claim_suppresses_context_until_poll_rotates(client, mon
 
 
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
-def test_context_exact_claim_ack_and_response_loss_are_idempotent(client, relay_admission_clock):
-    base = _setup(client, relay_admission_clock=relay_admission_clock)
-    sent = _send(client, base, relay_admission_clock=relay_admission_clock).json()
-    wake = _wake(client, base, "poll").json()["wake"]
-    snap = _snapshot(base, wake)
-    claimed = _wake(client, base, "context", **snap)
-    assert claimed.status_code == 200, claimed.text
-    assert claimed.json()["deliveries"][0]["delivery_id"] == wake["delivery_id"]
-    delivery = claimed.json()["deliveries"][0]
-    ack = client.post("/relay/deliveries/ack", json={"delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"], **SCOPE})
-    assert ack.status_code == 200, ack.text
-    restored = _wake(client, base, "context", **snap)
-    assert restored.status_code == 200, restored.text
-    assert restored.json()["restored"] is True
-    assert _wake(client, base, "context", **snap).json()["restored"] is True
-    assert client.get("/relay/messages/" + sent["message_id"], params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
+def test_context_exact_claim_ack_and_response_loss_are_idempotent(client, monkeypatch, relay_admission_clock):
+    from threading import local
+
+    from sqlalchemy import event
+
+    store = client.app.state.pallium_service._storage
+    original_binding = store._opencode_binding
+    active = local()
+    select_counts = []
+
+    def count_binding(*args, **kwargs):
+        active.selects = 0
+        try:
+            return original_binding(*args, **kwargs)
+        finally:
+            select_counts.append(active.selects)
+            del active.selects
+
+    def observe(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if hasattr(active, "selects") and statement.lstrip().upper().startswith("SELECT"):
+            active.selects += 1
+
+    monkeypatch.setattr(store, "_opencode_binding", count_binding)
+    event.listen(store._relay_engine, "before_cursor_execute", observe)
+    try:
+        base = _setup(client, relay_admission_clock=relay_admission_clock, enroll=False)
+        missing = _wake(client, base, "poll")
+        assert missing.status_code == 409, missing.text
+        assert missing.json()["detail"] == "OpenCode registration is missing or stale"
+        enrolled = _wake(client, base, "enroll")
+        assert enrolled.status_code == 200, enrolled.text
+        sent = _send(client, base, relay_admission_clock=relay_admission_clock).json()
+        wake = _wake(client, base, "poll").json()["wake"]
+        snap = _snapshot(base, wake)
+        stale = _wake(client, base, "context", **{**snap, "native_input_id": "msg_wrong_snapshot"})
+        assert stale.status_code == 409, stale.text
+        assert stale.json()["detail"] == "OpenCode native wake snapshot is stale"
+        claimed = _wake(client, base, "context", **snap)
+        assert claimed.status_code == 200, claimed.text
+        assert claimed.json()["deliveries"][0]["delivery_id"] == wake["delivery_id"]
+        delivery = claimed.json()["deliveries"][0]
+        ack = client.post("/relay/deliveries/ack", json={"delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"], **SCOPE})
+        assert ack.status_code == 200, ack.text
+        restored = _wake(client, base, "context", **snap)
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["restored"] is True
+        assert _wake(client, base, "context", **snap).json()["restored"] is True
+        assert client.get("/relay/messages/" + sent["message_id"], params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
+    finally:
+        event.remove(store._relay_engine, "before_cursor_execute", observe)
+    assert select_counts == [1] * 7
 
 
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
@@ -280,17 +316,20 @@ def test_owner_lease_expiry_allows_rebind_without_losing_anchor(client, monkeypa
     assert rebound["delivery_id"] == wake["delivery_id"]
 
 
-@pytest.mark.parametrize("field,value", [
-    ("session_ref", "elsewhere"), ("container_ref", "git:example.test/other/repo"),
-    ("endpoint_id", "relay-session-00000000000000000000000000000000"),
-    ("scope_generation", 99), ("native_location", "C:/other/session.json"),
-    ("owner_id", "opencode-owner-ffffffffffffffffffffffffffffffff"),
+@pytest.mark.parametrize("overrides,status_code", [
+    ({"session_ref": "elsewhere"}, 404),
+    ({"container_ref": "git:example.test/other/repo"}, 404),
+    ({"endpoint_id": "relay-session-00000000000000000000000000000000"}, 404),
+    ({"scope_generation": 99}, 409),
+    ({"native_location": "C:/other/session.json"}, 409),
+    ({"owner_id": "opencode-owner-ffffffffffffffffffffffffffffffff"}, 409),
+    ({"container_ref": "git:example.test/other/repo", "scope_generation": 99}, 404),
 ])
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
-def test_stale_or_wrong_binding_is_rejected(client, field, value, relay_admission_clock):
+def test_stale_or_wrong_binding_is_rejected(client, overrides, status_code, relay_admission_clock):
     base = _setup(client, relay_admission_clock=relay_admission_clock)
-    invalid = {**base, field: value}
-    assert _wake(client, invalid, "poll").status_code in (404, 409)
+    response = _wake(client, {**base, **overrides}, "poll")
+    assert response.status_code == status_code, response.text
 
 
 @pytest.mark.parametrize("body", [

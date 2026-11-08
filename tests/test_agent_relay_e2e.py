@@ -2043,7 +2043,7 @@ def test_impossible_turn_response_budget_skips_candidate_work_and_preserves_clai
             if boundary != 'above':
                 assert counters == dict(candidates=0,render=0)
             else:
-                assert counters == dict(candidates=1,render=10)
+                assert counters == dict(candidates=1,render=0)
             assert frames and all(size == frames[0] for size in frames)
             assert snapshot() == before
             for message in messages:

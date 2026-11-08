@@ -216,20 +216,24 @@ def _payload_view(payload: str, *, offset: int = 0, limit: int | None = None) ->
     }
 
 
-def _delivery_render_safe(delivery: RelayDeliveryRecord, message: RelayMessageRecord) -> bool:
+def _delivery_metadata_render_safe(delivery: RelayDeliveryRecord, message: RelayMessageRecord) -> bool:
     values = (
         delivery.id, message.id, message.sender_runtime, message.sender_session_ref,
         _iso(message.created_at),
     )
     return all(isinstance(value, str) and value and _single_line_render_safe(value) for value in values) and (
-        isinstance(message.payload, str) and bool(message.payload) and _render_safe(message.payload)
-    ) and (
         message.in_reply_to is None
         or (
             isinstance(message.in_reply_to, str)
             and bool(message.in_reply_to)
             and _single_line_render_safe(message.in_reply_to)
         )
+    )
+
+
+def _delivery_render_safe(delivery: RelayDeliveryRecord, message: RelayMessageRecord) -> bool:
+    return _delivery_metadata_render_safe(delivery, message) and (
+        isinstance(message.payload, str) and bool(message.payload) and _render_safe(message.payload)
     )
 
 
@@ -288,8 +292,11 @@ def _delivery_view(
     *,
     payload_offset: int = 0,
     payload_limit: int | None = None,
+    payload_view: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    payload = _payload_view(message.payload, offset=payload_offset, limit=payload_limit)
+    payload = payload_view if payload_view is not None else _payload_view(
+        message.payload, offset=payload_offset, limit=payload_limit,
+    )
     return {
         "delivery_id": delivery.id,
         "message_id": message.id,
@@ -338,16 +345,29 @@ class SQLiteRelayMixin:
         }
 
     def _opencode_binding(self, db, request, current, *, enrollment=False):
-        session = db.get(RelaySessionRecord, request["endpoint_id"])
-        if session is None or (
+        binding = db.execute(
+            select(RelaySessionRecord, RelayEndpointGenerationRecord, RelayOpenCodeWakeRecord)
+            .select_from(RelaySessionRecord)
+            .outerjoin(
+                RelayEndpointGenerationRecord,
+                RelayEndpointGenerationRecord.endpoint_id == RelaySessionRecord.id,
+            )
+            .outerjoin(
+                RelayOpenCodeWakeRecord,
+                RelayOpenCodeWakeRecord.endpoint_id == RelaySessionRecord.id,
+            )
+            .where(RelaySessionRecord.id == request["endpoint_id"])
+        ).one_or_none()
+        if binding is None:
+            raise RelayNotFoundError("OpenCode endpoint not found in the requested scope")
+        session, scope, wake = binding
+        if (
             session.runtime != "opencode" or session.session_ref != request["session_ref"]
             or session.container_ref != request["container_ref"]
         ):
             raise RelayNotFoundError("OpenCode endpoint not found in the requested scope")
-        scope = db.get(RelayEndpointGenerationRecord, session.id)
         if session.state != "active" or request["scope_generation"] != (scope.generation if scope else 0):
             raise RelayConflictError("OpenCode endpoint is closed or its scope changed")
-        wake = db.get(RelayOpenCodeWakeRecord, session.id)
         if not enrollment and (
             wake is None or wake.owner_id != request["owner_id"]
             or _now(wake.owner_expires_at) <= current
@@ -1679,15 +1699,14 @@ class SQLiteRelayMixin:
                     case((RelayDeliveryRecord.id == required_trigger, 0), else_=1),
                     RelayMessageRecord.created_at, RelayDeliveryRecord.id,
                 )
-            if exact_delivery_id is None or batch_trigger:
-                # Sort metadata, then load payloads only for candidates we examine.
-                eligible_query = eligible_query.options(defer(RelayMessageRecord.payload)).execution_options(yield_per=16)
-            else:
+            if exact_delivery_id is not None and not batch_trigger:
                 eligible_query = eligible_query.where(RelayDeliveryRecord.id == exact_delivery_id)
+            # Sort metadata, then load payloads only for candidates that may fit.
+            eligible_query = eligible_query.options(defer(RelayMessageRecord.payload)).execution_options(yield_per=16)
             session_view = _session_view(registered, current, 24 * 60 * 60, generation)
             selected: list[tuple[RelayDeliveryRecord, RelayMessageRecord, dict[str, Any], int, str]] = []
             used = 0
-            reserve_envelopes = not complete_payloads and max_chars > 0 and max_messages > 1 and eligible_count > 1
+            reserve_envelopes = not complete_payloads and max_chars > 0 and max_messages != 1 and eligible_count > 1
             lease_expires_at = current + timedelta(seconds=lease_seconds)
 
             def response(deliveries: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1709,10 +1728,9 @@ class SQLiteRelayMixin:
                     check_claim_expiry()
                     return finalize(empty_response)
 
-            def project(delivery, message, token, prefix_chars, index, render_room, response_limit):
+            def claim_view(delivery, message, token, payload):
                 view = _delivery_view(
-                    delivery, message, registered.state,
-                    payload_limit=None if prefix_chars == len(message.payload) else prefix_chars,
+                    delivery, message, registered.state, payload_view=payload,
                 )
                 view.update(
                     state="claimed",
@@ -1733,6 +1751,12 @@ class SQLiteRelayMixin:
                         "Attempts do not prove emission/actions. ACK: receipt, not completion"
                     ),
                 )
+                return view
+
+            def project(delivery, message, token, prefix_chars, index, render_room, response_limit):
+                view = claim_view(delivery, message, token, _payload_view(
+                    message.payload, limit=None if prefix_chars == len(message.payload) else prefix_chars,
+                ))
                 rendered_chars = len(_delivery_text(delivery, message, view)) + (2 if index else 0)
                 if render_room is not None and rendered_chars > render_room:
                     return None
@@ -1755,10 +1779,50 @@ class SQLiteRelayMixin:
                         low = middle + 1
                 return fitted
 
+            # Empty metadata and the shortest attempt/body understate every valid rendered envelope.
+            render_floor = len(_delivery_text(
+                SimpleNamespace(id=""),
+                SimpleNamespace(id="", sender_runtime="", sender_session_ref="", created_at=None, in_reply_to=None),
+                {"payload": "x", "content_truncated": False, "claim_attempt": 1, "possible_redelivery": True},
+            ))
+            append_overhead = None
+            json_floor = None
             with db.execute(eligible_query) as rows:
                 for delivery, message in rows:
+                    check_claim_expiry()
                     if required_trigger is not None and not selected and delivery.id != required_trigger:
                         break
+                    if max_chars and used + render_floor + (2 if selected else 0) > max_chars:
+                        break
+                    if max_response_chars and append_overhead is None:
+                        append_overhead = _compact_json_chars(response([item[2] for item in selected] + [{}])) - 2
+                    if max_response_chars and json_floor is not None and append_overhead + json_floor > max_response_chars:
+                        break
+                    if not _delivery_metadata_render_safe(delivery, message):
+                        if required_trigger is not None and not selected:
+                            break
+                        continue
+                    if max_chars or max_response_chars:
+                        complete = {"payload": "x", "payload_offset": 0, "payload_total_chars": 1,
+                                    "content_truncated": False, "next_offset": None}
+                        minimum = claim_view(delivery, message, "relay-claim-" + "0" * 32, complete)
+                        render_minimum = len(_delivery_text(delivery, message, minimum)) + (2 if selected else 0)
+                        json_minimum = _compact_json_chars(minimum) if max_response_chars else 0
+                        if max_response_chars:
+                            if json_floor is None:
+                                # Every JSON value costs at least one character; mandatory keys are invariant.
+                                json_floor = _compact_json_chars(dict.fromkeys(minimum, 0))
+                            if not complete_payloads:
+                                partial = {**complete, "payload_total_chars": 2,
+                                           "content_truncated": True, "next_offset": 1}
+                                json_minimum = min(json_minimum, _compact_json_chars(
+                                    claim_view(delivery, message, "relay-claim-" + "0" * 32, partial),
+                                ))
+                        if ((max_chars and used + render_minimum > max_chars)
+                            or (max_response_chars and append_overhead + json_minimum > max_response_chars)):
+                            if required_trigger is not None and not selected:
+                                break
+                            continue
                     if not _delivery_render_safe(delivery, message):
                         if required_trigger is not None and not selected:
                             break
@@ -1790,6 +1854,7 @@ class SQLiteRelayMixin:
                     view, rendered_chars = projected
                     selected.append((delivery, message, view, rendered_chars, token))
                     used += rendered_chars
+                    append_overhead = None
                     if max_messages and len(selected) >= max_messages:
                         break
 

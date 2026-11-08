@@ -52,6 +52,7 @@ def test_response_budget_does_not_claim_pending_delivery(client):
 
 
 def test_ordinary_pageable_turn_reserves_a_sibling_envelope_before_payload_growth(client):
+    """docs/agent-relay.md Limits guards against starving a sibling or claiming a third item."""
     _turn(client, "claude-code", "sender")
     _turn(client, "opencode", "target")
     first = _send(client, "opencode:target", "界" * 4000)
@@ -96,26 +97,41 @@ def test_default_backlog_drains_after_acknowledged_first_page(client):
 
 
 def test_codex_prompt_batch_emits_required_trigger_before_individual_receipts(batch_hook):
-    """Codex prompt override batches eight; ordinary HTTP still defaults to three."""
+    """docs/agent-relay.md Limits and docs/codex-integration.md define Codex prompt batching.
+
+    Guard against dropped, reordered, or extra blocks and ACK before emission.
+    Codex prompt override batches eight. Ordinary HTTP still defaults to three.
+    """
     from app.codex_wake import _wake_prompt
     from tests.test_relay_exact_claim_e2e import send, status
 
     state = batch_hook
     messages = [send(state.client, payload=f"item {index} →") for index in range(9)]
     trigger = messages[-1]
-    emitted = []
+    selected_message_ids = []
 
     def before_ack():
         assert state.ack_count == 0
+        packet, = state.outputs
+        *blocks, _scope = packet.split("\n[End Pallium Relay message]")
+        assert len(blocks) == packet.count("[Pallium Relay message from ") == 8
+        headers = [block.lstrip("\n").splitlines()[:3] for block in blocks]
+        assert all(header[0].startswith("[Pallium Relay message from ") for header in headers)
+        assert [header[1:] for header in headers] == [
+            [f"message_id: {item['message_id']}", f"delivery_id: {item['deliveries'][0]['delivery_id']}"]
+            for item in [trigger, *messages[:7]]
+        ]
+        assert f"delivery_id: {messages[7]['deliveries'][0]['delivery_id']}" not in packet.splitlines()
+
         selected = state.turns[-1]["deliveries"]
         assert selected[0]["message_id"] == trigger["message_id"]
         assert len(selected) == 8
         assert all(status(state.client, item)["state"] == "claimed" for item in [trigger, *messages[:7]])
-        emitted.extend(row["message_id"] for row in selected)
+        selected_message_ids.extend(row["message_id"] for row in selected)
 
     state.on_emit = before_ack
     assert state.run(_wake_prompt(trigger["deliveries"][0]["delivery_id"])) == 0
-    assert emitted == [trigger["message_id"], *(item["message_id"] for item in messages[:7])]
+    assert selected_message_ids == [trigger["message_id"], *(item["message_id"] for item in messages[:7])]
     assert state.ack_count == 8
     assert all(status(state.client, item)["state"] == "delivered" for item in [trigger, *messages[:7]])
     assert (status(state.client, messages[7])["state"], status(state.client, messages[7])["attempts"]) == ("pending", 0)
