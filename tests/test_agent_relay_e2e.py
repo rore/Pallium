@@ -472,12 +472,13 @@ def test_duplicate_reply_contends_with_prepared_trace_then_keeps_identity(client
     engine = service._storage._relay_engine
     arm, entered, release = threading.Event(), threading.Event(), threading.Event()
     phase, acquisition_errors, workers = {}, [], []
+    reply_delivery_id = None
     original_schedule = dependencies.schedule_claude_relay_wake
     trace_writer = client.app.state.relay_trace_writer
     original_enqueue = trace_writer.enqueue
 
     def enqueue_after_arm(writer, trace):
-        if trace.get("message_id") != reply_id or trace.get("stage") != "prepared":
+        if trace.get("delivery_id") != reply_delivery_id or trace.get("stage") != "prepared":
             return original_enqueue(writer, trace)
 
         def write_after_arm(trace):
@@ -488,8 +489,10 @@ def test_duplicate_reply_contends_with_prepared_trace_then_keeps_identity(client
 
         return original_enqueue(write_after_arm, trace)
 
-    def capture_schedule(*args, **kwargs):
-        worker = original_schedule(*args, **kwargs)
+    def capture_schedule(result, *args, **kwargs):
+        nonlocal reply_delivery_id
+        reply_delivery_id = result["deliveries"][0]["delivery_id"]
+        worker = original_schedule(result, *args, **kwargs)
         if worker is not None:
             workers.append(worker)
         return worker
