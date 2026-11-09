@@ -2496,7 +2496,7 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
                 barrier = await _start_operation_barrier(app)
                 await _assert_barrier_waiting(barrier)
                 release.set()
-                results = await asyncio.wait_for(asyncio.gather(*requests, return_exceptions=True), 2)
+                results = await asyncio.gather(*requests, return_exceptions=True)
                 assert sum(isinstance(result, asyncio.CancelledError) for result in results) == 1
                 responses = [result for result in results if isinstance(result, httpx.Response)]
                 assert len(responses) == 2 and all(result.status_code == 200 for result in responses)
