@@ -2455,6 +2455,28 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
             requests = [asyncio.create_task(http.get("/dashboard/api/relay/summary"), name="summary-first")]
             barrier = pair = turn_request = None
+
+            def second_summary_failure_context():
+                task = requests[1]
+                context = {
+                    "gate": "second_readiness_body_after_summary_queries",
+                    "second_request": "pending",
+                    "started": started_count,
+                    "completed": completed_count,
+                    "first_worker_exited": first_worker_exited.is_set(),
+                    "released": release.is_set(),
+                    "finished": finished.is_set(),
+                    "closed": closed.is_set(),
+                }
+                if task.cancelled():
+                    context["second_request"] = "cancelled"
+                elif task.done():
+                    error = task.exception()
+                    if error is not None:
+                        context.update(second_request="failed", error_class=type(error).__name__[:64])
+                    else:
+                        context.update(second_request="completed", status=task.result().status_code)
+                return str(context)[:600]
             try:
                 # Worker admission is setup, not a product latency requirement.
                 assert await asyncio.to_thread(first.wait, 5)
@@ -2470,7 +2492,7 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
                 status, queue = pair.result()
                 assert status.status_code == queue.status_code == 200
                 requests.append(asyncio.create_task(http.get("/dashboard/api/relay/summary")))
-                assert await asyncio.to_thread(full.wait, 1)
+                assert await asyncio.to_thread(full.wait, 1), second_summary_failure_context()
                 requests.append(asyncio.create_task(
                     http.get("/dashboard/api/relay/summary"), name="summary-queued",
                 ))

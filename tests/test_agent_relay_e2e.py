@@ -1395,7 +1395,8 @@ def test_relay_has_no_memory_retrieval_or_processing_side_effects(client, relay_
     assert after == before
 
 
-def test_maximum_message_and_identity_envelope_is_claimable(client):
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_maximum_message_and_identity_envelope_is_claimable(client, relay_admission_clock):
     sender = "s" * 255
     _turn(client, "claude-code", sender)
     _turn(client, "codex", "target")
@@ -1418,10 +1419,17 @@ def test_maximum_message_and_identity_envelope_is_claimable(client):
         in_reply_to=parent_id,
     )
     assert sent.status_code == 200
-    turn = client.post(
-        "/relay/turn",
-        json={"runtime": "codex", "session_ref": "target", "max_chars": 2400, **SCOPE},
-    )
+    from storage import sqlite_queue
+
+    storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
+    with relay_admission_clock(storage, expected_admissions=1):
+        turn = client.post(
+            "/relay/turn",
+            json={"runtime": "codex", "session_ref": "target", "max_chars": 2400, **SCOPE},
+        )
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
     assert turn.status_code == 200
     claimed = turn.json()["deliveries"]
     assert [delivery["message_id"] for delivery in claimed] == [message_id]
