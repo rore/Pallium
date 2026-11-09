@@ -559,8 +559,15 @@ def test_reply_rejects_message_expired_at_boundary(
     assert _turn(client, runtime="codex", session="sender-s1")["deliveries"] == []
 
 
-def test_ack_before_long_work_allows_late_reply(client: TestClient, relay_storage):
-    _register(client)
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_ack_before_long_work_allows_late_reply(client: TestClient, relay_storage, relay_admission_clock):
+    from storage import sqlite_queue
+
+    native_time, native_begin = sqlite_queue.time, relay_storage._begin_relay_immediate
+    with relay_admission_clock(relay_storage, expected_admissions=1):
+        _register(client)
+    assert sqlite_queue.time is native_time
+    assert relay_storage._begin_relay_immediate == native_begin
     sent = _send(client, "long work", expires_in_seconds=60)
     delivery = _turn(client)["deliveries"][0]
     assert _mcp_ack(client, delivery["delivery_id"], delivery["receipt"]).status_code == 200

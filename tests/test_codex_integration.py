@@ -113,6 +113,7 @@ def test_codex_mcp_config_uses_python_module_launch_and_base_url(
         r"C:\Users\me\AppData\Roaming\uv\python\cpython-3.13.14-windows-x86_64-none\python.exe",
     )
     monkeypatch.setattr(setup_codex, "_pallium_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(setup_codex, "_codex_config_path", lambda: tmp_path / ".codex" / "config.toml")
     monkeypatch.delenv("PYTHONPATH", raising=False)
     monkeypatch.setenv("PATH", r"C:\Windows")
 
@@ -142,6 +143,7 @@ env = { PALLIUM_MCP_TRANSPORT = "stdio" }
     assert 'disabled_tools' not in content
     assert 'startup_timeout_sec = 10' in content
     assert 'tool_timeout_sec = 30' in content
+    assert f'cwd = {json.dumps((tmp_path / ".codex").resolve().as_posix(), ensure_ascii=False)}' in content
     assert 'PALLIUM_BASE_URL = "http://localhost:19836"' in content
     assert 'PALLIUM_AGENT_REF = "codex"' in content
     assert "PALLIUM_CONTAINER_REF" not in content
@@ -174,7 +176,7 @@ def test_codex_setup_migrates_nested_pallium_tables_and_preserves_siblings(
         + r'ends after an escaped quote: \""""'
         + '\nquote_edge_five = """\nends after two quotes: """""\n'
         + 'nested = ' + nested_array
-        + '[mcp_servers.pallium]\ncommand = "old"\nargs = ' + nested_array + '\n'
+        + '[mcp_servers.pallium]\ncommand = "pallium-mcp"\nargs = ["--stdio"]\n'
         '[mcp_servers.other_fake]\ncommand = "keep too"\n\n'
         '[mcp_servers.pallium.env]\n'
         'PALLIUM_BASE_URL = "http://old.invalid"\n'
@@ -2385,16 +2387,162 @@ def test_codex_generated_mcp_launch_uses_configured_installation_from_conflictin
     import os
     import tomllib
 
-    installed = tmp_path / "configured-installation"
+    installed = tmp_path / "配置 installation 😀"
     conflicting = tmp_path / "other-checkout"
+    config_path = tmp_path / "配置 home 😀" / ".codex" / "config.toml"
     for root, marker in ((installed, "configured-installation"), (conflicting, "other-checkout")):
         package = root / "app"
         package.mkdir(parents=True)
         (package / "__init__.py").write_text("", encoding="utf-8")
         (package / "run.py").write_text(f"print({marker!r})\n", encoding="utf-8")
     monkeypatch.setattr(setup_codex, "_pallium_repo_root", lambda: installed)
-    config = tomllib.loads(setup_codex._ensure_mcp_server(""))["mcp_servers"]["pallium"]
+    monkeypatch.setattr(setup_codex, "_codex_config_path", lambda: config_path)
+    content = setup_codex._ensure_mcp_server("")
+    assert setup_codex._ensure_mcp_server(content) == content
+    setup_codex._write_toml(config_path, content)
+    config = tomllib.loads(config_path.read_text(encoding="utf-8"))["mcp_servers"]["pallium"]
+    assert Path(config["cwd"]) == config_path.parent.resolve()
+    # Retain the conflicting-module control as well as the generated launch.
     completed = subprocess.run([config["command"], *config["args"]], cwd=conflicting,
         env={**os.environ, **config["env"]}, capture_output=True, text=True, timeout=5)
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "configured-installation"
+    saved_chat = tmp_path / "deleted chat 任务"
+    saved_chat.mkdir()
+    saved_chat.rmdir()
+    assert not saved_chat.exists()
+    completed = subprocess.run([config["command"], *config["args"]], cwd=config["cwd"],
+        env={**os.environ, **config["env"]}, capture_output=True, text=True, timeout=5)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "configured-installation"
+
+
+@pytest.mark.parametrize("required", [True, False])
+@pytest.mark.parametrize("timeout_key, timeout", [("startup_timeout_sec", 12.5), ("startup_timeout_ms", 12500)])
+def test_codex_setup_preserves_explicit_local_mcp_settings(monkeypatch, tmp_path, required, timeout_key, timeout):
+    import tomllib
+
+    config_path = tmp_path / "配置 home 😀" / "config.toml"
+    config_path.parent.mkdir()
+    explicit_cwd = (tmp_path / "explicit 任务 😀\x7f").as_posix()
+    unicode_key = "CREDENTIAL_😀"
+    unicode_value = 'retained 😀 "quoted" \\ path\tline\nnext\x7f'
+    cwd_toml = json.dumps(explicit_cwd, ensure_ascii=False).replace("\x7f", "\\u007f")
+    original = (
+        '[mcp_servers.pallium]\ncommand = "python"\nargs = ["-P", "-m", "app.run", "mcp"]\n'
+        f'cwd = {cwd_toml}\nrequired = {json.dumps(required)}\n'
+        f'{timeout_key} = {timeout}\ntool_timeout_sec = 47.5\nstartup_readiness = "catalog"\n'
+        'enabled = false\nenabled_tools = ["pallium_relay_address"]\ndisabled_tools = []\n'
+        'env_vars = ["CREDENTIAL_SENTINEL"]\ndefault_tools_approval_mode = "writes"\n'
+        'env = { CREDENTIAL_SENTINEL = "retained-value", "CREDENTIAL_😀" = "retained 😀 \\"quoted\\" \\\\ path\\tline\\nnext\\u007f" }\n'
+        'tools = { pallium_relay_send = { approval_mode = "prompt" } }\n'
+        '[mcp_servers.other]\ncommand = "keep"\n'
+    )
+    monkeypatch.setattr(setup_codex, "_codex_config_path", lambda: config_path)
+    candidate = setup_codex._ensure_mcp_server(original)
+    assert setup_codex._ensure_mcp_server(candidate) == candidate
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(setup_codex, "_verify_service", lambda _port: False)
+    monkeypatch.setattr(setup_codex, "_append_agents_md_block", lambda _strength: None)
+    monkeypatch.setattr(setup_codex, "_install_skill", lambda: None)
+    monkeypatch.setattr(setup_codex, "_ensure_state_dir", lambda: None)
+    monkeypatch.setattr(setup_codex.codex_readiness, "reconcile_setup", lambda **_kwargs: (False, {"state": "verified"}))
+    monkeypatch.setattr(setup_codex, "_remove_agents_md_block", lambda: None)
+    monkeypatch.setattr(setup_codex, "_remove_skill", lambda: None)
+    monkeypatch.setattr(setup_codex.codex_readiness, "reconcile_uninstall", lambda **kwargs: kwargs["uninstall_definition"]())
+    config_path.write_text(original, encoding="utf-8")
+    assert setup_codex.install() == 0
+    installed = config_path.read_bytes()
+    assert setup_codex.install() == 0
+    assert config_path.read_bytes() == installed
+    parsed = tomllib.loads(installed.decode())
+    server = parsed["mcp_servers"]["pallium"]
+    before = tomllib.loads(original)["mcp_servers"]["pallium"]
+    for key in ("cwd", "required", timeout_key, "tool_timeout_sec", "startup_readiness", "enabled", "enabled_tools", "disabled_tools", "default_tools_approval_mode", "tools"):
+        if key == "tools":
+            assert server[key]["pallium_relay_send"] == before[key]["pallium_relay_send"]
+        else:
+            assert server[key] == before[key]
+    assert server["env"]["CREDENTIAL_SENTINEL"] == "retained-value"
+    assert server["env"][unicode_key] == unicode_value
+    assert server["env_vars"] == ["CREDENTIAL_SENTINEL", "CODEX_APP_TOOLS_PIPE_PATH"]
+    assert ("startup_timeout_sec" in server) == (timeout_key == "startup_timeout_sec")
+    assert parsed["mcp_servers"]["other"] == {"command": "keep"}
+    profile_path = tmp_path / ".codex" / "pallium-relay.config.toml"
+    profile = tomllib.loads(profile_path.read_text(encoding="utf-8"))["mcp_servers"]["pallium"]
+    assert profile["required"] is required
+    assert profile["tools"]["pallium_relay_send"] == {"approval_mode": "prompt"}
+    assert len(profile["enabled_tools"]) == 8
+    assert setup_codex.uninstall() == 0
+    assert "pallium" not in tomllib.loads(config_path.read_text(encoding="utf-8"))["mcp_servers"]
+    assert not profile_path.exists()
+
+
+@pytest.mark.parametrize("location", ["base", "profile"])
+@pytest.mark.parametrize("settings", [
+    '[',
+    '[mcp_servers.pallium]\nurl = "https://example.test/mcp"\n',
+    '[mcp_servers.pallium]\ncommand = "ssh"\nargs = ["executor"]\n',
+    '[mcp_servers.pallium]\ncommand = "python"\nargs = ["custom.py"]\n',
+    '[mcp_servers.pallium]\ncommand = "python"\n',
+    '[mcp_servers.pallium]\ncommand = ""\n',
+    '[mcp_servers.pallium]\nrequired = "false"\n',
+    '[mcp_servers.pallium]\ncwd = 7\n',
+    '[mcp_servers.pallium]\ncwd = ""\n',
+    '[mcp_servers.pallium]\nstartup_readiness = "unknown"\n',
+    '[mcp_servers.pallium]\nstartup_timeout_sec = true\n',
+    '[mcp_servers.pallium]\nstartup_timeout_sec = -1\n',
+    '[mcp_servers.pallium]\nstartup_timeout_sec = 0\n',
+    '[mcp_servers.pallium]\nstartup_timeout_sec = nan\n',
+    '[mcp_servers.pallium]\nstartup_timeout_sec = inf\n',
+    '[mcp_servers.pallium]\nstartup_timeout_sec = 10\nstartup_timeout_ms = 10000\n',
+    '[mcp_servers.pallium]\nenv_vars = [7]\n',
+    '[mcp_servers.pallium]\nenabled_tools = "all"\n',
+    '[mcp_servers.pallium]\ndefault_tools_approval_mode = "unknown"\n',
+    '[mcp_servers.pallium.env]\nPALLIUM_MCP_TRANSPORT = "streamable-http"\n',
+    '[mcp_servers.pallium.env]\nCREDENTIAL_SENTINEL = 7\n',
+    '[mcp_servers.pallium.tools.pallium_relay_send]\napproval_mode = "unknown"\n',
+])
+def test_codex_setup_prevalidates_both_mcp_files_before_any_write(monkeypatch, tmp_path, location, settings):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    config_path = tmp_path / ".codex" / "config.toml"
+    profile_path = tmp_path / ".codex" / "pallium-relay.config.toml"
+    config_path.parent.mkdir()
+    config_path.write_text(settings if location == "base" else '[mcp_servers.other]\ncommand = "keep"\n', encoding="utf-8")
+    profile_path.write_text(settings if location == "profile" else '# retain profile\n', encoding="utf-8")
+    before = {path: path.read_bytes() for path in (config_path, profile_path)}
+    monkeypatch.setattr(setup_codex, "_write_toml", lambda *_args: pytest.fail("validation wrote a candidate"))
+    monkeypatch.setattr(setup_codex, "_write_json", lambda *_args: pytest.fail("validation wrote hooks"))
+    monkeypatch.setattr(setup_codex, "_install_skill", lambda: pytest.fail("validation installed a skill"))
+    assert setup_codex.install() == 2
+    assert {path: path.read_bytes() for path in before} == before
+
+
+def test_codex_setup_rejects_invalid_generated_profile_before_base_write(monkeypatch, tmp_path):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    render_tools = setup_codex._mcp_tools_toml
+
+    def invalid_profile_tools(existing, **kwargs):
+        return "[" if len(kwargs.get("managed", ())) == 8 else render_tools(existing, **kwargs)
+
+    monkeypatch.setattr(setup_codex, "_mcp_tools_toml", invalid_profile_tools)
+    monkeypatch.setattr(setup_codex, "_write_toml", lambda *_args: pytest.fail("invalid profile wrote a candidate"))
+    assert setup_codex.install() == 2
+    assert not (tmp_path / ".codex" / "config.toml").exists()
+    assert not (tmp_path / ".codex" / "pallium-relay.config.toml").exists()
+
+
+@pytest.mark.parametrize("settings", [
+    'enabled_tools = ["pallium_query"]\n',
+    'command = "python"\nargs = ["-P", "-m", "app.run", "mcp"]\n',
+])
+def test_codex_setup_rejects_unsupported_profile_overrides_before_base_write(monkeypatch, tmp_path, settings):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    profile_path = tmp_path / ".codex" / "pallium-relay.config.toml"
+    profile_path.parent.mkdir()
+    profile_path.write_text('[mcp_servers.pallium]\n' + settings, encoding="utf-8")
+    before = profile_path.read_bytes()
+    monkeypatch.setattr(setup_codex, "_write_toml", lambda *_args: pytest.fail("unsupported profile wrote a candidate"))
+    assert setup_codex.install() == 2
+    assert profile_path.read_bytes() == before
+    assert not (tmp_path / ".codex" / "config.toml").exists()

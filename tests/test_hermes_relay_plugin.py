@@ -1448,7 +1448,8 @@ def test_plugin_retains_uncertain_fence_on_reload(client, plugin_context):
     assert status(client, message)["deliveries"][0]["attempts"] == 0
 
 
-def test_plugin_admission_then_host_bound_reply(client, plugin_context):
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_plugin_admission_then_host_bound_reply(client, plugin_context, relay_admission_clock):
     _, create, _ = plugin_context
     ctx, marker, message = _plugin_wake(client, create)
     context = ctx.hooks["pre_llm_call"](
@@ -1483,9 +1484,18 @@ def test_plugin_admission_then_host_bound_reply(client, plugin_context):
     assert "refused" in ctx.tools["pallium_relay_reply"](forged, session_id="ses_שלום", turn_id="wake")
     assert "sent" in _plugin_reply(ctx, forged, session_id="ses_שלום", turn_id="wake")
     assert "refused" in _plugin_reply(ctx, forged, session_id="ses_שלום", turn_id="wake")
-    received = client.post("/relay/turn", json={
-        "runtime": "claude-code", "session_ref": "sender", **SCOPE,
-    }).json()["deliveries"]
+    from storage import sqlite_queue
+
+    storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
+    with relay_admission_clock(storage, expected_admissions=1):
+        response = client.post("/relay/turn", json={
+            "runtime": "claude-code", "session_ref": "sender", **SCOPE,
+        })
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
+    assert response.status_code == 200, response.text
+    received = response.json()["deliveries"]
     assert len(received) == 1
     assert received[0]["payload"] == "reply ✓"
     assert received[0]["sender_session_ref"] == "ses_שלום"

@@ -79,6 +79,20 @@ This command:
 6. Creates the hook state directory for dedup tracking
 7. Verifies the Pallium service is reachable
 
+The managed stdio server defaults to the resolved configuration directory as
+its working directory, so launching it does not depend on a saved chat directory
+still existing. An explicit supported `cwd`, startup policy, timeout and tool
+approval setting is preserved. New servers retain required startup and the
+existing startup/tool timeout defaults. This directory does not supply session
+identity or repository scope.
+
+Setup validates both the base configuration and dedicated Relay overlay before
+writing either. Unsupported custom executors, transports or settings stop setup
+before configuration writes. The overlay keeps its eight-tool default subset
+and preserves explicit narrower restrictions. This safeguard does not establish
+that an unavailable server permits chat resume; complete healthy tool exposure
+and unavailable-startup behavior still require verification in Codex.
+
 If skill replacement and restoring the old skill both fail, setup reports both
 errors and the retained previous-tree path. Keep that recovery directory until
 the old skill has been recovered. Successful replacement or restoration removes

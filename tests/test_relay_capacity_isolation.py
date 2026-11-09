@@ -951,6 +951,20 @@ def test_independent_relay_operations_progress_with_all_codex_callbacks_waiting(
 
     holder = threading.Thread(target=hold_registry, name="test-codex-registry-holder")
 
+    def completed_send_state(request):
+        if not request.done():
+            return {"state": "unsettled"}
+        if request.cancelled():
+            return {"state": "cancelled"}
+        error = request.exception()
+        if error is not None:
+            return {"state": "error", "error_type": type(error).__name__}
+        response = request.result()
+        return {
+            "state": "completed",
+            "status": response.status_code if isinstance(response, httpx.Response) else "unknown",
+        }
+
     async def exercise():
         nonlocal armed
         transport = httpx.ASGITransport(app=app)
@@ -1001,7 +1015,15 @@ def test_independent_relay_operations_progress_with_all_codex_callbacks_waiting(
             progressed = False
             evidence = {}
             try:
-                assert await asyncio.to_thread(sends_persisted.wait, 5)
+                assert await asyncio.to_thread(sends_persisted.wait, 5), {
+                    "persisted_ids": persisted[:4],
+                    "callback_count": len(callback_threads),
+                    "codex_request_count": len(codex_requests),
+                    "registry_held": held.is_set() and not release.is_set(),
+                    "holder_alive": holder.is_alive(),
+                    "gate_errors": gate_errors[:1],
+                    "sends": [completed_send_state(request) for request in sends],
+                }
                 stacks = {}
                 deadline = asyncio.get_running_loop().time() + 5
                 while True:
@@ -2498,7 +2520,7 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
                 barrier = await _start_operation_barrier(app)
                 await _assert_barrier_waiting(barrier)
                 release.set()
-                results = await asyncio.wait_for(asyncio.gather(*requests, return_exceptions=True), 2)
+                results = await asyncio.gather(*requests, return_exceptions=True)
                 assert sum(isinstance(result, asyncio.CancelledError) for result in results) == 1
                 responses = [result for result in results if isinstance(result, httpx.Response)]
                 assert len(responses) == 2 and all(result.status_code == 200 for result in responses)

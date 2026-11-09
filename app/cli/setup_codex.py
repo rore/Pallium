@@ -232,7 +232,8 @@ def _mcp_path_entries() -> list[str]:
 
 
 def _toml_inline_string(value: str) -> str:
-    return json.dumps(value)
+    # TOML allows Unicode scalars but still requires DEL to be escaped.
+    return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
 
 
 def _mcp_env_toml(port: int, existing: dict[str, str] | None = None) -> str:
@@ -300,35 +301,64 @@ def _toml_key(value: str) -> str:
     return _toml_inline_string(value)
 
 
-def _mcp_tools_toml(existing: dict) -> str:
-    managed = {
-        "pallium_relay_send",
-        "pallium_relay_reply",
-        "pallium_relay_ack",
-        "pallium_relay_receive",
-    }
-    tools = [
-        f'{name} = {{ approval_mode = "approve" }}'
-        for name in (
-            "pallium_relay_send",
-            "pallium_relay_reply",
-            "pallium_relay_ack",
-            "pallium_relay_receive",
-        )
-        if name in managed
-    ]
-    for name, settings in existing.items():
-        if name in managed:
-            continue
+def _mcp_tools_toml(existing: dict, *, managed: tuple[str, ...] = (
+    "pallium_relay_send", "pallium_relay_reply",
+    "pallium_relay_ack", "pallium_relay_receive",
+)) -> str:
+    values = {name: {"approval_mode": "approve"} for name in managed}
+    values.update(existing)
+    tools = []
+    for name, settings in values.items():
         if (not isinstance(name, str) or not isinstance(settings, dict)
                 or set(settings) != {"approval_mode"}
-                or not isinstance(settings["approval_mode"], str)):
+                or settings["approval_mode"] not in ("auto", "prompt", "writes", "approve")):
             raise ValueError("Unsupported custom Pallium MCP tool configuration")
         tools.append(
             f"{_toml_key(name)} = {{ approval_mode = "
             f"{_toml_inline_string(settings['approval_mode'])} }}"
         )
     return "{ " + ", ".join(tools) + " }"
+
+
+def _mcp_settings_toml(existing: dict, defaults: dict) -> str:
+    """Preserve supported local settings; refuse forms setup cannot round-trip."""
+    strings = {"cwd", "startup_readiness", "default_tools_approval_mode"}
+    lists = {"env_vars", "enabled_tools", "disabled_tools"}
+    booleans = {"required", "enabled"}
+    numbers = {"startup_timeout_sec", "startup_timeout_ms", "tool_timeout_sec"}
+    if set(existing) - strings - lists - booleans - numbers - {"command", "args", "env", "tools"}:
+        raise ValueError("Unsupported custom Pallium MCP server setting")
+    command = existing.get("command", "")
+    args = existing.get("args", [])
+    name = command.replace("\\", "/").rsplit("/", 1)[-1] if isinstance(command, str) else ""
+    legacy = name.lower() in ("pallium-mcp", "pallium-mcp.exe")
+    if (not isinstance(command, str) or not isinstance(args, list)
+            or ("command" in existing and not command)
+            or (command and not legacy and not re.fullmatch(r"python(?:\d+(?:\.\d+)*)?(?:\.exe)?", name, re.IGNORECASE))
+            or (legacy and args not in ([], ["--stdio"]))
+            or (not legacy and args not in (["-m", "app.run", "mcp"], ["-P", "-m", "app.run", "mcp"])
+                and (command or args))):
+        raise ValueError("Unsupported custom Pallium MCP executor")
+    if "startup_timeout_sec" in existing and "startup_timeout_ms" in existing:
+        raise ValueError("Conflicting Pallium MCP startup timeouts")
+    values = {**defaults, **{key: value for key, value in existing.items()
+                            if key in strings | lists | booleans | numbers}}
+    if "startup_timeout_ms" in existing:
+        values.pop("startup_timeout_sec", None)
+    for key, value in values.items():
+        valid = (
+            (key in strings and isinstance(value, str))
+            or (key in lists and isinstance(value, list) and all(isinstance(item, str) for item in value))
+            or (key in booleans and type(value) is bool)
+            or (key in numbers and type(value) in (int, float) and 0 < value < float("inf"))
+        )
+        if (not valid or (key == "cwd" and not value.strip())
+                or (key == "startup_readiness" and value not in ("connection", "catalog"))
+                or (key == "default_tools_approval_mode" and value not in ("auto", "prompt", "writes", "approve"))):
+            raise ValueError("Unsupported custom Pallium MCP setting value")
+    if "env_vars" in values and "CODEX_APP_TOOLS_PIPE_PATH" not in values["env_vars"]:
+        values["env_vars"] = [*values["env_vars"], "CODEX_APP_TOOLS_PIPE_PATH"]
+    return "".join(f"{key} = {json.dumps(value, ensure_ascii=False, allow_nan=False)}\n" for key, value in values.items()).replace("\x7f", "\\u007f")
 
 
 def _toml_multiline_delimiter(line: str, active: str | None) -> str | None:
@@ -451,19 +481,25 @@ def _ensure_mcp_server(content: str, port: int = 19836) -> str:
         raise ValueError("Unsupported custom Pallium MCP environment")
     if not isinstance(existing_tools, dict):
         raise ValueError("Unsupported custom Pallium MCP tools")
+    if existing_env.get("PALLIUM_MCP_TRANSPORT", "stdio") != "stdio":
+        raise ValueError("Unsupported custom Pallium MCP transport")
+    settings = _mcp_settings_toml(existing_server, {
+        "env_vars": ["CODEX_APP_TOOLS_PIPE_PATH"],
+        "cwd": _codex_config_path().parent.resolve().as_posix(),
+        "required": True,
+        "startup_timeout_sec": 10,
+        "tool_timeout_sec": 30,
+        "default_tools_approval_mode": "prompt",
+    })
     content = _remove_mcp_server(content)
 
     mcp_block = (
         '\n[mcp_servers.pallium]\n'
         f'command = "{_mcp_command()}"\n'
         'args = ["-P", "-m", "app.run", "mcp"]\n'
-        'env_vars = ["CODEX_APP_TOOLS_PIPE_PATH"]\n'
-        f'env = {_mcp_env_toml(port, existing=existing_env)}\n'
-        'required = true\n'
-        'startup_timeout_sec = 10\n'
-        'tool_timeout_sec = 30\n'
-        'default_tools_approval_mode = "prompt"\n'
-        f'tools = {_mcp_tools_toml(existing_tools)}\n'
+        + settings
+        + f'env = {_mcp_env_toml(port, existing=existing_env)}\n'
+        + f'tools = {_mcp_tools_toml(existing_tools)}\n'
     )
 
     if content and not content.endswith("\n"):
@@ -515,31 +551,46 @@ def _remove_feature_flag(content: str) -> str:
     return content[:section.start] + replacement + content[section.stop:]
 
 
-def _install_relay_profile() -> None:
-    """Install Pallium's dedicated profile over the existing MCP server."""
-    _write_toml(
-        _codex_relay_profile_path(),
-        "[mcp_servers.pallium]\n"
-        "required = true\n"
-        'enabled_tools = ["pallium_relay_send", "pallium_relay_reply", "pallium_relay_ack", "pallium_relay_receive", "pallium_relay_trace", "pallium_search_history_by_work_ref", "pallium_search_history", "pallium_expand_source"]\n'
-        'default_tools_approval_mode = "prompt"\n'
-        "\n[mcp_servers.pallium.tools.pallium_relay_send]\n"
-        'approval_mode = "approve"\n'
-        "\n[mcp_servers.pallium.tools.pallium_relay_reply]\n"
-        'approval_mode = "approve"\n'
-        "\n[mcp_servers.pallium.tools.pallium_relay_ack]\n"
-        'approval_mode = "approve"\n'
-        "\n[mcp_servers.pallium.tools.pallium_relay_receive]\n"
-        'approval_mode = "approve"\n'
-        "\n[mcp_servers.pallium.tools.pallium_relay_trace]\n"
-        'approval_mode = "approve"\n'
-        "\n[mcp_servers.pallium.tools.pallium_search_history_by_work_ref]\n"
-        'approval_mode = "approve"\n'
-        "\n[mcp_servers.pallium.tools.pallium_search_history]\n"
-        'approval_mode = "approve"\n'
-        "\n[mcp_servers.pallium.tools.pallium_expand_source]\n"
-        'approval_mode = "approve"\n',
+def _relay_profile_content(content: str, base_server: dict) -> str:
+    managed = (
+        "pallium_relay_send", "pallium_relay_reply", "pallium_relay_ack", "pallium_relay_receive",
+        "pallium_relay_trace", "pallium_search_history_by_work_ref", "pallium_search_history", "pallium_expand_source",
     )
+    existing = _pallium_server_from_toml(content)
+    settings = _mcp_settings_toml(existing, {
+        "required": base_server.get("required", True),
+        "enabled_tools": list(managed),
+        "default_tools_approval_mode": base_server.get("default_tools_approval_mode", "prompt"),
+    })
+    enabled = existing.get("enabled_tools", list(managed))
+    if set(enabled) - set(managed) or "command" in existing or "args" in existing:
+        raise ValueError("Unsupported custom Pallium Relay profile transport or tool exposure")
+    env = existing.get("env", {})
+    tools = existing.get("tools", {})
+    if not isinstance(env, dict) or any(not isinstance(value, str) for value in env.values()):
+        raise ValueError("Unsupported custom Pallium MCP environment")
+    if not isinstance(tools, dict):
+        raise ValueError("Unsupported custom Pallium MCP tools")
+    if env.get("PALLIUM_MCP_TRANSPORT", "stdio") != "stdio":
+        raise ValueError("Unsupported custom Pallium MCP transport")
+    block = "\n[mcp_servers.pallium]\n" + settings
+    if env:
+        block += "env = { " + ", ".join(f"{_toml_key(key)} = {_toml_inline_string(value)}" for key, value in env.items()) + " }\n"
+    inherited_tools = {name: value for name, value in base_server.get("tools", {}).items() if name in managed}
+    block += f"tools = {_mcp_tools_toml({**inherited_tools, **tools}, managed=managed)}\n"
+    result = _remove_mcp_server(content).rstrip("\n") + block
+    _parse_toml(result)
+    return result
+
+
+def _install_relay_profile(content: str | None = None) -> None:
+    """Install the prevalidated dedicated overlay, or prepare it for direct callers."""
+    if content is None:
+        content = _relay_profile_content(
+            _read_toml(_codex_relay_profile_path()),
+            _pallium_server_from_toml(_read_toml(_codex_config_path())),
+        )
+    _write_toml(_codex_relay_profile_path(), content)
 
 
 def _remove_relay_profile() -> None:
@@ -979,6 +1030,10 @@ def install(
         _parse_toml(config_content)
         config_content = _ensure_feature_flag(config_content)
         config_content = _ensure_mcp_server(config_content, port=port)
+        profile_content = _relay_profile_content(
+            _read_toml(_codex_relay_profile_path()),
+            _pallium_server_from_toml(config_content),
+        )
     except ValueError as exc:
         print(
             f"ERROR: Could not safely update Codex MCP configuration: {exc}",
@@ -986,7 +1041,7 @@ def install(
         )
         return 2
     _write_toml(config_path, config_content)
-    _install_relay_profile()
+    _install_relay_profile(profile_content)
     print(f"  Configured feature flags and MCP server in {config_path}")
 
     # 2. Register hooks in hooks.json
