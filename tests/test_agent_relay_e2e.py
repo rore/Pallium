@@ -360,6 +360,7 @@ def test_redaction_reply_rechecks_budget_after_wait(monkeypatch):
     assert len(calls) == 1 and waits == [1]
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("case, suffix, secret", [
     ("harmless", "", None),
     ("mixed", " rotate this aB3dE4fG5hI6jK7lM8nO9 now", "aB3dE4fG5hI6jK7lM8nO9"),
@@ -371,10 +372,15 @@ def test_redaction_reply_rechecks_budget_after_wait(monkeypatch):
     ("provider-segment", " C:/short/ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zXcVb", "ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zXcVb"),
     ("assignment", "\npassword: C:/short/folder", "C:/short/folder"),
 ])
-def test_drive_directory_prose_redaction_send_reply_lifecycle(client, monkeypatch, case, suffix, secret):
+def test_drive_directory_prose_redaction_send_reply_lifecycle(
+    client, monkeypatch, case, suffix, secret, relay_admission_clock,
+):
     from app import dependencies
+    from storage import sqlite_queue
 
     service = client.app.state.pallium_service
+    storage = service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
     workers = []
     original_schedule = dependencies.schedule_claude_relay_wake
 
@@ -389,11 +395,14 @@ def test_drive_directory_prose_redaction_send_reply_lifecycle(client, monkeypatc
             worker.join(2)
             assert not worker.is_alive(), "reply wake worker did not finish"
         # Diagnostic FIFO completion fences identity readback; it has no reply SLA.
-        service._relay_trace_executor.submit(lambda: None).result()
+        client.app.state.relay_trace_writer._executor.submit(lambda: None).result()
 
     monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", capture_schedule)
-    _turn(client, "claude-code", "sender")
-    _turn(client, "codex", "target")
+    with relay_admission_clock(storage, expected_admissions=2):
+        _turn(client, "claude-code", "sender")
+        _turn(client, "codex", "target")
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
     path = "C:/Users/reader/.codex/worktrees/sample-project/workspace_run."
     raw = f"authorization: run checks from {path} Use python check.py --record build/check.json{suffix}\n完成 → שלום"
     sent = _send(client, "claude-code", "sender", "codex:target", raw, message_id=f"path-{case}")
@@ -512,7 +521,7 @@ def test_duplicate_reply_contends_with_prepared_trace_then_keeps_identity(client
             for worker in workers:
                 worker.join(2)
                 assert not worker.is_alive(), (worker.name, phase)
-            service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+            client.app.state.relay_trace_writer._executor.submit(lambda: None).result(timeout=2)
         finally:
             event.remove(engine, "after_cursor_execute", hold_prepared)
             event.remove(engine, "handle_error", observe_acquisition)
@@ -535,7 +544,7 @@ def test_duplicate_reply_contends_with_prepared_trace_then_keeps_identity(client
     for worker in workers:
         worker.join(2)
         assert not worker.is_alive(), worker.name
-    service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+    client.app.state.relay_trace_writer._executor.submit(lambda: None).result(timeout=2)
     replies = _turn(client, "claude-code", "sender")["deliveries"]
     assert len(replies) == 1 and replies[0]["message_id"] == reply_id, replies
     assert _ack(client, replies[0]).status_code == 200
@@ -1244,7 +1253,7 @@ def test_delivery_derived_reply_chain_and_boundaries(client, monkeypatch):
         for worker in workers:
             worker.join(2)
         assert all(not worker.is_alive() for worker in workers)
-        service._relay_trace_executor.submit(lambda: None).result()
+        client.app.state.relay_trace_writer._executor.submit(lambda: None).result()
 
     monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", capture_schedule)
     try:
@@ -1939,20 +1948,25 @@ def test_turn_response_budget_is_a_preclaim_guard_not_an_envelope_limit(client):
     assert [delivery["message_id"] for delivery in claimed] == [sent["message_id"]]
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize('runtime',['codex','claude-code','opencode','hermes'])
 def test_impossible_turn_response_budget_skips_candidate_work_and_preserves_claims(
-    client, relay_storage, monkeypatch, runtime,
+    client, relay_storage, monkeypatch, runtime, relay_admission_clock,
 ):
     from sqlalchemy import event
     from threading import local
+    from storage import sqlite_queue
     import storage.sqlite_relay as module
     from storage.sqlite_schema import RelayEndpointGenerationRecord
 
     current = datetime.now(timezone.utc).replace(microsecond=123456)
     original_now = module._now
     monkeypatch.setattr(module,'_now',lambda value=None: original_now(current if value is None else value))
-    _turn(client,'claude-code','budget-sender')
-    target = _turn(client,runtime,'budget-東京',title='"'*255,max_chars=1,max_response_chars=1)['session']
+    native_queue_time, native_begin = sqlite_queue.time, relay_storage._begin_relay_immediate
+    with relay_admission_clock(relay_storage, expected_admissions=2):
+        _turn(client,'claude-code','budget-sender')
+        target = _turn(client,runtime,'budget-東京',title='"'*255,max_chars=1,max_response_chars=1)['session']
+    assert sqlite_queue.time is native_queue_time and relay_storage._begin_relay_immediate == native_begin
     messages = [_send(client,'claude-code','budget-sender',target['endpoint_id'],
         '東京 🌍' if number == 0 else 'x'*(16000 if number == 1 else 32)).json() for number in range(10)]
     ids = [message['message_id'] for message in messages]

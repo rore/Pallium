@@ -199,14 +199,18 @@ def test_invalid_mixed_memory_configuration_is_rejected_without_paths(monkeypatc
         lifecycle.prepare_codex_wake_start(AppConfig(sqlite_url="sqlite:///:memory:", relay_sqlite_url="sqlite:///relay.db"))
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize("outcome", ["accepted", "uncertain"])
-def test_foreground_offline_upgrade_preserves_legacy_fences(lifecycle_config, monkeypatch, outcome):
+def test_foreground_offline_upgrade_preserves_legacy_fences(
+    lifecycle_config, monkeypatch, outcome, relay_admission_clock,
+):
     config, home = lifecycle_config
     storage = SQLiteStorageProvider(config.sqlite_url, config.resolved_relay_sqlite_url)
     relay = RelayService(storage)
     scope = {"container_ref": "git:example.test/offline-upgrade"}
-    for session in ("sender", "target"):
-        relay.turn(runtime="codex", session_ref=session, **scope)
+    with relay_admission_clock(storage, expected_admissions=2):
+        for session in ("sender", "target"):
+            relay.turn(runtime="codex", session_ref=session, **scope)
     delivery = relay.send(sender_runtime="codex", sender_session_ref="sender", recipient="codex:target",
                           payload="generic upgrade payload", **scope)["deliveries"][0]
     ephemeral = CodexWakeRegistry()

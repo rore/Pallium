@@ -60,6 +60,9 @@ def client(test_db_url: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestCl
         for storage in reversed(storages):
             cleanup.callback(storage.close)
         cleanup.callback(service.close)
+        trace_writer = getattr(app.state, "relay_trace_writer", None)
+        if trace_writer is not None:
+            cleanup.callback(trace_writer.close)
         cleanup.callback(app.state._wait_for_operations)
         cleanup.callback(http.close)
         yield http

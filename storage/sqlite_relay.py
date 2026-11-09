@@ -338,16 +338,29 @@ class SQLiteRelayMixin:
         }
 
     def _opencode_binding(self, db, request, current, *, enrollment=False):
-        session = db.get(RelaySessionRecord, request["endpoint_id"])
-        if session is None or (
+        binding = db.execute(
+            select(RelaySessionRecord, RelayEndpointGenerationRecord, RelayOpenCodeWakeRecord)
+            .select_from(RelaySessionRecord)
+            .outerjoin(
+                RelayEndpointGenerationRecord,
+                RelayEndpointGenerationRecord.endpoint_id == RelaySessionRecord.id,
+            )
+            .outerjoin(
+                RelayOpenCodeWakeRecord,
+                RelayOpenCodeWakeRecord.endpoint_id == RelaySessionRecord.id,
+            )
+            .where(RelaySessionRecord.id == request["endpoint_id"])
+        ).one_or_none()
+        if binding is None:
+            raise RelayNotFoundError("OpenCode endpoint not found in the requested scope")
+        session, scope, wake = binding
+        if (
             session.runtime != "opencode" or session.session_ref != request["session_ref"]
             or session.container_ref != request["container_ref"]
         ):
             raise RelayNotFoundError("OpenCode endpoint not found in the requested scope")
-        scope = db.get(RelayEndpointGenerationRecord, session.id)
         if session.state != "active" or request["scope_generation"] != (scope.generation if scope else 0):
             raise RelayConflictError("OpenCode endpoint is closed or its scope changed")
-        wake = db.get(RelayOpenCodeWakeRecord, session.id)
         if not enrollment and (
             wake is None or wake.owner_id != request["owner_id"]
             or _now(wake.owner_expires_at) <= current
