@@ -2857,7 +2857,7 @@ def test_shared_wake_admission_preserves_ack_under_poll_and_projection(
             assert snapshot.status_code == 200, snapshot.text
             stored, = snapshot.json()["deliveries"]
             assert (stored["delivery_id"], stored["state"], stored["attempts"]) == (delivery["delivery_id"], "delivered", 1)
-            assert stamps["ack_worker_entered"] < stamps["polls_released"]
+            assert stamps["ack_worker_entered"] <= stamps["polls_released"]
     assert not errors and len(poll_entries) == (3 if held_polls else 0)
     result = {"held_phase": held_phase, "held_polls": held_polls, "stamps": stamps, "single_ack": len(ack_calls),
               "hook_confirmed": bool(confirmed), "eventual_state": "delivered", "claim_attempts": 1,

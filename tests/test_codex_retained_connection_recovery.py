@@ -346,7 +346,7 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
         elif replacement_failure:
             await asyncio.to_thread(worker._thread.join, 1)
             assert not worker._thread.is_alive() and worker.stop_event.is_set(), (
-                {"phases": list(phases), "failure_stop_sample": worker.stop_event.is_set()}
+                json.dumps({"phases": list(phases), "failure_stop_sample": worker.stop_event.is_set()})
                 if observe_budget else None
             )
             assert len(operations) == 1, "reconnect replayed the original MCP call"
