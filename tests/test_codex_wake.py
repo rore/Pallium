@@ -3688,7 +3688,8 @@ def test_build_router_normalizes_endpoint_send_for_codex_wake(client) -> None:
 
 
 
-def test_ack_rearm_after_scope_transition_uses_live_container_and_historical_delivery_snapshot(client) -> None:
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_ack_rearm_after_scope_transition_uses_live_container_and_historical_delivery_snapshot(client, relay_admission_clock) -> None:
     app = FastAPI()
     app.include_router(build_router(
         client.app.state.pallium_service,
@@ -3700,9 +3701,17 @@ def test_ack_rearm_after_scope_transition_uses_live_container_and_historical_del
     new = {"container_ref": "git:example.test/wake-new"}
     sender = {"container_ref": "git:example.test/wake-sender"}
     with patch("app.dependencies.schedule_codex_relay_wake") as schedule:
-        assert route.post("/relay/turn", json={"runtime": "claude-code", "session_ref": "sender", **sender}).status_code == 200
-        registered = route.post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **old})
-        assert registered.status_code == 200
+        from storage import sqlite_queue
+
+        storage = client.app.state.pallium_service._storage
+        native_time = sqlite_queue.time
+        native_begin = storage._begin_relay_immediate
+        with relay_admission_clock(storage, expected_admissions=2):
+            assert route.post("/relay/turn", json={"runtime": "claude-code", "session_ref": "sender", **sender}).status_code == 200
+            registered = route.post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **old})
+            assert registered.status_code == 200
+        assert sqlite_queue.time is native_time
+        assert storage._begin_relay_immediate == native_begin
         endpoint = registered.json()["session"]["endpoint_id"]
         sent = []
         for message_id in ("transition-batch-1", "transition-batch-2"):

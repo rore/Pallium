@@ -724,9 +724,18 @@ def test_identity_selector_scope_and_state_errors_are_visible(client, monkeypatc
     ).json() == []
 
 
-def test_message_id_idempotency_redaction_and_reply_scope(client):
-    _turn(client, "claude-code", "sender")
-    _turn(client, "codex", "target")
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_message_id_idempotency_redaction_and_reply_scope(client, relay_admission_clock):
+    from storage import sqlite_queue
+
+    storage = client.app.state.pallium_service._storage
+    native_time = sqlite_queue.time
+    native_begin = storage._begin_relay_immediate
+    with relay_admission_clock(storage, expected_admissions=2):
+        _turn(client, "claude-code", "sender")
+        _turn(client, "codex", "target")
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
     first = _send(
         client,
         "claude-code",
