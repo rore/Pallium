@@ -821,7 +821,9 @@ def create_router(
 
     @router.post("/relay/turn", response_model=RelayTurnResponse)
     async def relay_turn(request: RelayTurnRequest):
-        started = time.monotonic() if request.wake_delivery_id is not None else None
+        codex_exact = request.runtime == "codex" and request.wake_delivery_id is not None
+        hermes_exact = request.runtime == "hermes" and request.wake_delivery_id is not None
+        started = time.monotonic() if codex_exact else None
         service_ms: int | None = None
         worker_start_ms: int | None = None
         snapshot_ms: int | None = None
@@ -833,9 +835,8 @@ def create_router(
             request_data.pop("claim_expires_at_ms")
         relay_request = dict(request_data)
         relay_request["exact_delivery_id"] = relay_request.pop("wake_delivery_id", None)
-        reservation = None
         try:
-            if request.runtime == "codex" and request.wake_delivery_id is not None:
+            if codex_exact:
                 def exact_turn_operation():
                     nonlocal service_ms, worker_start_ms, snapshot_ms
                     worker_started = time.monotonic()
@@ -890,31 +891,20 @@ def create_router(
                     raise _relay_http_error(exc) from exc
                 outcome = "ready"
                 return projected
-            if request.wake_delivery_id is not None and relay_turn_snapshot_callback is not None:
-                try:
-                    reservation = await _run_relay_operation(
-                        lambda: relay_turn_snapshot_callback(request_data),
-                        wake_admission=request.runtime == "codex",
-                    )
-                except Exception:
-                    logger.warning("Relay turn wake snapshot unavailable")
-            if reservation is not None:
-                relay_request["codex_wake_endpoint_id"] = reservation.recipient_endpoint_id
-                relay_request["codex_wake_generation"] = reservation.generation
             service_started = time.monotonic() if started is not None else None
             try:
                 result = await _relay_call("turn", lambda: _relay().turn(**relay_request))
             finally:
                 if service_started is not None:
                     service_ms = int((time.monotonic() - service_started) * 1000)
-            if relay_turn_callback is not None:
+            if not hermes_exact and relay_turn_callback is not None:
                 try:
                     await _run_relay_operation(lambda: relay_turn_callback(request_data, result), wake_admission=request.runtime == "codex")
                 except Exception:
                     logger.exception("Relay turn callback failed after admission")
-            if relay_turn_admission_callback is not None:
+            if not hermes_exact and relay_turn_admission_callback is not None:
                 try:
-                    await _run_relay_operation(lambda: relay_turn_admission_callback(request_data, result, reservation), wake_admission=request.runtime == "codex")
+                    await _run_relay_operation(lambda: relay_turn_admission_callback(request_data, result, None), wake_admission=request.runtime == "codex")
                 except Exception:
                     logger.exception("Relay turn admission callback failed after admission")
             projected = await _with_relay_activation(result)
@@ -966,10 +956,13 @@ def create_router(
 
     @router.post("/relay/opencode/wake", response_model=RelayOpenCodeWakeResponse)
     async def opencode_wake(request: RelayOpenCodeWakeRequest):
+        request_data = request.model_dump()
+        if "max_messages" not in request.model_fields_set:
+            request_data.pop("max_messages")
         wake_admission = request.operation == "poll"
         return await _with_relay_activation(
             await _relay_call(
-                "opencode_wake", lambda: _relay().opencode_wake(**request.model_dump()),
+                "opencode_wake", lambda: _relay().opencode_wake(**request_data),
                 wake_admission=wake_admission,
             ),
             wake_admission=wake_admission,

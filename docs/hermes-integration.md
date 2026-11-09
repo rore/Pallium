@@ -58,6 +58,12 @@ the host request, before provider completion. It does **not** prove that the age
 acted or replied. The hook owns claim and ACK; do not receive or acknowledge an
 injected delivery again. Use status and trace when an outcome is uncertain.
 
+A native wake can include up to three complete payloads. The exact trigger
+comes first, and each attached delivery has its own receipt and can be replied
+to during that host turn. A sibling that did not fit or whose ACK failed can
+be collected later after the anchor settles and the sibling becomes eligible.
+An uncertain anchor claim or ACK retains the existing wake fence.
+
 Busy-turn delivery, endpoint outages and controlled host/MCP relaunch are covered
 by the integration checks. Automatic standalone MCP reconnection, ordinary-turn
 fallback and recovery after uncertain claim/ACK outcomes are not guaranteed. Uncertain delivery state
@@ -95,6 +101,10 @@ they do not authorize overwriting an unowned file.
 - Integration checks cover Hermes v0.22.0 and v0.22.2 on Linux TUI and Windows
   Desktop/TUI. Runtime admission checks public plugin capabilities instead of
   enforcing an exact-version allowlist; other releases need compatible APIs.
+- Use the batching plugin and Pallium service from the same approved revision.
+  Verify the serving revision and loaded plugin after the existing profile-scoped
+  setup or update before enabling the wake path. An older service rejects the
+  new exact claim. The plugin does not fall back to an ordinary claim.
 - Windows checks used Windows Server 2025 and an unpacked app. They do not cover
   Windows 11, MSIX installation, the native updater or native app Quit. Keep
   Hermes installation and updates on its supported upstream path.

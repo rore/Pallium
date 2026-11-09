@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -79,6 +80,57 @@ def status(client, message):
     return result.json()["deliveries"][0]
 
 
+@pytest.mark.parametrize("field,value", [
+    ("previous_container_ref", None),
+    ("previous_endpoint_id", None),
+    ("previous_scope_generation", None),
+    ("structural_work_refs", None),
+    ("codex_wake_generation", None),
+    ("codex_wake_endpoint_id", None),
+])
+def test_hermes_exact_claim_rejects_supplied_authority_before_claim(exact_client, field, value):
+    client, store = exact_client
+    session = client.post("/relay/turn", json={
+        "runtime": "hermes", "session_ref": "hermes-target", **SCOPE,
+    }).json()["session"]
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": "sender",
+        "recipient": session["endpoint_id"], "payload": "complete → 東京", **SCOPE,
+    }).json()
+    trigger = sent["deliveries"][0]["delivery_id"]
+    body = {
+        "runtime": "hermes", "session_ref": "hermes-target", **SCOPE,
+        "wake_delivery_id": trigger, "register_session": False,
+        "max_messages": 3, "max_chars": 20_000, "max_response_chars": 48_000,
+    }
+    assert client.post("/relay/turn", json={**body, field: value}).status_code == 422
+    assert status(client, sent)["attempts"] == 0
+    service = RelayService(store)
+    direct = dict(body)
+    direct["exact_delivery_id"] = direct.pop("wake_delivery_id")
+    for extra in (
+        {"previous_container_ref": SCOPE["container_ref"],
+         "previous_endpoint_id": session["endpoint_id"],
+         "previous_scope_generation": session["scope_generation"]},
+        {"structural_work_refs": []},
+        {"codex_wake_endpoint_id": session["endpoint_id"], "codex_wake_generation": 1},
+    ):
+        with pytest.raises(ValueError):
+            service.turn(**direct, **extra)
+    assert status(client, sent)["attempts"] == 0
+    claimed = client.post("/relay/turn", json=body)
+    assert claimed.status_code == 200, claimed.text
+    delivery, = claimed.json()["deliveries"]
+    assert delivery["delivery_id"] == trigger and delivery["content_truncated"] is False
+    assert claimed.json()["session"]["scope_generation"] == session["scope_generation"]
+    assert client.post("/relay/turn", json={**body, field: value}).status_code == 422
+    assert status(client, sent)["attempts"] == 1
+    ack = client.post("/relay/deliveries/mcp-ack", json={
+        "delivery_id": trigger, "receipt": delivery["receipt"], **SCOPE,
+    })
+    assert ack.status_code == 200, ack.text
+
+
 def test_exact_claim_hydrates_only_requested_payload_and_preserves_backlog(exact_client):
     client, _ = exact_client
     messages = [send(client, payload="界" * 4000) for _ in range(100)]
@@ -90,7 +142,7 @@ def test_exact_claim_hydrates_only_requested_payload_and_preserves_backlog(exact
 
     event.listen(RelayMessageRecord, "load", loaded_message)
     try:
-        result = claim(client, expected)
+        result = claim(client, expected, max_messages=1)
     finally:
         event.remove(RelayMessageRecord, "load", loaded_message)
     assert [row["delivery_id"] for row in result["deliveries"]] == [expected]
@@ -125,7 +177,7 @@ def test_exact_claim_preserves_eligibility_and_never_claims_neighbor(exact_clien
                 delivery.lease_expires_at = now + timedelta(seconds=60 if condition == "live_claim" else -1)
     if condition == "missing":
         delivery_id = "relay-delivery-" + "0" * 32
-    result = claim(client, delivery_id)
+    result = claim(client, delivery_id, max_messages=1)
     if condition == "expired_claim":
         assert [(row["delivery_id"], row["attempts"]) for row in result["deliveries"]] == [(delivery_id, 2)]
     else:
@@ -143,7 +195,7 @@ def test_exact_claim_unicode_budget_and_unsafe_neighbor_count(exact_client, budg
     target = send(client, payload="界" * 4000)
     with storage._relay_session_factory.begin() as db:
         db.get(RelayMessageRecord, neighbor["message_id"]).payload = "invalid\x00payload"
-    result = claim(client, target["deliveries"][0]["delivery_id"], max_chars=budget)
+    result = claim(client, target["deliveries"][0]["delivery_id"], max_chars=budget, max_messages=1)
     assert result["remaining_count"] == (2 if budget == 1 else 1)
     assert result["has_more"] is True
     if budget == 1:
@@ -170,12 +222,13 @@ def test_exact_claim_json_budget_preserves_count_metadata(exact_client, monkeypa
     measure = relay_storage._compact_json_chars
 
     def observe(value):
-        projections.append(value)
+        if isinstance(value, dict) and value.get("deliveries") and all("delivery_id" in row for row in value["deliveries"]):
+            projections.append(value)
         return measure(value)
 
     monkeypatch.setattr(relay_storage, "_compact_json_chars", observe)
     delivery_id = target["deliveries"][0]["delivery_id"]
-    result = claim(client, delivery_id, max_response_chars=budget)
+    result = claim(client, delivery_id, max_response_chars=budget, max_messages=1)
     assert result["remaining_count"] == (2 if budget == 1 else 1)
     assert result["has_more"] is True
     if budget == 1:
@@ -277,3 +330,548 @@ def test_ordinary_claim_lazy_read_failure_closes_cursor_without_partial_claim(ex
         assert (unchanged["state"], unchanged["attempts"]) == ("pending", 0)
     result = claim(client, None, max_messages=2)
     assert [row["delivery_id"] for row in result["deliveries"]] == [item["deliveries"][0]["delivery_id"] for item in messages[:2]]
+
+
+@pytest.mark.parametrize("count", [1, 8, 9, 27])
+@pytest.mark.parametrize("trigger_last", [False, True])
+def test_codex_wake_batch_requires_trigger_first_and_preserves_backlog(exact_client, count, trigger_last):
+    client, _ = exact_client
+    messages = [send(client, payload=f"finding {index} → 你好") for index in range(count)]
+    trigger = messages[-1 if trigger_last else 0]
+    trigger_id = trigger["deliveries"][0]["delivery_id"]
+    expected = [trigger, *(item for item in messages if item is not trigger)][:8]
+    result = claim(client, trigger_id, max_chars=11960, max_messages=8)
+    assert [row["message_id"] for row in result["deliveries"]] == [item["message_id"] for item in expected]
+    assert (result["remaining_count"], result["has_more"]) == (count - len(expected), count > len(expected))
+    assert len({row["claim_token"] for row in result["deliveries"]}) == len(expected)
+    for row in result["deliveries"]:
+        assert row["attempts"] == 1 and row["state"] == "claimed"
+        assert client.post("/relay/deliveries/ack", json={
+            "delivery_id": row["delivery_id"], "claim_token": row["claim_token"], **SCOPE,
+        }).status_code == 200
+    assert all(status(client, item)["state"] == "delivered" for item in expected)
+    for item in messages:
+        if item not in expected:
+            assert (status(client, item)["state"], status(client, item)["attempts"]) == ("pending", 0)
+    stale = claim(client, trigger_id, max_chars=11960, max_messages=8)
+    assert stale["deliveries"] == [] and stale["remaining_count"] == count - len(expected)
+
+
+@pytest.mark.parametrize("condition", ["missing", "foreign", "expired", "live_claim", "unsafe", "text_budget", "json_budget", "json_only_budget"])
+def test_codex_batch_never_claims_siblings_without_projected_trigger(exact_client, condition):
+    client, storage = exact_client
+    neighbor = send(client)
+    target = send(client, recipient="other" if condition == "foreign" else "target")
+    delivery_id = target["deliveries"][0]["delivery_id"]
+    with storage._relay_session_factory.begin() as db:
+        delivery = db.get(RelayDeliveryRecord, delivery_id)
+        message = db.get(RelayMessageRecord, target["message_id"])
+        if condition == "expired":
+            message.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        elif condition == "live_claim":
+            delivery.state, delivery.attempts = "claimed", 1
+            delivery.lease_expires_at = datetime.now(timezone.utc) + timedelta(seconds=60)
+        elif condition == "unsafe":
+            message.payload = "unsafe\x00payload"
+    if condition == "missing":
+        delivery_id = "relay-delivery-" + "0" * 32
+    result = claim(client, delivery_id, max_messages=8,
+                   max_chars=1 if condition == "text_budget" else 0 if condition == "json_only_budget" else 11960,
+                   max_response_chars=1 if condition in {"json_budget", "json_only_budget"} else 0)
+    assert result["deliveries"] == [] and result["has_more"]
+    assert (status(client, neighbor)["state"], status(client, neighbor)["attempts"]) == ("pending", 0)
+
+
+@pytest.mark.parametrize("anchored", [False, True])
+@pytest.mark.parametrize("limit", [0, 1, 2])
+@pytest.mark.parametrize("budget_kind", ["unbounded", "render", "json", "both"])
+@pytest.mark.parametrize("payload", ["界" * 4000, '\\"😀é界' * 800], ids=["unicode", "escaped"])
+def test_pageable_count_limits_preserve_fitting_envelopes(
+    exact_client, claim_budget_sample, anchored, limit, budget_kind, payload,
+):
+    client, storage = exact_client
+    payloads = ["small", "wait", payload] if anchored else [payload, "small", "wait"]
+    messages = [send(client, payload=payload) for payload in payloads]
+    trigger = messages[-1] if anchored else messages[0]
+    ordered = [trigger, *(item for item in messages if item is not trigger)]
+    render_budget = 1401 if budget_kind in {"render", "both"} else 0
+    json_budget = 0
+    if budget_kind in {"json", "both"}:
+        with storage._relay_session_factory.begin() as db:
+            db.get(RelayMessageRecord, trigger["message_id"]).payload = "x"
+        _, pair = claim_budget_sample(ordered[:2])
+        _, triple = claim_budget_sample(ordered)
+        json_budget = (pair + triple) // 2
+        with storage._relay_session_factory.begin() as db:
+            db.get(RelayMessageRecord, trigger["message_id"]).payload = payload
+    bounded = bool(render_budget or json_budget)
+    count = min(limit or len(messages), 2 if bounded else len(messages))
+    result = claim(
+        client, trigger["deliveries"][0]["delivery_id"] if anchored else None,
+        max_messages=limit, max_chars=render_budget, max_response_chars=json_budget,
+    )
+    selected = result["deliveries"]
+    assert [row["message_id"] for row in selected] == [item["message_id"] for item in ordered[:count]]
+    assert (result["remaining_count"], result["has_more"]) == (3 - count, count < 3)
+    assert len({row["receipt"] for row in selected}) == count
+    assert all(row["state"] == "claimed" and row["attempts"] == 1 for row in selected)
+    if bounded:
+        assert selected[0]["content_truncated"] and 1 < selected[0]["next_offset"] < len(payload)
+        assert selected[0]["payload"] == payload[:selected[0]["next_offset"]]
+        rebuilt, offset = selected[0]["payload"], selected[0]["next_offset"]
+        while offset is not None:
+            response = client.get(f"/relay/messages/{selected[0]['message_id']}",
+                                  params={**SCOPE, "offset": offset, "page_size": 997})
+            assert response.status_code == 200, response.text
+            page = response.json()
+            assert page["payload_offset"] == offset and page["payload_total_chars"] == len(payload)
+            assert page["next_offset"] is None or offset < page["next_offset"] <= len(payload)
+            rebuilt += page["payload"]
+            offset = page["next_offset"]
+        assert rebuilt == payload
+    else:
+        assert selected[0]["payload"] == payload and not selected[0]["content_truncated"]
+    for row in selected:
+        acknowledged = client.post("/relay/deliveries/mcp-ack", json={
+            "delivery_id": row["delivery_id"], "receipt": row["receipt"], **SCOPE,
+        })
+        assert acknowledged.status_code == 200, acknowledged.text
+    assert all(status(client, item)["state"] == "delivered" for item in ordered[:count])
+    for item in ordered[count:]:
+        pending = status(client, item)
+        assert (pending["state"], pending["attempts"]) == ("pending", 0)
+
+
+@pytest.mark.parametrize("anchored", [False, True])
+def test_codex_batch_fair_prefixes_include_complete_envelopes_and_unicode(exact_client, anchored):
+    from integrations.codex.hooks import common
+
+    client, _ = exact_client
+    payload = "界😀é" * 5000
+    messages = [send(client, payload=payload) for _ in range(4)]
+    target = messages[-1]
+    result = claim(client, target["deliveries"][0]["delivery_id"] if anchored else None,
+                   max_messages=3, max_chars=5960)
+    expected = [target, *messages[:2]] if anchored else messages[:3]
+    assert [row["message_id"] for row in result["deliveries"]] == [item["message_id"] for item in expected]
+    output, rendered = common.format_relay(result["deliveries"], budget_chars=6000,
+                                           remaining_count=result["remaining_count"])
+    assert len(output) <= 6000 and rendered == result["deliveries"]
+    assert result["remaining_count"] == 1 and output.endswith("[Relay: 1 more; Pallium continues.]")
+    for row in rendered:
+        assert row["content_truncated"] and row["next_offset"] == len(row["payload"])
+        assert row["payload"] == payload[:row["next_offset"]] and row["payload_total_chars"] == len(payload)
+        complete = client.get(f"/relay/messages/{row['message_id']}", params=SCOPE).json()
+        assert complete["payload"] == payload
+
+
+@pytest.mark.parametrize("anchored", [False, True])
+def test_codex_batch_first_envelope_can_use_whole_budget(exact_client, anchored):
+    from integrations.codex.hooks import common
+
+    client, _ = exact_client
+    messages = [send(client, payload="small →") for _ in range(9)]
+    trigger = messages[-1] if anchored else messages[0]
+    result = claim(client, trigger["deliveries"][0]["delivery_id"] if anchored else None,
+                   max_chars=1200, max_messages=8)
+    assert [row["message_id"] for row in result["deliveries"]] == [trigger["message_id"]]
+    output, rendered = common.format_relay(result["deliveries"], budget_chars=1240,
+                                           remaining_count=result["remaining_count"])
+    assert rendered == result["deliveries"] and 150 < len(output) <= 1240
+    assert result["remaining_count"] == 8
+
+
+def test_codex_batch_expiry_after_flush_rolls_back_every_claim(exact_client, monkeypatch):
+    import time
+    from sqlalchemy.orm import Session
+    import storage.sqlite_relay as relay_storage
+
+    client, _ = exact_client
+    messages = [send(client) for _ in range(3)]
+    expired = [False]
+    clock = SimpleNamespace(**vars(time))
+    clock.monotonic = lambda: time.monotonic() + (60 if expired[0] else 0)
+    monkeypatch.setattr(relay_storage, "time", clock)
+
+    def after_claim_flush(session, _context):
+        if any(isinstance(row, RelayDeliveryRecord) and row.state == "claimed" for row in session.identity_map.values()):
+            expired[0] = True
+
+    event.listen(Session, "after_flush", after_claim_flush)
+    try:
+        response = client.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target", **SCOPE,
+            "wake_delivery_id": messages[-1]["deliveries"][0]["delivery_id"],
+            "max_messages": 8, "max_chars": 11960,
+            "claim_expires_at_ms": int(time.time() * 1000) + 30000,
+        })
+    finally:
+        event.remove(Session, "after_flush", after_claim_flush)
+    assert response.status_code == 409 and expired[0]
+    for item in messages:
+        state = status(client, item)
+        assert (state["state"], state["attempts"]) == ("pending", 0)
+
+
+@pytest.mark.parametrize("limit", [0, 1, 3])
+def test_codex_required_batch_preserves_explicit_count_meanings(exact_client, limit):
+    client, _ = exact_client
+    messages = [send(client) for _ in range(5)]
+    trigger = messages[-1]
+    expected = [trigger, *messages[:-1]][:limit or 5]
+    result = claim(client, trigger["deliveries"][0]["delivery_id"], max_messages=limit)
+    assert [row["message_id"] for row in result["deliveries"]] == [item["message_id"] for item in expected]
+    assert result["remaining_count"] == 5 - len(expected)
+
+
+def test_codex_batch_only_trigger_has_captured_wake_generation(exact_client):
+    from core.codex_wake import CodexWakeReservation
+
+    client, storage = exact_client
+    messages = [send(client) for _ in range(3)]
+    trigger_id = messages[-1]["deliveries"][0]["delivery_id"]
+    endpoint = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target", "max_chars": 1, **SCOPE,
+    }).json()["session"]["endpoint_id"]
+    reservation = CodexWakeReservation(endpoint, trigger_id, "target", SCOPE["container_ref"], 42, outcome="uncertain")
+    app = FastAPI()
+    app.include_router(create_router(SimpleNamespace(), relay_service=RelayService(storage),
+                                     relay_turn_snapshot_callback=lambda _: reservation))
+    with TestClient(app) as routed:
+        response = routed.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target", "wake_delivery_id": trigger_id,
+            "max_messages": 3, **SCOPE,
+        })
+    assert response.status_code == 200, response.text
+    assert response.json()["deliveries"][0]["delivery_id"] == trigger_id
+    for item in messages:
+        delivery_id = item["deliveries"][0]["delivery_id"]
+        assert (status(client, item)["state"], status(client, item)["attempts"]) == ("claimed", 1)
+        state = storage.relay_codex_wake_reservation_state(delivery_id=delivery_id)
+        assert state["codex_wake_generation"] == (42 if delivery_id == trigger_id else None)
+
+
+def test_codex_batch_skips_ineligible_siblings_and_rejects_stale_receipt(exact_client):
+    client, storage = exact_client
+    messages = [send(client, payload=f"item {index}") for index in range(6)]
+    foreign = send(client, recipient="other")
+    old_token = "relay-claim-old-lease"
+    now = datetime.now(timezone.utc)
+    with storage._relay_session_factory.begin() as db:
+        db.get(RelayMessageRecord, messages[0]["message_id"]).payload = "unsafe\x00body"
+        db.get(RelayMessageRecord, messages[1]["message_id"]).expires_at = now - timedelta(seconds=1)
+        for index, expiry in ((2, 60), (3, -1)):
+            row = db.get(RelayDeliveryRecord, messages[index]["deliveries"][0]["delivery_id"])
+            row.state, row.attempts, row.claim_token = "claimed", 1, old_token
+            row.lease_expires_at = now + timedelta(seconds=expiry)
+    trigger_id = messages[-1]["deliveries"][0]["delivery_id"]
+    result = claim(client, trigger_id, max_messages=8, max_chars=11960)
+    assert [row["message_id"] for row in result["deliveries"]] == [messages[index]["message_id"] for index in (5, 3, 4)]
+    assert result["remaining_count"] == 1  # Unsafe pending row is counted but never emitted.
+    assert (status(client, messages[0])["state"], status(client, messages[0])["attempts"]) == ("pending", 0)
+    assert status(client, messages[1])["state"] == "expired"
+    assert (status(client, messages[2])["state"], status(client, messages[2])["attempts"]) == ("claimed", 1)
+    assert (status(client, foreign)["state"], status(client, foreign)["attempts"]) == ("pending", 0)
+    renewed = result["deliveries"][1]
+    assert renewed["attempts"] == 2 and renewed["claim_token"] != old_token
+    rejected = client.post("/relay/deliveries/ack", json={
+        "delivery_id": renewed["delivery_id"], "claim_token": old_token, **SCOPE,
+    })
+    assert rejected.status_code == 409
+    for row in result["deliveries"]:
+        assert client.post("/relay/deliveries/ack", json={
+            "delivery_id": row["delivery_id"], "claim_token": row["claim_token"], **SCOPE,
+        }).status_code == 200
+
+
+@pytest.mark.parametrize("budget", [2400, 6000])
+@pytest.mark.parametrize("render_budget", [0, 5960])
+def test_codex_batch_respects_compact_json_projection_limit(exact_client, monkeypatch, budget, render_budget):
+    import storage.sqlite_relay as relay_storage
+
+    client, _ = exact_client
+    messages = [send(client, payload="界😀" * 7500) for _ in range(3)]
+    projections, measure = [], relay_storage._compact_json_chars
+
+    def observe(value):
+        if isinstance(value, dict) and value.get("deliveries") and all("delivery_id" in row for row in value["deliveries"]):
+            projections.append(value)
+        return measure(value)
+
+    monkeypatch.setattr(relay_storage, "_compact_json_chars", observe)
+    trigger_id = messages[-1]["deliveries"][0]["delivery_id"]
+    result = claim(client, trigger_id, max_messages=3, max_chars=render_budget, max_response_chars=budget)
+    selected = [row["delivery_id"] for row in result["deliveries"]]
+    assert selected and selected[0] == trigger_id
+    assert result["remaining_count"] == 3 - len(selected)
+    assert any([row["delivery_id"] for row in value["deliveries"]] == selected and measure(value) <= budget
+               for value in projections)
+
+
+def test_codex_batch_scope_move_and_stale_generation_remain_atomic(exact_client):
+    client, _ = exact_client
+    messages = [send(client) for _ in range(3)]
+    source = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target", "max_chars": 1, **SCOPE,
+    }).json()["session"]
+    body = {
+        "runtime": "codex", "session_ref": "target", "container_ref": "git:example.test/moved",
+        "previous_container_ref": SCOPE["container_ref"], "previous_endpoint_id": source["endpoint_id"],
+        "previous_scope_generation": source["scope_generation"] + 1,
+        "wake_delivery_id": messages[-1]["deliveries"][0]["delivery_id"], "max_messages": 8,
+    }
+    rejected = client.post("/relay/turn", json=body)
+    assert rejected.status_code == 409
+    assert all((status(client, item)["state"], status(client, item)["attempts"]) == ("pending", 0) for item in messages)
+    body["previous_scope_generation"] = source["scope_generation"]
+    moved = client.post("/relay/turn", json=body)
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["session"]["endpoint_id"] == source["endpoint_id"]
+    assert moved.json()["session"]["scope_generation"] == source["scope_generation"] + 1
+    assert [row["message_id"] for row in moved.json()["deliveries"]] == [messages[index]["message_id"] for index in (2, 0, 1)]
+
+
+def test_codex_overlapping_batch_claims_do_not_double_claim(exact_client):
+    from concurrent.futures import ThreadPoolExecutor
+
+    client, _ = exact_client
+    messages = [send(client) for _ in range(3)]
+    body = {"runtime": "codex", "session_ref": "target", **SCOPE,
+            "wake_delivery_id": messages[-1]["deliveries"][0]["delivery_id"], "max_messages": 8}
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        responses = list(workers.map(lambda _: client.post("/relay/turn", json=body), range(2)))
+    assert all(response.status_code in {200, 503} for response in responses)
+    claimed = [response.json()["deliveries"] for response in responses if response.status_code == 200]
+    assert sum(bool(rows) for rows in claimed) == 1 and sum(map(len, claimed)) == 3
+    assert all((status(client, item)["state"], status(client, item)["attempts"]) == ("claimed", 1) for item in messages)
+
+
+@contextmanager
+def _payload_read_witness():
+    loaded, hydrated = [], []
+
+    def on_load(record, _context):
+        loaded.append(record.id)
+        if "payload" in record.__dict__:
+            hydrated.append(record.id)
+
+    def on_refresh(record, _context, attributes):
+        if "payload" in attributes:
+            hydrated.append(record.id)
+
+    event.listen(RelayMessageRecord, "load", on_load)
+    event.listen(RelayMessageRecord, "refresh", on_refresh)
+    try:
+        yield loaded, hydrated
+    finally:
+        event.remove(RelayMessageRecord, "load", on_load)
+        event.remove(RelayMessageRecord, "refresh", on_refresh)
+
+
+@pytest.fixture
+def claim_budget_sample(exact_client, monkeypatch):
+    import storage.sqlite_relay as relay_storage
+
+    client, storage = exact_client
+
+    def sample(messages):
+        native_now = relay_storage._now
+        fixed = native_now()
+        monkeypatch.setattr(relay_storage, "_now", lambda value=None: native_now(value) if value is not None else fixed)
+        measure, sizes = relay_storage._compact_json_chars, []
+        expected = [item["deliveries"][0]["delivery_id"] for item in messages]
+
+        def observe(value):
+            size = measure(value)
+            if isinstance(value, dict) and isinstance(value.get("deliveries"), list):
+                if [row.get("delivery_id") for row in value["deliveries"]] == expected:
+                    sizes.append(size)
+            return size
+
+        with monkeypatch.context() as capture:
+            capture.setattr(relay_storage, "_compact_json_chars", observe)
+            result = claim(client, expected[0], max_messages=len(expected), max_response_chars=1_000_000)
+        assert [row["delivery_id"] for row in result["deliveries"]] == expected and sizes
+        rendered = 0
+        for index, row in enumerate(result["deliveries"]):
+            message = SimpleNamespace(
+                id=row["message_id"], sender_runtime=row["sender_runtime"],
+                sender_session_ref=row["sender_session_ref"],
+                created_at=datetime.fromisoformat(row["created_at"]), in_reply_to=row["in_reply_to"],
+            )
+            rendered += len(relay_storage._delivery_text(
+                SimpleNamespace(id=row["delivery_id"]), message,
+                {**row, "claim_attempt": 1, "possible_redelivery": False},
+            )) + (2 if index else 0)
+        # Calibration claims are fixture setup; restore their original pending state before the witness.
+        with storage._relay_session_factory.begin() as db:
+            for delivery_id in expected:
+                row = db.get(RelayDeliveryRecord, delivery_id)
+                row.state, row.attempts, row.claim_token = "pending", 0, None
+                row.claimed_at = row.lease_expires_at = None
+        return rendered, min(sizes)
+
+    return sample
+
+
+@pytest.mark.parametrize("budget_kind", ["render", "json"])
+@pytest.mark.parametrize("anchored", [False, True])
+def test_claim_stops_body_reads_after_proven_output_exhaustion(exact_client, claim_budget_sample, budget_kind, anchored):
+    client, _ = exact_client
+    messages = [send(client, payload="x") for _ in range(40)]
+    trigger = messages[-1] if anchored else messages[0]
+    render, compact = claim_budget_sample([trigger])
+    budgets = {"max_chars": render} if budget_kind == "render" else {"max_response_chars": compact}
+    with _payload_read_witness() as (loaded, hydrated):
+        result = claim(client, trigger["deliveries"][0]["delivery_id"] if anchored else None,
+                       max_messages=0, **budgets)
+    assert [row["message_id"] for row in result["deliveries"]] == [trigger["message_id"]]
+    assert hydrated == [trigger["message_id"]] and len(loaded) <= 16
+    assert (result["remaining_count"], result["has_more"]) == (39, True)
+    row, = result["deliveries"]
+    assert client.post("/relay/deliveries/mcp-ack", json={
+        "delivery_id": row["delivery_id"], "receipt": row["receipt"], **SCOPE,
+    }).status_code == 200
+    assert status(client, trigger)["state"] == "delivered"
+    assert all((status(client, item)["state"], status(client, item)["attempts"]) == ("pending", 0)
+               for item in messages if item is not trigger)
+
+
+@pytest.mark.parametrize("budget_kind", ["render", "json"])
+@pytest.mark.parametrize("anchored", [False, True])
+def test_claim_skips_impossible_metadata_without_hiding_later_fit(exact_client, claim_budget_sample, budget_kind, anchored):
+    client, storage = exact_client
+    rejected = [send(client, payload="x") for _ in range(32)]
+    fitting = send(client, payload="x")
+    render, compact = claim_budget_sample([fitting])
+    with storage._relay_session_factory.begin() as db:
+        for item in rejected:
+            db.get(RelayMessageRecord, item["message_id"]).sender_session_ref = '\\"界' * 80
+    budgets = {"max_chars": render} if budget_kind == "render" else {"max_response_chars": compact}
+    with _payload_read_witness() as (loaded, hydrated):
+        result = claim(client, rejected[0]["deliveries"][0]["delivery_id"] if anchored else None,
+                       max_messages=0, **budgets)
+    assert [row["message_id"] for row in result["deliveries"]] == ([] if anchored else [fitting["message_id"]])
+    assert hydrated == ([] if anchored else [fitting["message_id"]])
+    assert len(loaded) <= 16 if anchored else len(loaded) > 16
+    assert (result["remaining_count"], result["has_more"]) == (33 if anchored else 32, True)
+    assert all((status(client, item)["state"], status(client, item)["attempts"]) == ("pending", 0) for item in rejected)
+    assert status(client, fitting)["state"] == ("pending" if anchored else "claimed")
+
+
+@pytest.mark.parametrize("total", [2, 11])
+def test_claim_json_append_budget_keeps_escaping_and_count_transitions(exact_client, claim_budget_sample, total):
+    client, storage = exact_client
+    messages = [send(client, payload="x") for _ in range(total)]
+    with storage._relay_session_factory.begin() as db:
+        for item in messages:
+            db.get(RelayMessageRecord, item["message_id"]).sender_session_ref = 'source-\\"é界'
+    _, compact = claim_budget_sample(messages[:2])
+    with _payload_read_witness() as (_loaded, hydrated):
+        result = claim(client, None, max_messages=0, max_response_chars=compact)
+    assert [row["message_id"] for row in result["deliveries"]] == [item["message_id"] for item in messages[:2]]
+    assert hydrated == [item["message_id"] for item in messages[:2]]
+    assert (result["remaining_count"], result["has_more"]) == (total - 2, total > 2)
+    assert len({row["receipt"] for row in result["deliveries"]}) == 2
+    for row in result["deliveries"]:
+        assert client.post("/relay/deliveries/mcp-ack", json={
+            "delivery_id": row["delivery_id"], "receipt": row["receipt"], **SCOPE,
+        }).status_code == 200
+    assert all(status(client, item)["state"] == "delivered" for item in messages[:2])
+    assert all((status(client, item)["state"], status(client, item)["attempts"]) == ("pending", 0) for item in messages[2:])
+
+
+@pytest.mark.parametrize("limit", [0, 17])
+def test_claim_count_cap_and_unlimited_keep_exact_body_reads(exact_client, limit):
+    client, _ = exact_client
+    messages = [send(client, payload="x") for _ in range(40)]
+    expected = messages[:limit or 40]
+    with _payload_read_witness() as (_loaded, hydrated):
+        result = claim(client, None, max_messages=limit)
+    assert hydrated == [item["message_id"] for item in expected]
+    assert [row["message_id"] for row in result["deliveries"]] == hydrated
+    assert (result["remaining_count"], result["has_more"]) == (40 - len(expected), len(expected) < 40)
+    assert len({row["receipt"] for row in result["deliveries"]}) == len(expected)
+
+
+@pytest.mark.parametrize("fit_count", [1, 2])
+@pytest.mark.parametrize("anchored", [False, True])
+def test_claim_json_floor_admits_shorter_partial_paging_shape(exact_client, claim_budget_sample, fit_count, anchored):
+    client, storage = exact_client
+    messages = [send(client, payload="x") for _ in range(2)]
+    _, compact = claim_budget_sample(messages[:fit_count])
+    with storage._relay_session_factory.begin() as db:
+        db.get(RelayMessageRecord, messages[0]["message_id"]).payload = "xy"
+    # JSON true is one character shorter than false; offset 1 is three shorter than null.
+    with _payload_read_witness() as (_loaded, hydrated):
+        result = claim(client, messages[0]["deliveries"][0]["delivery_id"] if anchored else None,
+                       max_messages=0, max_chars=0, max_response_chars=compact - 4)
+    assert [row["message_id"] for row in result["deliveries"]] == [item["message_id"] for item in messages[:fit_count]]
+    row = result["deliveries"][0]
+    assert hydrated == [item["message_id"] for item in messages[:fit_count]]
+    assert (row["payload"], row["payload_total_chars"], row["next_offset"], row["content_truncated"]) == ("x", 2, 1, True)
+    assert (result["remaining_count"], result["has_more"]) == (2 - fit_count, fit_count == 1)
+    assert (status(client, messages[1])["state"], status(client, messages[1])["attempts"]) == (
+        ("pending", 0) if fit_count == 1 else ("claimed", 1)
+    )
+
+
+def test_claim_ambiguous_unsafe_bodies_still_get_full_validation(exact_client):
+    client, storage = exact_client
+    rejected = [send(client, payload="x") for _ in range(32)]
+    fitting = send(client, payload="x")
+    with storage._relay_session_factory.begin() as db:
+        for item in rejected:
+            db.get(RelayMessageRecord, item["message_id"]).payload = "unsafe\x00body"
+    with _payload_read_witness() as (loaded, hydrated):
+        result = claim(client, None, max_messages=0, max_chars=2000, max_response_chars=5000)
+    assert len(loaded) > 16 and hydrated == [item["message_id"] for item in [*rejected, fitting]]
+    assert [row["message_id"] for row in result["deliveries"]] == [fitting["message_id"]]
+    assert (result["remaining_count"], result["has_more"]) == (32, True)
+    assert all((status(client, item)["state"], status(client, item)["attempts"]) == ("pending", 0) for item in rejected)
+
+
+@pytest.mark.parametrize("budget_kind", ["render", "json"])
+def test_claim_supplied_expiry_during_metadata_scan_rolls_back(exact_client, claim_budget_sample, monkeypatch, budget_kind):
+    import time
+    import storage.sqlite_relay as relay_storage
+
+    client, storage = exact_client
+    first = send(client, payload="x")
+    rejected = [send(client, payload="x") for _ in range(32)]
+    if budget_kind == "render":
+        render, _ = claim_budget_sample([first])
+        budgets = {"max_chars": render + 600}
+    else:
+        _, compact = claim_budget_sample([first, rejected[0]])
+        budgets = {"max_chars": 0, "max_response_chars": compact}
+    with storage._relay_session_factory.begin() as db:
+        for item in rejected:
+            db.get(RelayMessageRecord, item["message_id"]).sender_session_ref = '\\"界' * 80
+    expired = [False]
+    clock = SimpleNamespace(**vars(time))
+    clock.monotonic = lambda: time.monotonic() + (60 if expired[0] else 0)
+    monkeypatch.setattr(relay_storage, "time", clock)
+
+    def expire_on_second_window(record, _context):
+        if record.id == rejected[20]["message_id"]:
+            expired[0] = True
+
+    event.listen(RelayMessageRecord, "load", expire_on_second_window)
+    try:
+        with _payload_read_witness() as (_loaded, hydrated):
+            result = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "target", "title": "uncommitted title", **SCOPE,
+                "max_messages": 0, **budgets,
+                "claim_expires_at_ms": int(time.time() * 1000) + 30000,
+            })
+    finally:
+        event.remove(RelayMessageRecord, "load", expire_on_second_window)
+    assert result.status_code == 409 and expired[0]
+    assert hydrated == [first["message_id"]]
+    for item in [first, *rejected]:
+        state = status(client, item)
+        assert (state["state"], state["attempts"], state["claimed_at"], state["lease_expires_at"]) == ("pending", 0, None, None)
+    sessions = client.get("/relay/sessions", params=SCOPE)
+    assert sessions.status_code == 200
+    assert next(row for row in sessions.json() if row["session_ref"] == "target")["title"] is None
