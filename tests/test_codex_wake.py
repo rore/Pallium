@@ -5471,6 +5471,61 @@ def test_relay_profile_parses_to_exact_read_only_tools(monkeypatch, tmp_path) ->
     assert set(profile["enabled_tools"]) == expected == set(profile["tools"])
     assert {tool["approval_mode"] for tool in profile["tools"].values()} == {"approve"}
 
+
+@pytest.mark.parametrize("base_required", [True, False])
+@pytest.mark.parametrize("existing_required", [None, True, False])
+def test_relay_profile_preserves_explicit_startup_and_approval_choices(monkeypatch, tmp_path, base_required, existing_required):
+    from app.cli import setup_codex
+    import json
+    import tomllib
+
+    monkeypatch.setattr(setup_codex.Path, "home", lambda: tmp_path)
+    config_path = tmp_path / ".codex" / "config.toml"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        f'[mcp_servers.pallium]\nrequired = {json.dumps(base_required)}\n'
+        'tools = { pallium_relay_send = { approval_mode = "prompt" } }\n',
+        encoding="utf-8",
+    )
+    profile_path = tmp_path / ".codex" / "pallium-relay.config.toml"
+    explicit_cwd = (tmp_path / "profil 任务 😀").as_posix()
+    unicode_key = "CREDENTIAL_😀"
+    unicode_value = 'retained 😀 "quoted" \\ path\tline\nnext\x7f'
+    if existing_required is not None:
+        profile_path.write_text(
+            f'[mcp_servers.pallium]\nrequired = {json.dumps(existing_required)}\ncwd = {json.dumps(explicit_cwd, ensure_ascii=False)}\n'
+            'startup_readiness = "connection"\nstartup_timeout_sec = 14\ntool_timeout_sec = 42\n'
+            'env = { CREDENTIAL_SENTINEL = "retained-value", "CREDENTIAL_😀" = "retained 😀 \\"quoted\\" \\\\ path\\tline\\nnext\\u007f" }\n'
+            'enabled_tools = ["pallium_relay_send"]\ndisabled_tools = []\n'
+            'default_tools_approval_mode = "writes"\n'
+            'tools = { pallium_relay_send = { approval_mode = "writes" } }\n'
+            '[other]\nvalue = "keep"\n',
+            encoding="utf-8",
+        )
+    setup_codex._install_relay_profile()
+    installed = profile_path.read_bytes()
+    setup_codex._install_relay_profile()
+    assert profile_path.read_bytes() == installed
+    parsed = tomllib.loads(installed.decode())
+    profile = parsed["mcp_servers"]["pallium"]
+    assert profile["required"] is (base_required if existing_required is None else existing_required)
+    assert "command" not in profile and "args" not in profile
+    if existing_required is None:
+        assert "cwd" not in profile and "startup_timeout_sec" not in profile and "tool_timeout_sec" not in profile
+        assert profile["tools"]["pallium_relay_send"] == {"approval_mode": "prompt"}
+        assert len(profile["enabled_tools"]) == 8
+    else:
+        assert profile["cwd"] == explicit_cwd
+        assert profile["startup_readiness"] == "connection"
+        assert profile["startup_timeout_sec"] == 14 and profile["tool_timeout_sec"] == 42
+        assert profile["env"] == {"CREDENTIAL_SENTINEL": "retained-value", unicode_key: unicode_value}
+        assert profile["enabled_tools"] == ["pallium_relay_send"] and profile["disabled_tools"] == []
+        assert profile["default_tools_approval_mode"] == "writes"
+        assert profile["tools"]["pallium_relay_send"] == {"approval_mode": "writes"}
+        assert parsed["other"] == {"value": "keep"}
+    setup_codex._remove_relay_profile()
+    assert not profile_path.exists()
+
 def test_http_repeat_ack_mcp_ack_and_atomic_reply_release_exact_codex_reservation(
     client, isolated_codex_registry: CodexWakeRegistry,
 ) -> None:

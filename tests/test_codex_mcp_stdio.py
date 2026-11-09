@@ -94,17 +94,22 @@ class _RelayHandler(BaseHTTPRequestHandler):
 
 
 async def _exercise_child(
-    env: dict[str, str], endpoint: str
+    env: dict[str, str], endpoint: str, config: dict
 ) -> tuple[list[str], str]:
     params = StdioServerParameters(
-        command=env["PYTHON"],
-        args=["-m", "app.run", "mcp"],
-        env={**env, "PALLIUM_BASE_URL": endpoint},
+        command=config["command"],
+        args=config["args"],
+        cwd=config["cwd"],
+        env={**env, **config["env"], "PALLIUM_BASE_URL": endpoint},
     )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = await session.list_tools()
+            from app.mcp.server import create_server
+
+            expected = await create_server().list_tools()
+            assert [tool.model_dump() for tool in tools.tools] == [tool.model_dump() for tool in expected]
             receive_schema = next(
                 tool
                 for tool in tools.tools
@@ -225,12 +230,30 @@ async def _exercise_child(
             return errors, max_session
 
 
-def test_codex_stdio_metadata_identity() -> None:
+def test_codex_stdio_metadata_identity(monkeypatch, tmp_path) -> None:
+    import tomllib
+    from app.cli import setup_codex
+
     repo = str(Path(__file__).resolve().parents[1])
+    isolated_home = tmp_path / "配置 home 😀"
+    config_path = isolated_home / ".codex" / "config.toml"
+    monkeypatch.setattr(Path, "home", lambda: isolated_home)
+    content = setup_codex._ensure_mcp_server("")
+    assert setup_codex._ensure_mcp_server(content) == content
+    setup_codex._write_toml(config_path, content)
+    config = tomllib.loads(config_path.read_text(encoding="utf-8"))["mcp_servers"]["pallium"]
+    assert Path(config["cwd"]) == config_path.parent.resolve()
+    saved_chat = tmp_path / "deleted chat 任务"
+    saved_chat.mkdir()
+    saved_chat.rmdir()
+    assert not saved_chat.exists()
     base = os.environ.copy()
+    base.pop("CODEX_APP_TOOLS_PIPE_PATH", None)
     base.update(
         {
             "PYTHON": os.sys.executable,
+            "HOME": str(isolated_home),
+            "USERPROFILE": str(isolated_home),
             "PYTHONPATH": os.pathsep.join(
                 filter(None, (repo, os.environ.get("PYTHONPATH")))
             ),
@@ -251,7 +274,7 @@ def test_codex_stdio_metadata_identity() -> None:
     try:
         errors, max_session = asyncio.run(
             _exercise_child(
-                base, f"http://127.0.0.1:{server.server_port}"
+                base, f"http://127.0.0.1:{server.server_port}", config
             )
         )
     finally:
