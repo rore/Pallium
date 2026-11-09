@@ -2063,11 +2063,19 @@ def _hook_runner(http, monkeypatch, state, events, tmp_path, *, allow_preclaim_r
         original_emit(text, event)
         events.append(("emit", event, text))
     monkeypatch.setattr(hook, "emit_context", emit)
+    ack_responses = []
     def ack(deliveries, *, container_ref):
         assert events and events[-1][0] == "emit"
         for delivery in deliveries:
-            response = http.post("/relay/deliveries/ack", json={"delivery_id": delivery["delivery_id"],
-                "claim_token": delivery["claim_token"], "container_ref": container_ref})
+            try:
+                response = http.post("/relay/deliveries/ack", json={"delivery_id": delivery["delivery_id"],
+                    "claim_token": delivery["claim_token"], "container_ref": container_ref})
+            except Exception as error:
+                ack_responses.append({"error_class": type(error).__name__[:64]})
+                del ack_responses[:-4]
+                raise
+            ack_responses.append({"status": response.status_code})
+            del ack_responses[:-4]
             assert response.status_code == 200
         events.append(("ack",))
         return deliveries
@@ -2079,6 +2087,7 @@ def _hook_runner(http, monkeypatch, state, events, tmp_path, *, allow_preclaim_r
             hook.main()
         assert exited.value.code == 0
     run.refusals = refusals
+    run.ack_responses = ack_responses
     return run
 
 
@@ -2412,7 +2421,22 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
                         pending = http.get(f"/relay/messages/{message_id}", params=SCOPE).json()["deliveries"][0]
                         assert (pending["state"], pending["attempts"]) == ("pending", 0)
                     now[0] = datetime.fromtimestamp(current.retry_not_before, timezone.utc) + timedelta(seconds=1)
-                assert emitted.wait(5), "Automatic recovery did not emit the expired spent wake"
+                assert emitted.wait(5), json.dumps({
+                    "reason": "Recovery did not complete emission and acknowledgement",
+                    "original_payload_emitted": any(
+                        entry[0] == "emit" and first["delivery_id"] in entry[2] for entry in events
+                    ),
+                    "backlog_payload_emitted": any(
+                        entry[0] == "emit" and second["delivery_id"] in entry[2] for entry in events
+                    ),
+                    "ack_events": sum(entry[0] == "ack" for entry in events),
+                    "ack_responses": hook.ack_responses[-4:],
+                    "observed_fence_phase": "before_last_clock_advance" if fault == "claim-once" else "initial",
+                    "observed_generation": (current if fault == "claim-once" else fence).generation,
+                    "observed_outcome": (current if fault == "claim-once" else fence).outcome,
+                    "observed_delivery_matches": (current if fault == "claim-once" else fence).delivery_id == first["delivery_id"],
+                    "durable_state": "unknown; original final readback not reached",
+                })[:1400]
                 if fault != "release-twice":
                     assert recovery_completed.wait(5), "Natural recovery callback did not settle"
                 for worker in workers:
