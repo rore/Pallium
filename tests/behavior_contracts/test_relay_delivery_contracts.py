@@ -121,6 +121,8 @@ def test_codex_prompt_batch_emits_required_trigger_before_individual_receipts(ba
             [f"message_id: {item['message_id']}", f"delivery_id: {item['deliveries'][0]['delivery_id']}"]
             for item in [trigger, *messages[:7]]
         ]
+        for block, item in zip(blocks, [trigger, *messages[:7]]):
+            assert item["payload"] in block.splitlines()
         assert f"delivery_id: {messages[7]['deliveries'][0]['delivery_id']}" not in packet.splitlines()
 
         selected = state.turns[-1]["deliveries"]

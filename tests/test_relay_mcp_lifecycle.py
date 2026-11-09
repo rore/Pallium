@@ -82,8 +82,15 @@ def relay_storage(client: TestClient):
 
 # ── cases ──────────────────────────────────────────────────────────────────────
 
-def test_empty_inbox(client: TestClient):
-    result = _register(client)
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_empty_inbox(client: TestClient, relay_admission_clock):
+    from storage import sqlite_queue
+
+    storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
+    with relay_admission_clock(storage, expected_admissions=1):
+        result = _register(client)
+    assert sqlite_queue.time is native_time and storage._begin_relay_immediate == native_begin
     assert result["deliveries"] == []
     assert result["has_more"] is False
 

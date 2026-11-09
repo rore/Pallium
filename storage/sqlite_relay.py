@@ -1706,7 +1706,7 @@ class SQLiteRelayMixin:
             session_view = _session_view(registered, current, 24 * 60 * 60, generation)
             selected: list[tuple[RelayDeliveryRecord, RelayMessageRecord, dict[str, Any], int, str]] = []
             used = 0
-            reserve_envelopes = not complete_payloads and max_chars > 0 and max_messages != 1 and eligible_count > 1
+            reserve_envelopes = not complete_payloads and (max_chars > 0 or max_response_chars > 0) and max_messages != 1 and eligible_count > 1
             lease_expires_at = current + timedelta(seconds=lease_seconds)
 
             def response(deliveries: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1841,7 +1841,7 @@ class SQLiteRelayMixin:
                         minimum = project_prefix(1)
                         if minimum is not None and (
                             projected is None or minimum[1] < projected[1]
-                            or (max_response_chars and minimum[1] == projected[1]
+                            or (max_response_chars and (not max_chars or minimum[1] == projected[1])
                                 and _compact_json_chars(minimum[0]) < _compact_json_chars(projected[0]))
                         ):
                             projected = minimum
@@ -1863,7 +1863,7 @@ class SQLiteRelayMixin:
                     if not view["content_truncated"]:
                         continue
                     remaining = sum(item[2]["content_truncated"] for item in selected[index:])
-                    render_room = size + (max_chars - used) // remaining
+                    render_room = size + (max_chars - used) // remaining if max_chars else None
                     response_limit = None
                     if max_response_chars:
                         current_response = _compact_json_chars(response([item[2] for item in selected]))
