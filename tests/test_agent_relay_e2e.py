@@ -1197,9 +1197,17 @@ uvicorn.run(create_app(config), host="127.0.0.1", port=int(sys.argv[5]), log_lev
         (scratch / "identity.json").write_text(json.dumps(identity, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def test_delivery_derived_reply_is_attributed_scoped_and_idempotent(client):
-    _turn(client, "claude-code", "sender")
-    _turn(client, "codex", "target")
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_delivery_derived_reply_is_attributed_scoped_and_idempotent(client, relay_admission_clock):
+    from storage import sqlite_queue
+
+    storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
+    with relay_admission_clock(storage, expected_admissions=2):
+        _turn(client, "claude-code", "sender")
+        _turn(client, "codex", "target")
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
     parent = _send(client, "claude-code", "sender", "codex:target", "question").json()
     delivery = parent["deliveries"][0]
 
