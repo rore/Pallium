@@ -470,9 +470,23 @@ def test_duplicate_reply_contends_with_prepared_trace_then_keeps_identity(client
     reply_id = "relay-reply-" + hashlib.sha256(claimed["delivery_id"].encode()).hexdigest()
     service = client.app.state.pallium_service
     engine = service._storage._relay_engine
-    entered, release = threading.Event(), threading.Event()
+    arm, entered, release = threading.Event(), threading.Event(), threading.Event()
     phase, acquisition_errors, workers = {}, [], []
     original_schedule = dependencies.schedule_claude_relay_wake
+    trace_writer = client.app.state.relay_trace_writer
+    original_enqueue = trace_writer.enqueue
+
+    def enqueue_after_arm(writer, trace):
+        if trace.get("message_id") != reply_id or trace.get("stage") != "prepared":
+            return original_enqueue(writer, trace)
+
+        def write_after_arm(trace):
+            # Start the native holder only after the first response has returned.
+            phase["armed"] = arm.wait(2)
+            assert phase["armed"], phase
+            writer(trace)
+
+        return original_enqueue(write_after_arm, trace)
 
     def capture_schedule(*args, **kwargs):
         worker = original_schedule(*args, **kwargs)
@@ -504,18 +518,23 @@ def test_duplicate_reply_contends_with_prepared_trace_then_keeps_identity(client
             })
 
     monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", capture_schedule)
+    monkeypatch.setattr(trace_writer, "enqueue", enqueue_after_arm)
     event.listen(engine, "after_cursor_execute", hold_prepared)
     event.listen(engine, "handle_error", observe_acquisition)
     try:
         first = _reply(client, claimed["delivery_id"], "handled once")
         assert first.status_code == 200, first.text
         assert first.json()["message_id"] == reply_id
+        arm.set()
         assert entered.wait(2), phase
+        assert phase["armed"] is True and phase.get("released") is not False, phase
         busy = _reply(client, claimed["delivery_id"], "handled once")
+        assert phase["armed"] is True and phase.get("released") is not False, phase
         assert busy.status_code == 503, (busy.status_code, busy.text, phase)
         assert busy.json() == {"detail": {"code": "relay_busy", "retryable": True}}
         assert busy.headers["Retry-After"] == "1"
     finally:
+        arm.set()
         release.set()
         try:
             for worker in workers:

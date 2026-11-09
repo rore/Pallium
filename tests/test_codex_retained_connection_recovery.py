@@ -141,6 +141,7 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
     expected_clients = 3 if replacement_recovers else 2
     observe_budget = idle_result == "replacement-budget"
     phases = deque(maxlen=16)
+    budget_fault = {"count": 0}
 
     def phase(label, client_index=None):
         if observe_budget:
@@ -205,6 +206,25 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                         clients[-1].source.gone = True
                     elif replacement_fault == "stop":
                         workers[0].stop_event.set()
+                    elif replacement_fault == "budget":
+                        budget_fault["count"] += 1
+                        window = lifecycle.RECONNECT_WINDOW_SECONDS
+                        fault_started = monotonic()
+                        fault_deadline = fault_started + window
+                        stop = workers[0].stop_event
+                        stopped = stop.is_set()
+                        # Exhaust the real window instead of relying on a backoff wake.
+                        while not stopped:
+                            remaining = fault_deadline - monotonic()
+                            if remaining <= 0:
+                                break
+                            stopped = stop.wait(remaining)
+                        finished = monotonic()
+                        budget_fault.update(
+                            started=fault_started, deadline=fault_deadline, window=window,
+                            finished=finished, elapsed=finished - fault_started,
+                            stopped=stopped or stop.is_set(),
+                        )
                     phase("replacement-ready-fault", self.index)
                     raise bridge.ShadowUnavailable(
                         "invalid-response" if replacement_fault == "terminal"
@@ -345,6 +365,10 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                 assert recoveries == [(replacement, True)]
         elif replacement_failure:
             await asyncio.to_thread(worker._thread.join, 1)
+            if observe_budget:
+                assert (budget_fault["count"] == 1 and "finished" in budget_fault
+                        and budget_fault["finished"] >= budget_fault["deadline"]
+                        and budget_fault["stopped"] is False), budget_fault
             assert not worker._thread.is_alive() and worker.stop_event.is_set(), (
                 json.dumps({"phases": list(phases), "failure_stop_sample": worker.stop_event.is_set()})
                 if observe_budget else None
