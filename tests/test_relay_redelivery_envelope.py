@@ -56,20 +56,32 @@ def test_hook_redelivery_after_emit_or_ack_gap_preserves_exact_id_and_receipt(
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
     monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
     monkeypatch.setattr(hook, "pallium_request", lambda *_a, **_k: pytest.fail("wake must not query memory"))
-    monkeypatch.setattr(hook, "record_codex_wake_event", lambda **_event: None)
+    request_events, wake_events = [], []
+    monkeypatch.setattr(hook, "record_codex_wake_event", lambda **event: wake_events.append({
+        key: event[key] for key in ("stage", "outcome", "reason") if key in event
+    }))
     claims, acknowledgments, outputs = [], [], []
     gap = True
 
     def request(method, path, body, **_kwargs):
+        observation = {"path": path, "status": "unsettled"}
+        request_events.append(observation)
         if path == "/relay/deliveries/ack":
             acknowledgments.append(body)
             if gap and failure == "ack":
+                observation["status"] = "fixture_ack_gap"
                 return None
-        response = client.request(method, path, json=body)
+        try:
+            response = client.request(method, path, json=body)
+        except Exception as error:
+            observation["error_type"] = type(error).__name__
+            raise
+        observation["status"] = response.status_code
         assert response.status_code == 200, response.text
         result = response.json()
         if path == "/relay/turn":
             claims.extend(result["deliveries"])
+            observation["claim_count"] = len(result["deliveries"])
         return result
 
     def emit(text, _event):
@@ -92,6 +104,9 @@ def test_hook_redelivery_after_emit_or_ack_gap_preserves_exact_id_and_receipt(
         hook.main()
     assert first_exit.value.code == (2 if failure == "emit" else 0)
     assert blocked_exits == ([2] if failure == "emit" else [])
+    assert len(claims) == 1, {
+        "claim_count": len(claims), "requests": request_events[-3:], "hook": wake_events[-6:],
+    }
     first = claims[0]
     assert _status(client, sent["message_id"])["state"] == "claimed"
     assert len(outputs) == (0 if failure == "emit" else 1)
@@ -101,14 +116,22 @@ def test_hook_redelivery_after_emit_or_ack_gap_preserves_exact_id_and_receipt(
     with storage._begin_relay_immediate() as db:
         record = db.get(RelayDeliveryRecord, delivery_id)
         record.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    second_request_start, second_event_start = len(request_events), len(wake_events)
     gap = False
     with pytest.raises(SystemExit) as retry_exit:
         hook._HOOK_STARTED_AT = hook.time.monotonic()
         hook.main()
     assert retry_exit.value.code == 0
+    assert len(claims) == 2, {
+        "claim_count": len(claims),
+        "requests": request_events[second_request_start:][-3:],
+        "hook": wake_events[second_event_start:][-6:],
+        "unavailable_branch": "unknown beyond recorded hook stage/reason",
+    }
     current = claims[-1]
     assert current["delivery_id"] == first["delivery_id"] == delivery_id
     assert current["message_id"] == first["message_id"] == sent["message_id"]
+    assert current["attempts"] == 2
     assert current["receipt"] != first["receipt"]
     assert "claim_attempt: 2\npossible_redelivery: true" in outputs[-1]
     assert GUIDANCE in outputs[-1]

@@ -949,6 +949,20 @@ def test_independent_relay_operations_progress_with_all_codex_callbacks_waiting(
 
     holder = threading.Thread(target=hold_registry, name="test-codex-registry-holder")
 
+    def completed_send_state(request):
+        if not request.done():
+            return {"state": "unsettled"}
+        if request.cancelled():
+            return {"state": "cancelled"}
+        error = request.exception()
+        if error is not None:
+            return {"state": "error", "error_type": type(error).__name__}
+        response = request.result()
+        return {
+            "state": "completed",
+            "status": response.status_code if isinstance(response, httpx.Response) else "unknown",
+        }
+
     async def exercise():
         nonlocal armed
         transport = httpx.ASGITransport(app=app)
@@ -999,7 +1013,15 @@ def test_independent_relay_operations_progress_with_all_codex_callbacks_waiting(
             progressed = False
             evidence = {}
             try:
-                assert await asyncio.to_thread(sends_persisted.wait, 5)
+                assert await asyncio.to_thread(sends_persisted.wait, 5), {
+                    "persisted_ids": persisted[:4],
+                    "callback_count": len(callback_threads),
+                    "codex_request_count": len(codex_requests),
+                    "registry_held": held.is_set() and not release.is_set(),
+                    "holder_alive": holder.is_alive(),
+                    "gate_errors": gate_errors[:1],
+                    "sends": [completed_send_state(request) for request in sends],
+                }
                 stacks = {}
                 deadline = asyncio.get_running_loop().time() + 5
                 while True:
