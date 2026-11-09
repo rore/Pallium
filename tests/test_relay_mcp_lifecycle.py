@@ -37,7 +37,7 @@ def _send(
     sender_session: str = "sender-s1",
     expires_in_seconds: int | None = None,
 ) -> dict:
-    client.post("/relay/turn", json={"runtime": "codex", "session_ref": sender_session, **SCOPE})
+    _register(client, runtime="codex", session=sender_session)
     body = {
         "sender_runtime": "codex",
         "sender_session_ref": sender_session,
@@ -640,11 +640,19 @@ def test_drain_all_beyond_legacy_char_limit(client: TestClient):
     assert _turn(client)["deliveries"] == []
 
 
-def test_drain_fifo_order(client: TestClient):
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_drain_fifo_order(client: TestClient, relay_admission_clock):
     """Deliveries are returned in send order (FIFO)."""
-    _register(client)
-    for i in range(3):
-        _send(client, f"msg-{i}", sender_session=f"fifo-sender-{i}")
+    from storage import sqlite_queue
+
+    storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
+    with relay_admission_clock(storage, expected_admissions=7):
+        _register(client)
+        for i in range(3):
+            _send(client, f"msg-{i}", sender_session=f"fifo-sender-{i}")
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
 
     deliveries = _turn(client)["deliveries"]
     assert len(deliveries) == 3
