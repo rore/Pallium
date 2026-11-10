@@ -11,7 +11,7 @@
 
 **Requirement baseline:** {"source":"work-record-initial","outcome":"Existing Codex sessions open in VS Code can receive and act on Relay messages through supported native ingress.","scope":"The Codex activation adapter and its existing callers, hooks, tests and user documentation; narrow exact paths after the supported ingress is established.","constraints":"Preserve existing Desktop delivery, exact recipient and container scope, idle and busy boundaries, generation and native-spend fences, no replay, individual leases, output-before-ACK, settings and credentials. Keep experiments isolated. No competing session owner, host upgrade, global configuration change, queue deletion or protected-test weakening. Existing stopped operations remain stopped. Installed changes require a concrete approved scope and recoverable rollback.","completion_criteria":"Focused caller-surface tests cover route selection, failure, uncertainty and duplicate boundaries; one real authorized message reaches an existing VS Code session and receives a useful response with no duplicate execution. State any unloaded-session limitation honestly. Preserve Desktop regression coverage."}
 
-**Relationships:** {"schema_version":1,"sources":null,"pull_requests":[]}
+**Relationships:** {"schema_version":1,"sources":null,"pull_requests":["https://github.com/rore/Pallium/pull/398"]}
 
 **Risk:** High
 
@@ -31,7 +31,7 @@
 
 **Approvals:** Approved by user 2026-11-10: "can we work on fixing relay to work also with vscode? can you open subagents and manage them until we get it working and we can continue communicating with other sessions?" The user subsequently required fixes merged into main and local alignment. Exact installed approvals cover their recorded scopes; they do not authorize unrelated environment changes.
 
-**Exceptions:** No validation, safety or ownership exception. The earlier local-first publication deferral was superseded by the main-convergence requirement. The interim queue override is not the finished mixed-host solution.
+**Exceptions:** None
 
 **State:** Ready for review
 <!-- agent-workflow:end -->
@@ -62,7 +62,13 @@ Independent review accepted those deltas, the public composer guard restoration 
 
 ## Result review
 
-Agent technical review: the existing independent non-implementer gave technical source and result GO for the bounded compatibility contribution, with no code or privacy findings. Reviewed revision: candidate based on `a4e20de0bc56f5ff871162b6aa75573b412de3d4`; the final source identities are retained with the validation evidence. Verification adequacy: the reviewer independently reconciled the full non-slow lane, ordered regression, actual selector, ordinal-unique XML census, project origins and all thirteen frozen identities. Only this record was reconciled after terminal validation. Separate human result review and any required PR checkpoints remain unsatisfied. Implementation and rollout approvals are not relabeled as result approval.
+Agent technical review: https://github.com/rore/Pallium/pull/398#issuecomment-6775297267 records the independent non-implementer's source and result GO, with no code or privacy findings.
+
+Reviewed revision: `dd9c30756774ce8edb7985ab7e389fb0503404b8`, based on `a4e20de0bc56f5ff871162b6aa75573b412de3d4`; the final source identities are retained with the validation evidence.
+
+Verification adequacy: the reviewer independently reconciled the full non-slow lane, ordered regression, actual selector, ordinal-unique XML census, project origins and all thirteen frozen identities. Only this record was reconciled after terminal validation.
+
+Separate human result review and any required PR checkpoints remain unsatisfied. Implementation and rollout approvals are not relabeled as result approval. The first governance result found an invalid empty-Exceptions representation and result-review fields on one line; this record-only correction preserves requirements and evidence. The earlier local-first publication deferral was superseded by the main-convergence requirement. The interim queue override is not the finished mixed-host solution.
 
 ## Remaining delivery
 
