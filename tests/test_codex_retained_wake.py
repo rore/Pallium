@@ -1886,28 +1886,60 @@ def test_failed_spend_release_refusal_recovers_without_owner(http_wake, monkeypa
 def test_owner_response_allows_hook_claim_ack_before_return(http_wake):
     http, _, registry, _, desktop, send, _ = http_wake
     received, errors = [], []
+    callbacks, owner_errors, observations = [], [], []
     def on_owner(request):
         def hook():
             try:
+                observations.append(("hook-start",))
                 delivery_id = request["params"]["arguments"]["prompt"].split()[4].rstrip(".")
                 response = http.post("/relay/turn", json={"runtime": "codex", "session_ref": TARGET,
                     "wake_delivery_id": delivery_id, **SCOPE})
+                observations.append(("claim-status", response.status_code))
                 assert response.status_code == 200
                 claimed = response.json()["deliveries"][0]
                 received.append(claimed["payload"])
-                assert http.post("/relay/deliveries/ack", json={"delivery_id": delivery_id,
-                    "claim_token": claimed["claim_token"], **SCOPE}).status_code == 200
+                response = http.post("/relay/deliveries/ack", json={"delivery_id": delivery_id,
+                    "claim_token": claimed["claim_token"], **SCOPE})
+                observations.append(("ack-status", response.status_code))
+                assert response.status_code == 200
             except Exception as error:
+                observations.append(("hook-error", type(error).__name__))
                 errors.append(error)
+            finally:
+                observations.append(("hook-finished",))
         callback = threading.Thread(target=hook)
-        callback.start()
-        callback.join(1)
-        assert not callback.is_alive(), "registry lock held across native response"
+        callbacks.append(callback)
+        try:
+            callback.start()
+            callback.join(1)
+            completed_in_time = not callback.is_alive()
+            observations.append(("one-second-completion", completed_in_time))
+            assert completed_in_time, "registry lock held across native response"
+        except Exception as error:
+            observations.append(("owner-error", type(error).__name__))
+            owner_errors.append(error)
+            raise
     desktop.on_owner = on_owner
-    send()
-    assert errors == [] and received == ["private-payload-東京"]
-    assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
-    assert registry.reservations() == ()
+    try:
+        send()
+        observations.append(("send-returned",))
+        if owner_errors:
+            owner_errors[0].add_note(f"callback observations: {observations!r}")
+            raise owner_errors[0]
+        assert errors == [] and received == ["private-payload-東京"], observations
+        assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
+        assert registry.reservations() == ()
+    finally:
+        primary_error = sys.exc_info()[1]
+        for callback in callbacks:
+            if callback.ident is not None:
+                callback.join(5)
+                if callback.is_alive():
+                    detail = f"test hook callback did not drain; observations: {observations!r}"
+                    if primary_error is not None:
+                        primary_error.add_note(detail)
+                    else:
+                        raise AssertionError(detail)
 
 @pytest.mark.parametrize("loss", ["source", "desktop", "channel", "epoch", "unresolved"])
 def test_connection_loss_defers_without_owner(
@@ -2139,7 +2171,16 @@ def test_selected_transport_actual_hook_emits_then_acks(http_wake, monkeypatch, 
     events, queues = [], []
     hook = _hook_runner(http, monkeypatch, state, events, tmp_path)
     if explicit_cli:
-        registry.queue_executable = str(tmp_path / "native-cli.exe")
+        from app.config import AppConfig
+        executable = tmp_path / "native-cli.exe"
+        executable.touch()
+        monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(tmp_path / "absent.toml"))
+        monkeypatch.setenv("PALLIUM_ENV_FILE", str(tmp_path / "absent.env"))
+        monkeypatch.setenv("PALLIUM_CODEX_WAKE_TRANSPORT", "auto")
+        monkeypatch.setenv("CODEX_CLI_PATH", str(executable))
+        config = AppConfig.from_env()
+        assert config.codex_wake_transport == "auto" and config.codex_cli_path == str(executable)
+        registry.queue_executable = config.codex_cli_path
     if state == "idle":
         class Process:
             returncode = 0

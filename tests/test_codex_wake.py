@@ -2680,7 +2680,8 @@ def test_wake_claim_does_not_reopen_or_claim_for_closed_session(client) -> None:
     assert result["deliveries"] == []
     assert service.message_status(message_id=sent["message_id"], **SCOPE)["deliveries"][0]["state"] == "pending"
 
-def test_create_app_queue_transport_and_cli_are_isolated(monkeypatch, tmp_path, request):
+@pytest.mark.parametrize("configuration_source", ["constructor", "legacy-environment"])
+def test_create_app_queue_transport_and_cli_are_isolated(monkeypatch, tmp_path, request, configuration_source):
     monkeypatch.setattr("app.codex_bridge_pipe.retained_wake_enabled", lambda: True)
     monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", codex_wake.schedule_codex_relay_wake)
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
@@ -2690,11 +2691,20 @@ def test_create_app_queue_transport_and_cli_are_isolated(monkeypatch, tmp_path, 
     executable.touch()
     apps = []
     for transport in ("queue", "auto"):
-        app = create_app(AppConfig(
+        config = AppConfig(
             sqlite_url=f"sqlite:///{tmp_path / (transport + '.db')}", default_use_case="demo_agent_memory",
             semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(enabled=False),
             codex_wake_transport=transport, codex_cli_path=str(executable) if transport == "queue" else None,
-        ))
+        )
+        if configuration_source == "legacy-environment":
+            monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(tmp_path / "absent.toml"))
+            monkeypatch.setenv("PALLIUM_ENV_FILE", str(tmp_path / "absent.env"))
+            monkeypatch.setenv("PALLIUM_CODEX_WAKE_TRANSPORT", transport)
+            monkeypatch.setenv("CODEX_CLI_PATH", str(executable) if transport == "queue" else "")
+            selected = AppConfig.from_env()
+            config = replace(config, codex_wake_transport=selected.codex_wake_transport,
+                             codex_cli_path=selected.codex_cli_path)
+        app = create_app(config)
         apps.append(app)
         request.addfinalizer(app.state._close_constructed)
         request.addfinalizer(lambda registry=app.state.codex_wake_registry: codex_wake.drain_codex_relay_wakes(registry))
@@ -2741,6 +2751,30 @@ def test_create_app_queue_transport_and_cli_are_isolated(monkeypatch, tmp_path, 
         assert (delivery["state"], delivery["attempts"]) == ("pending", 0)
     assert queue_registry.reservations()[0].outcome == "accepted"
     assert desktop_registry.reservations() == ()
+
+
+@pytest.mark.parametrize("kind", ["relative-file", "relative-missing", "empty", "absolute-missing"])
+def test_auto_legacy_cli_hint_preserves_launch_discovery(monkeypatch, tmp_path, kind):
+    monkeypatch.chdir(tmp_path)
+    relative = tmp_path / "relative-cli"
+    relative.touch()
+    hint = {"relative-file": relative.name, "relative-missing": "absent-cli",
+            "empty": "", "absolute-missing": str(tmp_path / "absent-cli")}[kind]
+    monkeypatch.setenv("CODEX_CLI_PATH", hint)
+    monkeypatch.setenv("PALLIUM_CODEX_WAKE_TRANSPORT", "auto")
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(tmp_path / "absent.toml"))
+    monkeypatch.setenv("PALLIUM_ENV_FILE", str(tmp_path / "absent.env"))
+    config = AppConfig.from_env()
+    assert config.codex_cli_path is None
+    monkeypatch.setattr(codex_wake, "_codex_home", lambda: tmp_path)
+    monkeypatch.setattr(codex_wake.shutil, "which", lambda _: "discovered-cli")
+    process = MagicMock()
+    with patch.object(codex_wake, "_popen", return_value=process) as popen:
+        assert codex_wake._start_launch("target-session", "wake", executable=config.codex_cli_path) == (process, None)
+    assert popen.call_args.args[0] == [
+        relative.name if kind == "relative-file" else "discovered-cli",
+        "queue", "--profile", "pallium-relay", "--thread", "target-session", "--message", "wake",
+    ]
 
 
 @pytest.mark.parametrize("kind", ["missing", "directory", "relative"])

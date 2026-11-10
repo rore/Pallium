@@ -15,6 +15,10 @@ TEXT = "role history marker café 漢字 🌍"
 
 @pytest.fixture
 def role_plugin(client, history_plugin, plugin_context):
+    from types import SimpleNamespace
+    from storage import sqlite_queue
+    from tests.conftest import relay_admission_clock
+
     module, ctx, _config, writes = history_plugin
     _, create, _ = plugin_context
     data = {"module": module, "ctx": ctx, "create": create, "writes": writes,
@@ -26,7 +30,14 @@ def role_plugin(client, history_plugin, plugin_context):
             conversation_history=[{"role": "user", "content": text, "message_uid": "user-" + turn}])
 
     data["pre"] = pre
-    assert pre("seed", "seed")
+    storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
+    with pytest.MonkeyPatch.context() as scoped:
+        admission = relay_admission_clock.__wrapped__(SimpleNamespace(param="semantic"), scoped)
+        with admission(storage, expected_admissions=1):
+            assert pre("seed", "seed")
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
     writes.clear()
     return data
 

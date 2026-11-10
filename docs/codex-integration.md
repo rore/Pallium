@@ -206,6 +206,15 @@ the configured service. Applying them requires the normal approved service
 restart; setting variables only in a caller shell does not configure a
 scheduled service. The default `auto` mode preserves existing Desktop routing.
 
+In `auto` mode, the legacy `CODEX_CLI_PATH` hint becomes an explicit override
+only when it names an absolute existing file. Other hints preserve an explicit
+TOML pin, or leave normal CLI discovery in control when no pin exists. Relative
+process hints still use the legacy resolver; service-file hints are not exported
+to the process environment. In `queue` mode the environment value is an explicit
+pin, so invalid or missing paths fail closed. Direct configuration and TOML pins
+remain strict in both modes. An eligible override reaches both native queue
+callers; it does not change which transport is selected.
+
 Queue mode is explicit for all Codex recipients of that service. It does not
 detect each session's host or use Desktop's unloaded-session wake. The native
 watcher starts an eligible loaded session when idle; an unloaded session needs

@@ -301,6 +301,21 @@ class AppConfig:
         env_values = _merge_env_values(env_file_values)
         config_data = _load_config_file(_resolve_config_file_path(env_values))
         codex_wake_transport = _read_nested(config_data, "relay", "codex_wake_transport")
+        codex_wake_transport = _resolve_global_value(
+            "PALLIUM_CODEX_WAKE_TRANSPORT", env_values,
+            codex_wake_transport if codex_wake_transport is not None else "auto",
+        )
+        codex_cli_path = _read_nested(config_data, "relay", "codex_cli_path")
+        if "CODEX_CLI_PATH" in env_values:
+            hint = env_values["CODEX_CLI_PATH"]
+            if codex_wake_transport == "queue":
+                codex_cli_path = hint
+            else:
+                try:
+                    if Path(hint).is_absolute() and Path(hint).is_file():
+                        codex_cli_path = hint
+                except (OSError, ValueError):
+                    pass  # Legacy auto-mode hints must not reject startup.
 
         return cls(
             storage_backend=_resolve_global_value(
@@ -318,14 +333,8 @@ class AppConfig:
                 env_values,
                 _read_nested(config_data, "storage", "relay_sqlite_url"),
             ),
-            codex_wake_transport=_resolve_global_value(
-                "PALLIUM_CODEX_WAKE_TRANSPORT", env_values,
-                codex_wake_transport if codex_wake_transport is not None else "auto",
-            ),
-            codex_cli_path=_resolve_global_value(
-                "CODEX_CLI_PATH", env_values,
-                _read_nested(config_data, "relay", "codex_cli_path"),
-            ),
+            codex_wake_transport=codex_wake_transport,
+            codex_cli_path=codex_cli_path,
             default_use_case=_resolve_global_value(
                 "PALLIUM_DEFAULT_USE_CASE",
                 env_values,
