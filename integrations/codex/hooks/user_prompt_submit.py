@@ -27,6 +27,7 @@ RELAY_TURN_BUDGET = _common.RELAY_TURN_BUDGET
 RELAY_BATCH_MAX_MESSAGES = 8
 RELAY_BATCH_OUTPUT_BUDGET = 12000
 RELAY_BATCH_TURN_BUDGET = RELAY_BATCH_OUTPUT_BUDGET - _common.RELAY_NOTICE_RESERVE
+RELAY_CONTEXT_MAX_BYTES = 10000
 SOURCE_TYPE = _common.SOURCE_TYPE
 acknowledge_relay = _common.acknowledge_relay
 check_dedup = _common.check_dedup
@@ -87,6 +88,57 @@ def _exit_blocked_wake() -> None:
 
 def _strip_ide_context(text: str) -> str:
     return _IDE_TAG_RE.sub("", text).strip()
+
+
+def _fit_relay_batch(deliveries, scope, remaining_count, wake_delivery_id=None):
+    """Fit copied paging views; only original emitted claims may be ACKed."""
+    if (not isinstance(deliveries, list) or len(deliveries) > RELAY_BATCH_MAX_MESSAGES
+            or type(remaining_count) is not int or remaining_count < 0):
+        return "", []
+    originals, views = {}, []
+    try:
+        scope.encode("utf-8")
+        for delivery in deliveries:
+            if not isinstance(delivery, dict):
+                return "", []
+            text, valid = format_relay([delivery])
+            if not valid:
+                continue
+            text.encode("utf-8")
+            identity = delivery["delivery_id"]
+            if identity in originals:
+                return "", []
+            originals[identity] = delivery
+            views.append(dict(delivery))
+        if wake_delivery_id is not None and wake_delivery_id not in originals:
+            return "", []
+        for _ in range(RELAY_BATCH_MAX_MESSAGES * (RELAY_BATCH_OUTPUT_BUDGET.bit_length() + 2)):
+            if not views or _common.remaining_safe_time() <= 0:
+                return "", []
+            omitted = remaining_count + len(originals) - len(views)
+            text, rendered = format_relay(views, remaining_count=omitted)
+            if len(rendered) != len(views):
+                return "", []
+            packet = "\n\n".join((text, scope))
+            if len(text) <= RELAY_BATCH_OUTPUT_BUDGET and len(packet.encode("utf-8")) <= RELAY_CONTEXT_MAX_BYTES:
+                return packet, [originals[view["delivery_id"]] for view in rendered]
+            paged = [view for view in views if type(view.get("payload_total_chars")) is int
+                     and view.get("payload_offset") == 0 and len(view["payload"]) > 1]
+            if paged:
+                view = max(paged, key=lambda item: len(item["payload"]))
+                view["payload"] = view["payload"][:max(1, len(view["payload"]) // 2)]
+                view["content_truncated"] = True
+                view["next_offset"] = len(view["payload"])
+                continue
+            removable = [index for index, view in enumerate(views)
+                         if view["delivery_id"] != wake_delivery_id]
+            if not removable:
+                return "", []
+            views.pop(removable[-1])
+    except (KeyError, TypeError, ValueError, UnicodeError):
+        return "", []
+    return "", []
+
 
 def main() -> None:
     wake_delivery_id = None
@@ -154,6 +206,11 @@ def main() -> None:
                 started = time.monotonic()
                 response = None
                 try:
+                    if (method == "POST" and path == "/relay/turn"
+                            and body.get("runtime") == "codex"
+                            and body.get("session_ref") == session_id
+                            and body.get("container_ref") == container_ref):
+                        body = {**body, "max_messages": RELAY_BATCH_MAX_MESSAGES}
                     request_options = {"timeout": timeout}
                     if deadline is not None:
                         request_options["deadline"] = deadline
@@ -183,7 +240,6 @@ def main() -> None:
                 relay_response = relay_turn(
                     "codex", session_id, container_ref,
                     max_chars=RELAY_BATCH_TURN_BUDGET,
-                    max_messages=RELAY_BATCH_MAX_MESSAGES,
                     structural_work_refs=(
                         None if wake_delivery_id else structural_work_refs_payload(
                             container_ref, discovery, cwd
@@ -198,7 +254,7 @@ def main() -> None:
                         _common.HookDeadline(time.monotonic() + request_timeout)
                         if wake_delivery_id else None
                     ),
-                    request=measured_relay_request if wake_delivery_id else relay_request,
+                    request=measured_relay_request,
                 )
                 if isinstance(relay_response, dict):
                     confirmed_refs = confirmed_registry_work_refs(relay_response)
@@ -208,13 +264,13 @@ def main() -> None:
                     if candidate_status in {"complete", "unavailable"}:
                         work_refs_status = candidate_status
                     deliveries = relay_response.get("deliveries") or []
-                    relay_output, rendered_deliveries = format_relay(
-                        deliveries,
-                        budget_chars=RELAY_BATCH_OUTPUT_BUDGET,
+                    relay_output, rendered_deliveries = _fit_relay_batch(
+                        deliveries, relay_scope,
                         remaining_count=(
                             relay_response.get("remaining_count")
                             if relay_response.get("has_more") is True else 0
                         ),
+                        wake_delivery_id=wake_delivery_id,
                     )
                     relay_outcome = "delivered" if rendered_deliveries else (
                         "empty" if (
@@ -231,6 +287,13 @@ def main() -> None:
                 confirmed_refs = []
                 work_refs_status = "unavailable"
                 relay_outcome = "unavailable"
+        if (wake_delivery_id is not None and isinstance(deliveries, list)
+                and deliveries and not rendered_deliveries):
+            record_codex_wake_event(
+                script=__file__, delivery_id=wake_delivery_id,
+                stage="hook_failed", reason="malformed_response",
+            )
+            _exit_blocked_wake()
         if rendered_deliveries:
             exact_rendered = (
                 wake_delivery_id is None
@@ -248,7 +311,7 @@ def main() -> None:
                 _exit_blocked_wake()
             try:
                 emit_context(
-                    "\n\n".join((relay_output, relay_scope)),
+                    relay_output,
                     "UserPromptSubmit",
                 )
             except Exception:

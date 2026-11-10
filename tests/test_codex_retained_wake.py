@@ -2129,19 +2129,25 @@ def test_hook_runner_preclaim_refusal_requires_explicit_opt_in(
     assert (result["delivery_id"], result["state"], result["attempts"]) == (first["delivery_id"], "delivered", 1)
 
 
-@pytest.mark.parametrize("state,event", [("idle", "UserPromptSubmit"), ("notLoaded", "SessionStart")])
-def test_selected_transport_actual_hook_emits_then_acks(http_wake, monkeypatch, capsys, state, event, tmp_path):
+@pytest.mark.parametrize("state,event,explicit_cli", [
+    ("idle", "UserPromptSubmit", False), ("idle", "UserPromptSubmit", True),
+    ("notLoaded", "SessionStart", False),
+])
+def test_selected_transport_actual_hook_emits_then_acks(http_wake, monkeypatch, capsys, state, event, explicit_cli, tmp_path):
     http, _, registry, _, desktop, send, _ = http_wake
     desktop.state = state
     events, queues = [], []
     hook = _hook_runner(http, monkeypatch, state, events, tmp_path)
+    if explicit_cli:
+        registry.queue_executable = str(tmp_path / "native-cli.exe")
     if state == "idle":
         class Process:
             returncode = 0
             def communicate(self, **kwargs):
                 hook(queues[-1][1])
                 return None, ""
-        def launch(session, prompt):
+        def launch(session, prompt, **kwargs):
+            assert kwargs == ({"executable": registry.queue_executable} if explicit_cli else {})
             queues.append((session, prompt))
             return Process(), None
         monkeypatch.setattr(codex_wake, "_start_launch", launch)

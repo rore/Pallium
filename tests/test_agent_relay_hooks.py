@@ -80,11 +80,11 @@ def batch_hook(exact_client, monkeypatch, tmp_path):
     _intercept_blocked_wake_exit(monkeypatch, hook)
     state = SimpleNamespace(client=client, storage=storage, hook=hook, common=common,
                             outputs=[], calls=[], turns=[], ack_count=0, ack_cutoff=None,
-                            omit_trigger=False, emit_failure=False, on_emit=None)
+                            omit_trigger=False, emit_failure=False, on_emit=None, transform_turn=None)
 
     class Response:
         def __init__(self, value):
-            self.raw = json.dumps(value, ensure_ascii=False).encode("utf-8")
+            self.raw = json.dumps(value, ensure_ascii=True).encode("utf-8")
         def __enter__(self):
             return self
         def __exit__(self, *_):
@@ -109,6 +109,8 @@ def batch_hook(exact_client, monkeypatch, tmp_path):
             state.turns.append(value)
             if state.omit_trigger:
                 value = {**value, "deliveries": value["deliveries"][1:]}
+            if state.transform_turn is not None:
+                value = state.transform_turn(value)
         return Response(value)
 
     monkeypatch.setattr(common, "_urlopen", urlopen)
@@ -170,6 +172,7 @@ def test_codex_prompt_batches_27_messages_through_real_http_and_ack(batch_hook, 
         relay_text, scope = state.outputs[-1].rsplit("\n\n", 1)
         assert relay_text.count("[Pallium Relay message from ") == expected_count
         assert len(relay_text) <= state.hook.RELAY_BATCH_OUTPUT_BUDGET
+        assert len(state.outputs[-1].encode("utf-8")) <= state.hook.RELAY_CONTEXT_MAX_BYTES
         assert len(scope) <= state.common.RELAY_OUTPUT_BUDGET == 2400
         assert all(status(state.client, item)["state"] == "delivered" for item in expected)
         assert all(row["payload_total_chars"] == lengths[row["message_id"]] for row in turn["deliveries"])
@@ -236,6 +239,219 @@ def test_codex_batch_arrival_after_selection_waits_for_a_fresh_hook(batch_hook):
     assert len(state.outputs) == outputs and state.ack_count == acknowledgments
     assert status(state.client, arrived[0])["state"] == "pending"
     assert state.run() == 0 and status(state.client, arrived[0])["state"] == "delivered"
+
+
+@pytest.mark.parametrize("count", [0, 1, 8, 9])
+def test_codex_batch_count_boundaries_keep_unselected_deliveries_pending(batch_hook, count):
+    from tests.test_relay_exact_claim_e2e import send, status
+    state = batch_hook
+    messages = [send(state.client, payload=f"short finding {index}") for index in range(count)]
+    assert state.run(state.hook.RELAY_WAKE_PROMPT) == 0
+    expected = min(count, 8)
+    assert state.ack_count == expected and len(state.outputs) == bool(expected)
+    assert all(status(state.client, message)["state"] == ("delivered" if index < 8 else "pending")
+               for index, message in enumerate(messages))
+    if expected:
+        packet = state.outputs[-1]
+        assert packet.count("[Pallium Relay message from ") == expected
+        assert len(packet.encode("utf-8")) <= 10000
+        assert ("[Relay: 1 more; Pallium continues.]" in packet) == (count == 9)
+    requests = [body for _, path, body, _ in state.calls if path == "/relay/turn"]
+    assert requests[-1]["max_messages"] == 8 and requests[-1]["max_chars"] == 11960
+
+
+@pytest.mark.parametrize("alphabet", ["x", "界", "😀"])
+@pytest.mark.parametrize("boundary_delta", [0, -1])
+def test_codex_batch_packet_boundary_keeps_paging_views_private(batch_hook, monkeypatch, alphabet, boundary_delta):
+    import re
+    from app.codex_wake import _wake_prompt
+    from tests.test_relay_exact_claim_e2e import SCOPE, send, status
+    state = batch_hook
+    payload = alphabet * 2000
+    message = send(state.client, payload=payload)
+    original = []
+    def boundary(response):
+        row = response["deliveries"][0]
+        original.append(dict(row))
+        scope = state.hook.format_injection(
+            [], SCOPE["container_ref"], budget_chars=2400, thread_ref="target",
+            actor_ref="actor", agent_ref="codex", visibility="private", work_ref=None,
+        )
+        text, _ = state.hook.format_relay([row])
+        state.hook.RELAY_CONTEXT_MAX_BYTES = len((text + "\n\n" + scope).encode("utf-8")) + boundary_delta
+        return response
+    state.transform_turn = boundary
+    acknowledged = []
+    acknowledge = state.hook.acknowledge_relay
+    def observe_ack(deliveries, **kwargs):
+        acknowledged.extend(dict(row) for row in deliveries)
+        return acknowledge(deliveries, **kwargs)
+    monkeypatch.setattr(state.hook, "acknowledge_relay", observe_ack)
+    assert state.run(_wake_prompt(message["deliveries"][0]["delivery_id"])) == 0
+    packet = state.outputs[-1]
+    assert len(packet.encode("utf-8")) <= state.hook.RELAY_CONTEXT_MAX_BYTES
+    assert acknowledged == original == state.turns[-1]["deliveries"]
+    assert status(state.client, message)["state"] == "delivered"
+    offsets = re.findall(r'pallium_relay_status\(message_id="[^"]+", offset=(\d+)\)', packet)
+    if boundary_delta == 0:
+        assert not offsets and payload in packet
+    else:
+        assert len(offsets) == 1
+        offset = int(offsets[0])
+        assert 0 < offset < len(payload) and payload[:offset] in packet
+        page = state.client.get(f"/relay/messages/{message['message_id']}", params={
+            **SCOPE, "offset": offset, "page_size": len(payload),
+        })
+        assert page.status_code == 200, page.text
+        assert payload[:offset] + page.json()["payload"] == payload
+
+
+@pytest.mark.parametrize("position,count", [(0, 8), (3, 8), (7, 8), (7, 9)])
+def test_codex_batch_preserves_trigger_when_envelopes_force_omission(batch_hook, position, count):
+    from app.codex_wake import _wake_prompt
+    from tests.test_relay_exact_claim_e2e import send, status
+    state = batch_hook
+    messages = [send(state.client, payload=f"finding {index}") for index in range(count)]
+    trigger = messages[-1]["deliveries"][0]["delivery_id"]
+    def reorder(response):
+        rows = list(response["deliveries"])
+        exact = next(row for row in rows if row["delivery_id"] == trigger)
+        rows.remove(exact)
+        rows.insert(position, exact)
+        return {**response, "deliveries": rows}
+    state.transform_turn = reorder
+    state.hook.RELAY_CONTEXT_MAX_BYTES = 2500
+    assert state.run(_wake_prompt(trigger)) == 0
+    packet = state.outputs[-1]
+    assert trigger in packet and len(packet.encode("utf-8")) <= 2500
+    emitted = [message for message in messages if message["deliveries"][0]["delivery_id"] in packet]
+    assert 0 < len(emitted) < 8
+    assert f"[Relay: {count - len(emitted)} more; Pallium continues.]" in packet
+    assert state.ack_count == len(emitted)
+    selected_ids = {row["message_id"] for row in state.turns[-1]["deliveries"]}
+    for message in messages:
+        expected = ("delivered" if message in emitted else
+                    "claimed" if message["message_id"] in selected_ids else "pending")
+        assert status(state.client, message)["state"] == expected
+
+
+def test_codex_batch_legacy_overflow_is_omitted_without_invented_paging(batch_hook):
+    from app.codex_wake import _wake_prompt
+    from tests.test_relay_exact_claim_e2e import send, status
+    state = batch_hook
+    messages = [send(state.client, payload="large legacy " + "界" * 4000), send(state.client, payload="exact small trigger")]
+    trigger = messages[-1]["deliveries"][0]["delivery_id"]
+    def legacy(response):
+        rows = [dict(row) for row in response["deliveries"]]
+        for row in rows:
+            for key in ("payload_offset", "payload_total_chars", "content_truncated", "next_offset"):
+                row.pop(key, None)
+            if row["delivery_id"] != trigger:
+                row["payload"] = "large legacy " + "界" * 4000
+        return {**response, "deliveries": rows}
+    state.transform_turn = legacy
+    assert state.run(_wake_prompt(trigger)) == 0
+    packet = state.outputs[-1]
+    assert "exact small trigger" in packet and "large legacy" not in packet
+    assert "pallium_relay_status(" not in packet
+    assert "[Relay: 1 more; Pallium continues.]" in packet
+    assert state.ack_count == 1
+    assert status(state.client, messages[0])["state"] == "claimed"
+    assert status(state.client, messages[1])["state"] == "delivered"
+
+
+@pytest.mark.parametrize("fault", ["offset", "total", "next", "truncated", "utf8", "missing"])
+def test_codex_batch_invalid_exact_view_blocks_without_sibling_ack(batch_hook, monkeypatch, fault):
+    from app.codex_wake import _wake_prompt
+    from tests.test_relay_exact_claim_e2e import send, status
+    state = batch_hook
+    messages = [send(state.client, payload=f"finding {index}") for index in range(2)]
+    trigger = messages[-1]["deliveries"][0]["delivery_id"]
+    def corrupt(response):
+        rows = [dict(row) for row in response["deliveries"]]
+        row = next(row for row in rows if row["delivery_id"] == trigger)
+        if fault == "missing":
+            rows.remove(row)
+        else:
+            key, value = {"offset": ("payload_offset", 1), "total": ("payload_total_chars", 0),
+                          "next": ("next_offset", 1), "truncated": ("content_truncated", "false"),
+                          "utf8": ("payload", "\ud800")}[fault]
+            row[key] = value
+            if fault == "utf8":
+                row["payload_total_chars"] = 1
+        return {**response, "deliveries": rows}
+    state.transform_turn = corrupt
+    assert state.run(_wake_prompt(trigger)) == 2
+    assert state.outputs == [] and state.ack_count == 0
+    assert all(status(state.client, message)["state"] == "claimed" for message in messages)
+
+
+def test_codex_batch_unfittable_exact_envelope_blocks_without_ack(batch_hook):
+    from app.codex_wake import _wake_prompt
+    from tests.test_relay_exact_claim_e2e import send, status
+    state = batch_hook
+    message = send(state.client)
+    state.hook.RELAY_CONTEXT_MAX_BYTES = 1
+    assert state.run(_wake_prompt(message["deliveries"][0]["delivery_id"])) == 2
+    assert state.outputs == [] and state.ack_count == 0
+    assert status(state.client, message)["state"] == "claimed"
+
+
+def test_codex_batch_callback_preserves_intermediate_request_and_installed_signature(batch_hook, monkeypatch):
+    from tests.test_relay_exact_claim_e2e import send, status
+    state = batch_hook
+    message = send(state.client)
+    real_turn, real_request = state.hook.relay_turn, state.hook.relay_request
+    intermediate = {"runtime": "codex", "session_ref": "target", "container_ref": "git:middle/repo",
+                    "max_chars": 1, "max_messages": 1}
+    before = dict(intermediate)
+    observed = []
+    def request(method, path, body, *, timeout, deadline=None):
+        if body.get("container_ref") == "git:middle/repo":
+            observed.append(body)
+            assert body == before
+            return None
+        return real_request(method, path, body, timeout=timeout, deadline=deadline)
+    def installed_turn(runtime, session_ref, container_ref, *, max_chars, timeout, structural_work_refs,
+                       wake_delivery_id, deadline, request):
+        request("POST", "/relay/turn", intermediate, timeout=timeout)
+        assert intermediate == before
+        return real_turn(runtime, session_ref, container_ref, max_chars=max_chars, timeout=timeout,
+                         structural_work_refs=structural_work_refs, wake_delivery_id=wake_delivery_id,
+                         deadline=deadline, request=request)
+    monkeypatch.setattr(state.hook, "relay_request", request)
+    monkeypatch.setattr(state.hook, "relay_turn", installed_turn)
+    assert state.run() == 0
+    assert observed == [before]
+    final = [body for _, path, body, _ in state.calls if path == "/relay/turn"][-1]
+    assert final["max_messages"] == 8 and final["max_chars"] == 11960
+    assert status(state.client, message)["state"] == "delivered"
+
+
+@pytest.mark.parametrize("fault", ["write", "flush"])
+def test_codex_batch_real_emitter_failure_never_acks_claims(batch_hook, monkeypatch, fault):
+    from app.codex_wake import _wake_prompt
+    from tests.test_relay_exact_claim_e2e import send, status
+    state = batch_hook
+    messages = [send(state.client, payload=f"finding {index}") for index in range(2)]
+    class Stream:
+        def __init__(self):
+            self.buffer = self
+            self.written = b""
+        def write(self, value):
+            if fault == "write":
+                raise OSError("controlled output write failure")
+            self.written += value
+        def flush(self):
+            raise OSError("controlled output flush failure")
+    stream = Stream()
+    monkeypatch.setattr(state.common, "sys", SimpleNamespace(stdout=stream))
+    monkeypatch.setattr(state.hook, "emit_context", state.common.emit_context)
+    assert state.run(_wake_prompt(messages[-1]["deliveries"][0]["delivery_id"])) == 2
+    assert bool(stream.written) == (fault == "flush")
+    assert state.outputs == [] and state.ack_count == 0
+    assert all(status(state.client, message)["state"] == "claimed" for message in messages)
+
 
 @pytest.fixture(autouse=True)
 def isolated_hook_state(monkeypatch, tmp_path):

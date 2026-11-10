@@ -188,6 +188,42 @@ outcome when Pallium abstains; use `pallium_query_debug` to inspect why.
 
 ## Delivery and recovery
 
+### Explicit native queue mode for VS Code
+
+For a Codex runtime with a native queue watcher, Pallium can use the existing
+queue transport without Desktop MCP custody. In the service's `config/pallium.toml`,
+set `[relay].codex_wake_transport = "queue"` and `[relay].codex_cli_path` to the
+absolute path of the CLI bundled with that runtime. The CLI must support
+`queue --profile pallium-relay --thread ... --message ...`. An explicit missing
+or invalid executable fails closed; Pallium does not substitute another CLI.
+Keep the runtime and service on the same Codex home and retain the normal
+Pallium hook and Relay profile setup.
+
+The equivalent service environment-file values are
+`PALLIUM_CODEX_WAKE_TRANSPORT=queue` and `CODEX_CLI_PATH`; process environment
+values override that file, which overrides TOML. These settings are local to
+the configured service. Applying them requires the normal approved service
+restart; setting variables only in a caller shell does not configure a
+scheduled service. The default `auto` mode preserves existing Desktop routing.
+
+Queue mode is explicit for all Codex recipients of that service. It does not
+detect each session's host or use Desktop's unloaded-session wake. The native
+watcher starts an eligible loaded session when idle; an unloaded session needs
+an ordinary resume. A successful queue command establishes admission only,
+not hook execution or receipt. Delivery is confirmed only after the real hook
+emits the payload and ACKs it. Unknown submission results keep their existing
+no-replay fence and never fall back to another transport.
+
+The prompt hook requests up to eight deliveries and a 12,000-character Relay
+budget. Its complete Relay context, including scope and omission notices, is
+also capped at 10,000 UTF-8 bytes. It may shorten an existing paged payload view
+and provide the exact continuation offset, or leave additional deliveries
+unacknowledged for a later hook. Only emitted original claims are ACKed, after
+output flush. An exact wake emits no sibling batch if its trigger cannot fit.
+These local bounds do not establish native-provider execution or receipt.
+
+### Default delivery behavior
+
 Windows and Linux exact-session wake are qualified for tasks already loaded by
 their Codex runtime. Supported Windows Desktop also wakes unloaded tasks through
 the retained MCP path described below. Without that capability, a persisted
