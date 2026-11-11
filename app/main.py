@@ -801,6 +801,8 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         codex_wake_registry = codex_wake.get_codex_wake_registry_for_relay_database(
             resolved_config.resolved_relay_sqlite_url, relay_service=dashboard_relay_service,
         )
+        codex_wake_registry.wake_transport = resolved_config.codex_wake_transport
+        codex_wake_registry.queue_executable = resolved_config.codex_cli_path
         app.state.codex_wake_registry = codex_wake_registry
         mount_dashboard(
             app,

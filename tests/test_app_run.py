@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+from unittest.mock import patch
+
 from app import run as app_run
 from app.config import AppConfig
 import pytest
@@ -7,9 +10,14 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def isolated_run_config(monkeypatch):
-    monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
-    config = AppConfig(sqlite_url="sqlite:///:memory:", relay_sqlite_url="sqlite:///:memory:")
-    monkeypatch.setattr(AppConfig, "from_env", staticmethod(lambda: config))
+    watched = ("PALLIUM_SERVICE_PORT", "PALLIUM_BASE_URL")
+    original = {name: os.environ.get(name) for name in watched}
+    with patch.dict(os.environ):
+        monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
+        config = AppConfig(sqlite_url="sqlite:///:memory:", relay_sqlite_url="sqlite:///:memory:")
+        monkeypatch.setattr(AppConfig, "from_env", staticmethod(lambda: config))
+        yield
+    assert {name: os.environ.get(name) for name in watched} == original
 
 
 def test_run_default_invokes_supervisor_with_processors_and_cleaner(monkeypatch) -> None:

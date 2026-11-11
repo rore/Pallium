@@ -164,6 +164,12 @@ def _reservation_state_is_stale(
 
 
 
+def _use_retained_wake(registry: CodexWakeRegistry) -> bool:
+    from app.codex_bridge_pipe import retained_wake_enabled
+
+    return getattr(registry, "wake_transport", "auto") != "queue" and retained_wake_enabled()
+
+
 def reconcile_codex_relay_wake_reservations(
     relay_service: Any,
     *,
@@ -188,8 +194,7 @@ def reconcile_codex_relay_wake_reservations(
                 _clear_schedule(reservation, registry)
             retry_allowed = False
             if action == "retry" and getattr(registry, "retained_service", None) is not None:
-                from app.codex_bridge_pipe import retained_wake_enabled
-                retry_allowed = retained_wake_enabled()
+                retry_allowed = _use_retained_wake(registry)
             if action == "retry" and not retry_allowed:
                 continue
             if action in {"replaced", "resume"} or retry_allowed:
@@ -666,8 +671,7 @@ def _wake_after_debounce(
     time.sleep(_DEBOUNCE_SECONDS)
     attempt_started = time.monotonic()
 
-    from app.codex_bridge_pipe import retained_wake_enabled
-    if retained_wake_enabled():
+    if _use_retained_wake(registry):
         service = getattr(registry, "retained_service", None)
         try:
             dispatched = (service.dispatch(reservation, registry) if service is not None else
@@ -709,8 +713,10 @@ def _wake_after_debounce(
         uncertain = registry.begin_native_attempt(reservation)
         if uncertain is None:
             return None
+        executable = getattr(registry, "queue_executable", None)
+        launch_options = {"executable": executable} if executable is not None else {}
         return _start_launch(
-            reservation.session_ref, _wake_prompt(reservation.delivery_id)
+            reservation.session_ref, _wake_prompt(reservation.delivery_id), **launch_options,
         )
 
     try:
@@ -853,14 +859,17 @@ def _launch_result(session_ref: str, prompt: str) -> _LaunchResult:
     return _finish_launch(_start_launch(session_ref, prompt))
 
 
-def _start_launch(session_ref: str, prompt: str) -> _LaunchStart:
+def _start_launch(session_ref: str, prompt: str, *, executable: str | None = None) -> _LaunchStart:
     cwd = _codex_home()
     if cwd is None:
         return None, ("failed", "invalid_codex_home", None)
     try:
+        if executable is not None and (not Path(executable).is_absolute() or not Path(executable).is_file()):
+            return None, ("failed", "os_error", None)
         process = _popen(
             [
-                _codex_executable(), "queue", "--profile", "pallium-relay",
+                executable if executable is not None else _codex_executable(),
+                "queue", "--profile", "pallium-relay",
                 "--thread", session_ref, "--message", prompt,
             ],
             stdin=subprocess.DEVNULL,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,135 @@ import pytest
 from app.config import AppConfig
 from tests.config_helpers import DEFAULT_PROMPT_VARIANT, build_llm_test_config
 from app.config import EmbeddingProviderConfig
+
+
+def test_codex_wake_config_service_env_and_process_precedence(monkeypatch, tmp_path):
+    monkeypatch.delenv("PALLIUM_CODEX_WAKE_TRANSPORT", raising=False)
+    monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
+    config_file, env_file = tmp_path / "pallium.toml", tmp_path / ".env"
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("PALLIUM_ENV_FILE", str(env_file))
+    assert AppConfig.from_env().codex_wake_transport == "auto"
+    assert AppConfig.from_env().codex_cli_path is None
+    toml_cli, env_cli, process_cli = (tmp_path / name for name in ("toml-cli", "env-cli", "process-cli"))
+    env_cli.touch()
+    process_cli.touch()
+    config_file.write_text(
+        f'[relay]\ncodex_wake_transport = "queue"\ncodex_cli_path = "{toml_cli.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    config = AppConfig.from_env()
+    assert (config.codex_wake_transport, config.codex_cli_path) == ("queue", toml_cli.as_posix())
+    env_file.write_text(f'PALLIUM_CODEX_WAKE_TRANSPORT=auto\nCODEX_CLI_PATH={env_cli}\n', encoding="utf-8")
+    config = AppConfig.from_env()
+    assert (config.codex_wake_transport, config.codex_cli_path) == ("auto", str(env_cli))
+    assert "CODEX_CLI_PATH" not in os.environ
+    monkeypatch.setenv("PALLIUM_CODEX_WAKE_TRANSPORT", "queue")
+    monkeypatch.setenv("CODEX_CLI_PATH", str(process_cli))
+    config = AppConfig.from_env()
+    assert (config.codex_wake_transport, config.codex_cli_path) == ("queue", str(process_cli))
+
+
+@pytest.mark.parametrize("source", ["process", "service-file"])
+@pytest.mark.parametrize("kind", ["empty", "relative", "relative-file", "missing", "directory", "uninspectable"])
+@pytest.mark.parametrize("toml_pin", [False, True])
+def test_auto_legacy_cli_hints_preserve_startup_and_explicit_toml(
+    monkeypatch, tmp_path, source, kind, toml_pin,
+):
+    monkeypatch.delenv("PALLIUM_CODEX_WAKE_TRANSPORT", raising=False)
+    monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "relative-cli").touch()
+    config_file, env_file = tmp_path / "pallium.toml", tmp_path / ".env"
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("PALLIUM_ENV_FILE", str(env_file))
+    pin = (tmp_path / "explicit-cli").as_posix()
+    if toml_pin:
+        config_file.write_text(f'[relay]\ncodex_cli_path = "{Path(pin).as_posix()}"\n', encoding="utf-8")
+    hint = {"empty": "", "relative": "absent-cli", "relative-file": "relative-cli",
+            "missing": str(tmp_path / "missing-cli"), "directory": str(tmp_path),
+            "uninspectable": str(tmp_path / "blocked-cli")}[kind]
+    if kind == "uninspectable":
+        original = Path.is_file
+        def is_file(path):
+            if str(path) == hint:
+                raise OSError("unavailable")
+            return original(path)
+        monkeypatch.setattr(Path, "is_file", is_file)
+    if source == "process":
+        monkeypatch.setenv("CODEX_CLI_PATH", hint)
+    else:
+        env_file.write_text(f"CODEX_CLI_PATH={hint}\n", encoding="utf-8")
+    config = AppConfig.from_env()
+    assert config.codex_wake_transport == "auto"
+    assert config.codex_cli_path == (pin if toml_pin else None)
+    assert os.environ.get("CODEX_CLI_PATH") == (hint if source == "process" else None)
+
+
+@pytest.mark.parametrize("transport", ["auto", "queue"])
+def test_legacy_cli_process_hint_precedence_is_applied_before_eligibility(monkeypatch, tmp_path, transport):
+    env_cli, process_cli = tmp_path / "file-cli", tmp_path / "process-cli"
+    env_cli.touch()
+    process_cli.touch()
+    env_file, config_file = tmp_path / ".env", tmp_path / "pallium.toml"
+    env_file.write_text(f"CODEX_CLI_PATH={env_cli}\n", encoding="utf-8")
+    config_file.write_text(f'[relay]\ncodex_cli_path = "{(tmp_path / "toml-cli").as_posix()}"\n', encoding="utf-8")
+    monkeypatch.setenv("PALLIUM_ENV_FILE", str(env_file))
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("PALLIUM_CODEX_WAKE_TRANSPORT", transport)
+    monkeypatch.setenv("CODEX_CLI_PATH", str(process_cli))
+    assert AppConfig.from_env().codex_cli_path == str(process_cli)
+    monkeypatch.setenv("CODEX_CLI_PATH", "")
+    if transport == "queue":
+        with pytest.raises(ValueError, match="codex_cli_path"):
+            AppConfig.from_env()
+    else:
+        assert AppConfig.from_env().codex_cli_path == (tmp_path / "toml-cli").as_posix()
+
+
+@pytest.mark.parametrize("transport", ["auto", "queue"])
+@pytest.mark.parametrize("source", ["toml", "environment"])
+@pytest.mark.parametrize("hint", ["", "relative-cli"])
+def test_explicit_cli_sources_keep_strict_validation(monkeypatch, tmp_path, transport, source, hint):
+    monkeypatch.setenv("PALLIUM_CODEX_WAKE_TRANSPORT", transport)
+    monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
+    config_file = tmp_path / "pallium.toml"
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("PALLIUM_ENV_FILE", str(tmp_path / "absent.env"))
+    if source == "toml":
+        config_file.write_text(f'[relay]\ncodex_cli_path = "{hint}"\n', encoding="utf-8")
+    else:
+        monkeypatch.setenv("CODEX_CLI_PATH", hint)
+    if source == "environment" and transport == "auto":
+        assert AppConfig.from_env().codex_cli_path is None
+    else:
+        with pytest.raises(ValueError, match="codex_cli_path"):
+            AppConfig.from_env()
+
+
+@pytest.mark.parametrize("value", ["", "QUEUE", "desktop", False, 1, []])
+def test_codex_wake_config_rejects_invalid_transport(value):
+    with pytest.raises(ValueError, match="codex_wake_transport"):
+        AppConfig(codex_wake_transport=value)
+
+
+@pytest.mark.parametrize("value", ["", " ", "relative-cli", False, 1])
+def test_codex_wake_config_rejects_invalid_explicit_cli(value):
+    with pytest.raises(ValueError, match="codex_cli_path"):
+        AppConfig(codex_cli_path=value)
+
+
+def test_codex_wake_config_rejects_invalid_transport_from_sources(monkeypatch, tmp_path):
+    config_file = tmp_path / "pallium.toml"
+    config_file.write_text('[relay]\ncodex_wake_transport = ""\n', encoding="utf-8")
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("PALLIUM_ENV_FILE", str(tmp_path / "absent.env"))
+    monkeypatch.delenv("PALLIUM_CODEX_WAKE_TRANSPORT", raising=False)
+    with pytest.raises(ValueError, match="codex_wake_transport"):
+        AppConfig.from_env()
+    monkeypatch.setenv("PALLIUM_CODEX_WAKE_TRANSPORT", "invalid")
+    with pytest.raises(ValueError, match="codex_wake_transport"):
+        AppConfig.from_env()
 
 
 def test_app_config_loads_from_toml_and_env_overrides(monkeypatch, tmp_path: Path) -> None:

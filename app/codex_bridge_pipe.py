@@ -3033,7 +3033,11 @@ class RetainedService(InventoryService):
                     spent = True
                     stage = "owner-result"
                     if target_state == "idle":
-                        return "queue", _start_launch(reservation.session_ref, _wake_prompt(reservation.delivery_id))
+                        executable = getattr(registry, "queue_executable", None)
+                        launch_options = {"executable": executable} if executable is not None else {}
+                        return "queue", _start_launch(
+                            reservation.session_ref, _wake_prompt(reservation.delivery_id), **launch_options,
+                        )
                     return "retained", self._write_call("send_message_to_thread", {
                         "threadId": reservation.session_ref,
                         "prompt": _wake_prompt(reservation.delivery_id)}, deadline)

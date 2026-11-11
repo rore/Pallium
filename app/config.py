@@ -6,7 +6,7 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from capabilities.consolidation import ConsolidationPolicy, DEFAULT_CONSOLIDATION_STRATEGIES
 from providers.llm.aicore_config import AICoreProviderConfig
@@ -240,8 +240,18 @@ class AppConfig:
     llm_api_key: str | None = None
     llm_prompt_variant: str | None = None
     llm_timeout_seconds: float | None = None
+    codex_wake_transport: Literal["auto", "queue"] = "auto"
+    codex_cli_path: str | None = None
 
     def __post_init__(self) -> None:
+        if self.codex_wake_transport not in ("auto", "queue"):
+            raise ValueError("codex_wake_transport must be auto or queue")
+        if self.codex_cli_path is not None and (
+            not isinstance(self.codex_cli_path, str)
+            or not self.codex_cli_path.strip()
+            or not Path(self.codex_cli_path).is_absolute()
+        ):
+            raise ValueError("codex_cli_path must be an absolute executable path")
         packages = _default_semantic_packages()
         packages.update(copy.deepcopy(self.semantic_packages))
         providers = copy.deepcopy(self.llm_providers)
@@ -290,6 +300,22 @@ class AppConfig:
         env_file_values = _load_env_file(_resolve_env_file_path())
         env_values = _merge_env_values(env_file_values)
         config_data = _load_config_file(_resolve_config_file_path(env_values))
+        codex_wake_transport = _read_nested(config_data, "relay", "codex_wake_transport")
+        codex_wake_transport = _resolve_global_value(
+            "PALLIUM_CODEX_WAKE_TRANSPORT", env_values,
+            codex_wake_transport if codex_wake_transport is not None else "auto",
+        )
+        codex_cli_path = _read_nested(config_data, "relay", "codex_cli_path")
+        if "CODEX_CLI_PATH" in env_values:
+            hint = env_values["CODEX_CLI_PATH"]
+            if codex_wake_transport == "queue":
+                codex_cli_path = hint
+            else:
+                try:
+                    if Path(hint).is_absolute() and Path(hint).is_file():
+                        codex_cli_path = hint
+                except (OSError, ValueError):
+                    pass  # Legacy auto-mode hints must not reject startup.
 
         return cls(
             storage_backend=_resolve_global_value(
@@ -307,6 +333,8 @@ class AppConfig:
                 env_values,
                 _read_nested(config_data, "storage", "relay_sqlite_url"),
             ),
+            codex_wake_transport=codex_wake_transport,
+            codex_cli_path=codex_cli_path,
             default_use_case=_resolve_global_value(
                 "PALLIUM_DEFAULT_USE_CASE",
                 env_values,

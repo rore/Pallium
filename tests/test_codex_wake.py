@@ -2680,6 +2680,128 @@ def test_wake_claim_does_not_reopen_or_claim_for_closed_session(client) -> None:
     assert result["deliveries"] == []
     assert service.message_status(message_id=sent["message_id"], **SCOPE)["deliveries"][0]["state"] == "pending"
 
+@pytest.mark.parametrize("configuration_source", ["constructor", "legacy-environment"])
+def test_create_app_queue_transport_and_cli_are_isolated(monkeypatch, tmp_path, request, configuration_source):
+    monkeypatch.setattr("app.codex_bridge_pipe.retained_wake_enabled", lambda: True)
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", codex_wake.schedule_codex_relay_wake)
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    monkeypatch.setattr(codex_wake, "_codex_home", lambda: tmp_path)
+    monkeypatch.setattr(codex_wake, "_codex_executable", lambda: pytest.fail("explicit CLI pin fell back"))
+    executable = tmp_path / "native-cli-東京.exe"
+    executable.touch()
+    apps = []
+    for transport in ("queue", "auto"):
+        config = AppConfig(
+            sqlite_url=f"sqlite:///{tmp_path / (transport + '.db')}", default_use_case="demo_agent_memory",
+            semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(enabled=False),
+            codex_wake_transport=transport, codex_cli_path=str(executable) if transport == "queue" else None,
+        )
+        if configuration_source == "legacy-environment":
+            monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(tmp_path / "absent.toml"))
+            monkeypatch.setenv("PALLIUM_ENV_FILE", str(tmp_path / "absent.env"))
+            monkeypatch.setenv("PALLIUM_CODEX_WAKE_TRANSPORT", transport)
+            monkeypatch.setenv("CODEX_CLI_PATH", str(executable) if transport == "queue" else "")
+            selected = AppConfig.from_env()
+            config = replace(config, codex_wake_transport=selected.codex_wake_transport,
+                             codex_cli_path=selected.codex_cli_path)
+        app = create_app(config)
+        apps.append(app)
+        request.addfinalizer(app.state._close_constructed)
+        request.addfinalizer(lambda registry=app.state.codex_wake_registry: codex_wake.drain_codex_relay_wakes(registry))
+        assert app.state.codex_wake_registry.initialize(old_owner_drained=True)
+    queue_registry, desktop_registry = (app.state.codex_wake_registry for app in apps)
+    assert queue_registry is not desktop_registry
+    assert (queue_registry.wake_transport, queue_registry.queue_executable) == ("queue", str(executable))
+    assert (desktop_registry.wake_transport, desktop_registry.queue_executable) == ("auto", None)
+    desktop_calls, workers, messages = [], [], []
+    desktop_registry.retained_service = SimpleNamespace(dispatch=lambda reservation, registry: (
+        desktop_calls.append((reservation.session_ref, registry)) or
+        (codex_wake.ActivationAttemptResult("deferred", "native_unavailable", native_retry_safe=True), reservation)
+    ))
+    queue_registry.retained_service = SimpleNamespace(dispatch=lambda *_: pytest.fail("queue used Desktop"))
+    clients = [TestClient(app) for app in apps]
+    for http in clients:
+        request.addfinalizer(http.close)
+    with patch("app.codex_wake.threading.Thread") as thread:
+        thread.side_effect = lambda **kwargs: (workers.append(kwargs["args"]), _CapturedWakeThread())[1]
+        for http in clients:
+            for runtime, session in (("claude-code", "sender"), ("codex", "target-session")):
+                assert http.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **SCOPE}).status_code == 200
+            response = http.post("/relay/messages", json={
+                "sender_runtime": "claude-code", "sender_session_ref": "sender",
+                "recipient": "codex:target-session", "payload": "queue selection ✓", **SCOPE,
+            })
+            assert response.status_code == 200
+            messages.append(response.json())
+    assert len(workers) == 2
+    process = MagicMock(returncode=0)
+    process.communicate.return_value = (None, "")
+    with patch.object(codex_wake, "_popen", return_value=process) as popen:
+        for args in workers:
+            codex_wake._wake_after_debounce(*args)
+    assert len(desktop_calls) == 1 and desktop_calls[0] == ("target-session", desktop_registry)
+    popen.assert_called_once()
+    assert popen.call_args.args[0] == [
+        str(executable), "queue", "--profile", "pallium-relay", "--thread", "target-session",
+        "--message", codex_wake._wake_prompt(messages[0]["deliveries"][0]["delivery_id"]),
+    ]
+    assert popen.call_args.kwargs["cwd"] == str(tmp_path)
+    for http, message in zip(clients, messages):
+        delivery, = http.get(f"/relay/messages/{message['message_id']}", params=SCOPE).json()["deliveries"]
+        assert (delivery["state"], delivery["attempts"]) == ("pending", 0)
+    assert queue_registry.reservations()[0].outcome == "accepted"
+    assert desktop_registry.reservations() == ()
+
+
+@pytest.mark.parametrize("kind", ["relative-file", "relative-missing", "empty", "absolute-missing"])
+def test_auto_legacy_cli_hint_preserves_launch_discovery(monkeypatch, tmp_path, kind):
+    monkeypatch.chdir(tmp_path)
+    relative = tmp_path / "relative-cli"
+    relative.touch()
+    hint = {"relative-file": relative.name, "relative-missing": "absent-cli",
+            "empty": "", "absolute-missing": str(tmp_path / "absent-cli")}[kind]
+    monkeypatch.setenv("CODEX_CLI_PATH", hint)
+    monkeypatch.setenv("PALLIUM_CODEX_WAKE_TRANSPORT", "auto")
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(tmp_path / "absent.toml"))
+    monkeypatch.setenv("PALLIUM_ENV_FILE", str(tmp_path / "absent.env"))
+    config = AppConfig.from_env()
+    assert config.codex_cli_path is None
+    monkeypatch.setattr(codex_wake, "_codex_home", lambda: tmp_path)
+    monkeypatch.setattr(codex_wake.shutil, "which", lambda _: "discovered-cli")
+    process = MagicMock()
+    with patch.object(codex_wake, "_popen", return_value=process) as popen:
+        assert codex_wake._start_launch("target-session", "wake", executable=config.codex_cli_path) == (process, None)
+    assert popen.call_args.args[0] == [
+        relative.name if kind == "relative-file" else "discovered-cli",
+        "queue", "--profile", "pallium-relay", "--thread", "target-session", "--message", "wake",
+    ]
+
+
+@pytest.mark.parametrize("kind", ["missing", "directory", "relative"])
+def test_explicit_queue_cli_never_falls_back(monkeypatch, tmp_path, kind):
+    monkeypatch.setattr(codex_wake, "_codex_home", lambda: tmp_path)
+    monkeypatch.setattr(codex_wake, "_codex_executable", lambda: pytest.fail("invalid CLI pin fell back"))
+    monkeypatch.setattr(codex_wake, "_popen", lambda *_a, **_k: pytest.fail("invalid CLI launched"))
+    executable = {"missing": str(tmp_path / "missing-cli"), "directory": str(tmp_path), "relative": "relative-cli"}[kind]
+    assert codex_wake._start_launch("target-session", "wake", executable=executable) == (
+        None, ("failed", "os_error", None),
+    )
+
+
+def test_queue_mode_does_not_rearm_retained_retry(monkeypatch):
+    monkeypatch.setattr("app.codex_bridge_pipe.retained_wake_enabled", lambda: True)
+    class Registry:
+        persistent = True
+        wake_transport = "queue"
+        retained_service = object()
+        def reservations(self):
+            return (object(),)
+        def reconcile(self, reservation):
+            return "retry", reservation
+    monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", lambda *_a, **_k: pytest.fail("queue replayed retained retry"))
+    assert codex_wake.reconcile_codex_relay_wake_reservations(None, registry=Registry()) == 0
+
+
 def test_create_app_keeps_real_wake_wiring(test_db_url: str) -> None:
     app = create_app(
         AppConfig(
@@ -2712,8 +2834,9 @@ def test_create_app_keeps_real_wake_wiring(test_db_url: str) -> None:
     thread.assert_called_once()
 
 
+@pytest.mark.parametrize("transport", ["auto", "queue"])
 def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
-    client, monkeypatch, tmp_path,
+    client, monkeypatch, tmp_path, transport,
 ) -> None:
     from integrations.codex.hooks import user_prompt_submit as hook
 
@@ -2725,6 +2848,12 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
         codex_wake.schedule_codex_relay_wake,
     )
     registry = _sqlite_wake_registry(client.app.state.pallium_service._storage)
+    registry.wake_transport = transport
+    if transport == "queue":
+        monkeypatch.setattr("app.codex_bridge_pipe.retained_wake_enabled", lambda: True)
+        registry.retained_service = SimpleNamespace(
+            dispatch=lambda *_: pytest.fail("explicit queue mode must not require Desktop custody"),
+        )
     app = FastAPI()
     app.include_router(build_router(
         client.app.state.pallium_service,
