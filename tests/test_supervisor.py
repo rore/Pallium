@@ -1346,9 +1346,11 @@ def managed_supervisor(monkeypatch, tmp_path):
     from app.config import AppConfig, SnapshotConfig
     from storage.sqlite import SQLiteStorageProvider
 
+    main_database = f"sqlite:///{(tmp_path / 'main.db').resolve().as_posix()}"
     database = f"sqlite:///{(tmp_path / 'relay.db').resolve().as_posix()}"
-    config = AppConfig(storage_backend="sqlite", sqlite_url=database, relay_sqlite_url=database,
+    config = AppConfig(storage_backend="sqlite", sqlite_url=main_database, relay_sqlite_url=database,
                        snapshot=SnapshotConfig(enabled=False))
+    assert config.resolved_relay_sqlite_url == database
     validated, closed = [], []
     validation = SimpleNamespace(close=lambda: closed.append(True))
 

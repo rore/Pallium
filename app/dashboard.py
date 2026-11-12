@@ -170,6 +170,7 @@ def _dashboard_relay_identity_collisions(
     *,
     endpoint_ids: set[str] | None = None,
     include_details: bool = False,
+    include_summary: bool = True,
 ) -> tuple[dict, dict[str, dict]]:
     """Read-only evidence for ambiguous runtime/session identities."""
     connection = session.connection()
@@ -252,25 +253,28 @@ def _dashboard_relay_identity_collisions(
             and cutoff <= latest_seen <= as_of
         ) else None
 
-    totals = session.execute(select(
-        func.count().label("group_count"),
-        func.coalesce(func.sum(collision_groups.c.endpoint_count), 0).label("endpoint_count"),
-        func.coalesce(func.sum(collision_groups.c.claimable_delivery_count), 0).label("delivery_count"),
-        func.min(collision_groups.c.oldest_claimable_at).label("oldest_claimable_at"),
-    ).select_from(collision_groups)).one()
-    oldest = _dashboard_utc(totals.oldest_claimable_at)
-    summary = {
-        "group_count": totals.group_count,
-        "endpoint_count": totals.endpoint_count,
-        "claimable_delivery_count": totals.delivery_count,
-        "oldest_claimable_age_seconds": max(0, int((as_of - oldest).total_seconds())) if oldest else None,
-        "detail_group_limit": _RELAY_COLLISION_GROUP_DETAIL_LIMIT,
-        "detail_endpoint_limit": _RELAY_COLLISION_ENDPOINT_DETAIL_LIMIT,
-        "details_truncated": False,
-        "groups": [],
-    }
+    summary = {}
+    totals = None
+    if include_summary or include_details:
+        totals = session.execute(select(
+            func.count().label("group_count"),
+            func.coalesce(func.sum(collision_groups.c.endpoint_count), 0).label("endpoint_count"),
+            func.coalesce(func.sum(collision_groups.c.claimable_delivery_count), 0).label("delivery_count"),
+            func.min(collision_groups.c.oldest_claimable_at).label("oldest_claimable_at"),
+        ).select_from(collision_groups)).one()
+        oldest = _dashboard_utc(totals.oldest_claimable_at)
+        summary = {
+            "group_count": totals.group_count,
+            "endpoint_count": totals.endpoint_count,
+            "claimable_delivery_count": totals.delivery_count,
+            "oldest_claimable_age_seconds": max(0, int((as_of - oldest).total_seconds())) if oldest else None,
+            "detail_group_limit": _RELAY_COLLISION_GROUP_DETAIL_LIMIT,
+            "detail_endpoint_limit": _RELAY_COLLISION_ENDPOINT_DETAIL_LIMIT,
+            "details_truncated": False,
+            "groups": [],
+        }
 
-    if include_details and totals.group_count:
+    if include_details and totals is not None and totals.group_count:
         candidates = session.execute(
             select(collision_groups)
             .where(collision_groups.c.endpoint_count <= _RELAY_COLLISION_ENDPOINT_DETAIL_LIMIT)
@@ -1187,6 +1191,7 @@ def mount_dashboard(
             if not compact:
                 _, collision_by_endpoint = _dashboard_relay_identity_collisions(
                     session, as_of, endpoint_ids={record.id for record in records},
+                    include_summary=False,
                 )
         sessions = [_dashboard_relay_session(
             record, cutoff, None if compact else relay_activation,
@@ -1446,6 +1451,7 @@ def mount_dashboard(
             )).all() if endpoint_ids else []
             _, collision_by_endpoint = _dashboard_relay_identity_collisions(
                 session, as_of, endpoint_ids=endpoint_ids,
+                include_summary=False,
             )
         endpoint_views = {record.id: _dashboard_relay_session(
             record, as_of - timedelta(hours=24),

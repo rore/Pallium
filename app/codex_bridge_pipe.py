@@ -523,8 +523,9 @@ class _PipeIO:
         pending = False
         completed = False
         read_deadline = False
+        entered_at = None
         try:
-            if self.stop.is_set() or time.monotonic() >= deadline:
+            if self.stop.is_set() or (entered_at := time.monotonic()) >= deadline:
                 raise ShadowUnavailable("stopped" if self.stop.is_set() else "deadline")
             if retain_read and self._completed_read is not None:
                 if self.unresolved or _native_uncertain:
@@ -1344,6 +1345,93 @@ def read_inventory_proof(directory: Path, expected_policy: InventoryPolicy) -> d
                 "before_inventory_ok": False, "after_inventory_ok": False, "historical_transport_pass": False}
 
 
+def _source_failure_call(exc):
+    try:
+        trace = exc.__traceback__
+        for _ in range(32):
+            if trace is None:
+                return "unknown"
+            if trace.tb_frame.f_code is InventoryService._run.__code__:
+                child = trace.tb_next
+                observer = trace.tb_frame.f_locals.get("_observe_source_stage")
+                if child is not None and child.tb_frame.f_code is getattr(observer, "__code__", None):
+                    child = child.tb_next
+                if child is not None and child.tb_frame.f_code is _PipeIO.read.__code__:
+                    return "read"
+                if child is not None and child.tb_frame.f_code is _PipeIO.write.__code__:
+                    return "write"
+                return "unknown"
+            trace = trace.tb_next
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _source_failure_io_state(exc, call):
+    unknown = ("unknown", "unknown", "unknown")
+    try:
+        expected = {"read": _PipeIO.read, "write": _PipeIO.write}.get(call)
+        if expected is None:
+            return unknown
+        trace, states = exc.__traceback__, []
+        for _ in range(32):
+            if trace is None:
+                return states[0] if len(states) == 1 else unknown
+            if trace.tb_frame.f_code is expected.__code__:
+                child = trace.tb_next
+                if child is None or child.tb_frame.f_code is not _PipeIO._operation.__code__:
+                    return unknown
+                values = child.tb_frame.f_locals
+                entered, deadline = values.get("entered_at"), values.get("deadline")
+                budget = "unknown"
+                if (type(entered) in (int, float) and type(deadline) in (int, float)
+                        and -60 <= deadline - entered <= EXCHANGE_SECONDS):
+                    budget = int((deadline - entered) * 1000)
+                pending, completed = values.get("pending"), values.get("completed")
+                states.append((budget, pending if type(pending) is bool else "unknown",
+                               completed if type(completed) is bool else "unknown"))
+            trace = trace.tb_next
+    except BaseException:
+        pass
+    return unknown
+
+
+def _source_request_fields(epoch, observation, observed):
+    fields: list[object] = ["unknown"] * 12
+    try:
+        if type(epoch) is str and len(epoch) == 32 and re.fullmatch(r"[0-9a-f]{32}", epoch):
+            fields[0] = epoch
+    except BaseException:
+        pass
+    if type(observation) is not dict:
+        return tuple(fields)
+    try:
+        sequence, verb = observation.get("sequence"), observation.get("verb")
+        if _integer(sequence, 1) and type(verb) is str and verb in {"ready", "register"}:
+            fields[1:3] = sequence, verb
+    except BaseException:
+        pass
+    for offset, stage in ((3, "source-read"), (6, "process"), (9, "source-write")):
+        try:
+            value = observation.get(stage)
+            if type(value) is not tuple or len(value) != 3:
+                continue
+            elapsed, ended, returned = value
+            if (type(elapsed) not in (int, float) or not 0 <= elapsed <= 600
+                    or type(ended) not in (int, float) or type(returned) is not bool
+                    or type(observed) not in (int, float) or not 0 <= observed - ended <= 600):
+                continue
+            fields[offset] = int(elapsed * 1000)
+            fields[offset + 1] = "returned" if returned else "raised"
+            fields[offset + 2] = int((observed - ended) * 1000)
+        except BaseException:
+            pass
+    return tuple(fields)
+
+
+_source_observation_clock = time.perf_counter
+
+
 class InventoryService:
     """One serial ready/admission slot, one RAM connection, one fixed operator action."""
 
@@ -1893,6 +1981,52 @@ class InventoryService:
         _log.warning("codex_trial_owner outcome=%s", outcome)
 
     def _run(self) -> None:
+        source_timing = None
+        request_observation = None
+
+        def _observe_source_stage(stage, operation, *args):
+            nonlocal request_observation
+            if stage == "source-read":
+                request_observation = None
+            if not self.retained or source_timing is None or not source_timing["valid"]:
+                return operation(*args)
+            started = None
+            returned = False
+            try:
+                started = _source_observation_clock()
+            except Exception:
+                source_timing["valid"] = False
+            try:
+                result = operation(*args)
+                returned = True
+                return result
+            finally:
+                if started is not None:
+                    try:
+                        ended = _source_observation_clock()
+                        if type(started) not in (int, float) or type(ended) not in (int, float):
+                            raise ValueError
+                        elapsed = ended - started
+                        if not 0 <= elapsed <= 600:
+                            raise ValueError
+                        previous = source_timing["active"]
+                        if previous is None or elapsed > previous[1]:
+                            source_timing["active"] = (stage, elapsed, ended)
+                    except Exception:
+                        source_timing["valid"] = False
+                    else:
+                        try:
+                            if stage == "source-read":
+                                request_observation = {
+                                    "sequence": None, "verb": None,
+                                    "source-read": (elapsed, ended, returned),
+                                    "process": None, "source-write": None,
+                                }
+                            elif stage in {"process", "source-write"} and request_observation is not None:
+                                request_observation[stage] = (elapsed, ended, returned)
+                        except BaseException:
+                            request_observation = None
+
         owner = io = peer = None
         self.current = None
         try:
@@ -1954,32 +2088,51 @@ class InventoryService:
                 elif self.source.pid == peer.pid and self.source.creation == peer.creation:
                     peer.close()
                     peer = self.source
+                request_observation = None
+                try:
+                    source_timing = {"active": None, "previous": None, "valid": True} if self.retained else None
+                except Exception:
+                    source_timing = None
                 try:
                     while not self.stop_event.is_set():
-                        self._maintain()
-                        self._after_source_exit()
-                        self._maybe_install_trial()
-                        self._maybe_bind_trial()
-                        self._maybe_execute_trial()
+                        _observe_source_stage("maintenance", self._maintain)
+                        _observe_source_stage("source-exit", self._after_source_exit)
+                        _observe_source_stage("trial-install", self._maybe_install_trial)
+                        _observe_source_stage("trial-bind", self._maybe_bind_trial)
+                        _observe_source_stage("trial-execute", self._maybe_execute_trial)
                         if self.custody is None and (self.fenced or time.monotonic() >= self.ready_deadline):
                             break
                         try:
-                            request = io.read(time.monotonic() + .1)
+                            request = _observe_source_stage("source-read", io.read, time.monotonic() + .1)
                         except ShadowUnavailable as exc:
                             if exc.category == "deadline" and not io.unresolved:
                                 continue
                             raise
                         deadline = time.monotonic() + EXCHANGE_SECONDS
                         try:
-                            response = self._process(request, peer, sequence, deadline)
+                            response = _observe_source_stage("process", self._process, request, peer, sequence, deadline)
                         except ShadowUnavailable as exc:
                             response = _inventory_public("unavailable", _inventory_reason(exc))
                         else:
                             sequence = request["sequence"]
+                            try:
+                                if type(request_observation) is dict and type(request) is dict:
+                                    verb = request.get("verb")
+                                    if _integer(sequence, 1) and type(verb) is str and verb in {"ready", "register"}:
+                                        request_observation["sequence"] = sequence
+                                        request_observation["verb"] = verb
+                            except BaseException:
+                                pass
                         candidate = request.get("sequence")
                         response.update(version=1, epoch=self.epoch,
                                         sequence=candidate if _integer(candidate, 1) else sequence)
-                        io.write(response, deadline)
+                        _observe_source_stage("source-write", io.write, response, deadline)
+                        try:
+                            if source_timing is not None:
+                                source_timing["previous"] = source_timing["active"]
+                                source_timing["active"] = None
+                        except Exception:
+                            source_timing = None
                 except ShadowUnavailable as exc:
                     if self.retained:
                         category = exc.category if exc.category in _INVENTORY_FAILURE_CATEGORIES else "unavailable"
@@ -2000,10 +2153,43 @@ class InventoryService:
                                         source_state = "alive"
                         except Exception:
                             pass
+                        timing_fields = ("unknown", "unknown", "unknown", "unknown", "unknown", "unknown")
+                        observed = None
                         try:
-                            _log.warning("codex_retained_source_channel_closed category=%s unresolved=%s stopping=%s observed_at=%s source_pid=%s source_creation=%s source_state=%s close_cause=unknown",
+                            observed = _source_observation_clock()
+                            if (source_timing is not None and source_timing["valid"]
+                                    and type(observed) in (int, float)):
+                                fields = []
+                                for value in (source_timing["active"], source_timing["previous"]):
+                                    if value is None:
+                                        fields.extend(("none", 0, "unknown"))
+                                    elif 0 <= observed - value[2] <= 600:
+                                        fields.extend((value[0], int(value[1] * 1000), int((observed - value[2]) * 1000)))
+                                    else:
+                                        fields.extend(("unknown", "unknown", "unknown"))
+                                timing_fields = tuple(fields)
+                        except Exception:
+                            pass
+                        source_call = "unknown"
+                        try:
+                            source_call = _source_failure_call(exc)
+                        except BaseException:
+                            pass
+                        io_fields = ("unknown",) * 3
+                        try:
+                            io_fields = _source_failure_io_state(exc, source_call)
+                        except BaseException:
+                            pass
+                        request_fields = ("unknown",) * 12
+                        try:
+                            request_fields = _source_request_fields(self.epoch, request_observation, observed)
+                        except BaseException:
+                            pass
+                        try:
+                            _log.warning("codex_retained_source_channel_closed category=%s unresolved=%s stopping=%s observed_at=%s source_pid=%s source_creation=%s source_state=%s close_cause=unknown source_call=%s service_stage=%s service_stage_ms=%s service_stage_age_ms=%s prior_service_stage=%s prior_service_stage_ms=%s prior_service_stage_age_ms=%s request_epoch=%s request_sequence=%s request_verb=%s request_read_ms=%s request_read_outcome=%s request_read_age_ms=%s request_process_ms=%s request_process_outcome=%s request_process_age_ms=%s request_write_ms=%s request_write_outcome=%s request_write_age_ms=%s io_precheck_budget_ms=%s io_was_pending=%s io_settled=%s",
                                          category, io.unresolved, self.stop_event.is_set(),
-                                         datetime.now(timezone.utc).isoformat(), source_pid, source_creation, source_state)
+                                         datetime.now(timezone.utc).isoformat(), source_pid, source_creation, source_state, source_call, *timing_fields,
+                                         *request_fields, *io_fields)
                         except Exception:
                             pass  # Diagnostics cannot change source ownership or cleanup.
                     if io.unresolved or self.stop_event.is_set():
