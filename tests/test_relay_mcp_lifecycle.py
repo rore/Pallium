@@ -603,9 +603,17 @@ def test_reply_requires_receipt(client: TestClient):
     assert resp.status_code == 409
 
 
-def test_one_active_claim_at_a_time(client: TestClient):
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_one_active_claim_at_a_time(client: TestClient, relay_admission_clock):
     """Second /relay/turn call while a claim is active returns empty."""
-    _register(client)
+    from storage import sqlite_queue
+
+    storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
+    with relay_admission_clock(storage, expected_admissions=1):
+        _register(client)
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
     _send(client)
 
     turn1 = _turn(client)
