@@ -24,6 +24,19 @@ def test_ci_cancels_only_the_same_event_and_ref() -> None:
     assert "cancel-in-progress: true" in WORKFLOW
 
 
+def test_subprocess_qualification_workflow_is_manual_only() -> None:
+    path = Path(__file__).parents[1] / ".github" / "workflows" / "subprocess-qualification.yml"
+    assert path.is_file(), "Dedicated subprocess qualification workflow is missing"
+
+    import yaml
+
+    workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(workflow, dict)
+    events = workflow.get("on", workflow.get(True))
+    assert isinstance(events, dict)
+    assert set(events) == {"workflow_dispatch"}
+
+
 def test_every_event_reports_selection_and_policy_is_trusted() -> None:
     assert "paths-ignore:" not in WORKFLOW
     assert "  workflow_dispatch:" in WORKFLOW
