@@ -1,7 +1,6 @@
 # First · Relay Reliability
 - add-wake-first-relay-delivery
 - fix-opencode-plugin-reliability
-- fix-opencode-mcp-session-identity
 - add-relay-retention-and-lifecycle-hardening
 
 # Parallel · Session History
@@ -50,6 +49,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- fix-opencode-mcp-session-identity
 - improve-session-history-search-quality
 - add-global-relay-recipient-discovery
 

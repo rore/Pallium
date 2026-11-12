@@ -1,7 +1,7 @@
 ---
 id: fix-opencode-mcp-session-identity
 title: Fix OpenCode MCP current-session identity
-status: blocked
+status: done
 priority: P1
 commitment: committed
 lane: integration
@@ -40,7 +40,9 @@ History capture and a connected MCP endpoint can work while self-address, work-r
 
 The user accepted the source-only plan with the condition that other integrations are unaffected. The shared resolver fix is implemented. Focused compatibility checks passed 70 tests, real stdio/HTTP MCP checks passed 29, and native OpenCode 2.2.7 passed both direct and Code Mode variants. The existing broader MCP subsystem passed 400 tests before the final mixed-metadata guard; the final focused checks cover that guard.
 
-Full validation remains open: the local non-slow run stopped after 4600 passes on an unchanged Codex wake path when SQLite setup exceeded its existing one-second busy budget. All four variants passed in isolation on both this branch and clean base. Do not relabel the full run as passing. Full PR CI and final independent result review remain merge gates. Earlier collection/native prerequisite failures are retained in the Work Record.
+Source implementation and review are complete. Full Python 3.12 CI passed 8808 tests; Windows smoke and governance checks passed. Local full validation and Python 3.13 CI each encountered unchanged hook/storage timing failures outside the modified MCP path. Exact failing nodes pass in isolation. The user directed not to block on unrelated work, and independent review accepted this source-only disposition. Those failed runs remain failed evidence; no unrelated tests or timeouts were changed.
+
+Source delivery: [PR #401](https://github.com/rore/Pallium/pull/401), reviewed application commit a980e726. The PR is authoritative for merge state. This item closes the bounded source fix, not installed deployment.
 
 The user authorized PR/merge, then explicitly paused local rollout after learning both shared and installed checkouts contain unrelated uncommitted runtime work. Preserve those changes. No installed update or live restart is authorized or claimed; a source merge alone will not repair the running session.
 
