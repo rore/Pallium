@@ -235,3 +235,187 @@ def test_cleaner_cli_failure_closes_its_storage_once_without_logging_error_text(
     assert storage.calls == storage.closed == 1
     output = capsys.readouterr()
     assert "controlled-sensitive-error-text" not in output.out + output.err
+
+
+def _owned_maintenance(client, monkeypatch):
+    database_url = str(client.app.state.pallium_service._storage._relay_engine.url)
+    maintenance = SQLiteStorageProvider.open_relay_maintenance(database_url)
+    original_close = maintenance.close
+    closed = []
+
+    def close():
+        closed.append(True)
+        original_close()
+
+    def open_existing(expected):
+        assert expected == database_url
+        return maintenance
+
+    monkeypatch.setattr(maintenance, "close", close)
+    monkeypatch.setattr(SQLiteStorageProvider, "open_relay_maintenance", staticmethod(open_existing))
+    return database_url, maintenance, closed
+
+
+@pytest.mark.parametrize("cleanup_raises", (False, True))
+def test_cleaner_window_acquisition_failure_closes_session_and_preserves_original_error(
+    client, monkeypatch, expiry_clock, cleanup_raises,
+):
+    storage = client.app.state.pallium_service._storage
+    messages = _messages(client, 1)
+    _expire(storage, messages)
+    database_url, maintenance, closed = _owned_maintenance(client, monkeypatch)
+    sentinel = RuntimeError("controlled acquisition failure")
+    observed, sessions_closed = [], []
+
+    class FailedSession:
+        def connection(self, **options):
+            assert options == {"execution_options": {"isolation_level": "AUTOCOMMIT"}}
+            raise sentinel
+
+        def close(self):
+            sessions_closed.append(True)
+            if cleanup_raises:
+                raise RuntimeError("controlled session cleanup failure")
+
+    original_window = maintenance.relay_expire_window
+
+    def window(**kwargs):
+        try:
+            return original_window(**kwargs)
+        except BaseException as error:
+            observed.append(error)
+            raise
+
+    monkeypatch.setattr(maintenance, "_relay_session_factory", FailedSession)
+    monkeypatch.setattr(maintenance, "relay_expire_window", window)
+    assert _once(database_url) == 1
+    assert len(observed) == 1 and observed[0] is sentinel
+    assert sessions_closed == [True]
+    assert closed == [True]
+    assert _states(client, messages) == ["pending"]
+
+
+@pytest.mark.parametrize("fault", ("busy", "transient"))
+@pytest.mark.parametrize("failures_per_window", (1, 9))
+def test_cleaner_continuous_recovery_preserves_cursor_and_resets_error_budget(
+    client, monkeypatch, expiry_clock, capsys, fault, failures_per_window,
+):
+    import sqlite3
+
+    storage = client.app.state.pallium_service._storage
+    messages = _messages(client, 2)
+    _expire(storage, messages)
+    database_url, maintenance, closed = _owned_maintenance(client, monkeypatch)
+    original_window = maintenance.relay_expire_window
+    calls, sleeps = [], []
+    progress = {"failures": 0, "pages": 0, "stopped": False}
+
+    def window(**kwargs):
+        calls.append(dict(kwargs))
+        assert len(calls) <= 2 * (failures_per_window + 1)
+        assert kwargs["limit"] == 64
+        if progress["failures"] < failures_per_window:
+            progress["failures"] += 1
+            if fault == "busy":
+                error = sqlite3.OperationalError("controlled-sensitive-error-text")
+                error.sqlite_errorcode = sqlite3.SQLITE_BUSY | (1 << 8)
+            else:
+                error = sqlite3.OperationalError("disk I/O error: controlled-sensitive-error-text")
+            raise error
+        # Use the real window's supported one-row bound to exercise multiple CLI cursors.
+        result = original_window(**{**kwargs, "limit": 1})
+        progress["failures"] = 0
+        progress["pages"] += 1
+        progress["stopped"] = result["sweep_complete"]
+        return result
+
+    monkeypatch.setattr(maintenance, "relay_expire_window", window)
+    result = run_cleaner(["--database-url", database_url], sleep_fn=sleeps.append,
+                         should_stop=lambda: progress["stopped"], install_signal_handlers=False)
+    assert result == 0
+    assert progress["pages"] == 2 and closed == [True]
+    assert len(calls) == 2 * (failures_per_window + 1)
+    for start in (0, failures_per_window + 1):
+        batch = calls[start:start + failures_per_window + 1]
+        cursors = [(item["after_id"], item["upper_id"], item["cutoff"]) for item in batch]
+        assert cursors == [cursors[0]] * len(cursors)
+    assert calls[0]["after_id"] is None and calls[0]["upper_id"] is None
+    assert calls[failures_per_window + 1]["after_id"] is not None
+    assert calls[failures_per_window + 1]["upper_id"] is not None
+    assert all(item["cutoff"] == expiry_clock for item in calls)
+    assert sleeps.count(0.25) == 2 * failures_per_window and sleeps.count(0.05) == 1
+    assert _states(client, messages) == ["expired", "expired"]
+    output = capsys.readouterr()
+    text = output.out + output.err
+    assert "outcome=resumed" in text
+    assert ("outcome=deferred" if fault == "busy" else "outcome=transient_error") in text
+    assert "controlled-sensitive-error-text" not in text
+
+
+def test_cleaner_continuous_transient_limit_preserves_committed_progress_and_closes(
+    client, monkeypatch, expiry_clock, capsys,
+):
+    import sqlite3
+
+    storage = client.app.state.pallium_service._storage
+    messages = _messages(client, 2)
+    _expire(storage, messages)
+    database_url, maintenance, closed = _owned_maintenance(client, monkeypatch)
+    original_window = maintenance.relay_expire_window
+    calls, sleeps = [], []
+
+    def window(**kwargs):
+        calls.append(dict(kwargs))
+        assert len(calls) <= 11
+        if len(calls) == 1:
+            return original_window(**{**kwargs, "limit": 1})
+        raise sqlite3.OperationalError("disk I/O error: controlled-sensitive-error-text")
+
+    monkeypatch.setattr(maintenance, "relay_expire_window", window)
+    result = run_cleaner(["--database-url", database_url], sleep_fn=sleeps.append,
+                         should_stop=lambda: False, install_signal_handlers=False)
+    assert result == 1 and closed == [True]
+    assert len(calls) == 11
+    cursors = [(item["after_id"], item["upper_id"], item["cutoff"]) for item in calls[1:]]
+    assert cursors == [cursors[0]] * 10
+    assert cursors[0][0] is not None and cursors[0][1] is not None
+    assert cursors[0][2] == expiry_clock
+    assert sleeps == [0.05] + [0.25] * 9
+    assert sorted(_states(client, messages)) == ["expired", "pending"]
+    output = capsys.readouterr()
+    assert "controlled-sensitive-error-text" not in output.out + output.err
+
+
+def test_cleaner_expires_claimed_receipt_but_preserves_acknowledged_and_durable_deliveries(client):
+    storage = client.app.state.pallium_service._storage
+    messages = _messages(client, 3)
+    claimed = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target", "max_messages": 2, **SCOPE,
+    })
+    assert claimed.status_code == 200, claimed.text
+    receipts = claimed.json()["deliveries"]
+    assert len(receipts) == 2
+    doomed, acknowledged = receipts
+    acknowledged_response = client.post("/relay/deliveries/ack", json={
+        "delivery_id": acknowledged["delivery_id"], "claim_token": acknowledged["claim_token"], **SCOPE,
+    })
+    assert acknowledged_response.status_code == 200, acknowledged_response.text
+    durable = next(message for message in messages if message not in {
+        doomed["message_id"], acknowledged["message_id"],
+    })
+    _expire(storage, [doomed["message_id"], acknowledged["message_id"]])
+    assert _once(str(storage._relay_engine.url)) == 0
+    assert _states(client, [doomed["message_id"], acknowledged["message_id"], durable]) == [
+        "expired", "delivered", "pending",
+    ]
+    stale = client.post("/relay/deliveries/ack", json={
+        "delivery_id": doomed["delivery_id"], "claim_token": doomed["claim_token"], **SCOPE,
+    })
+    assert stale.status_code == 409, stale.text
+    replay = client.post("/relay/deliveries/ack", json={
+        "delivery_id": acknowledged["delivery_id"], "claim_token": acknowledged["claim_token"], **SCOPE,
+    })
+    assert replay.status_code == 200 and replay.json()["already_delivered"] is True
+    remaining = client.post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **SCOPE})
+    assert remaining.status_code == 200, remaining.text
+    assert [row["message_id"] for row in remaining.json()["deliveries"]] == [durable]

@@ -2466,8 +2466,19 @@ def test_claim_expiry_rolls_back_waits_mutation_and_early_returns(client, monkey
     assert response.json()["detail"] == "Relay claim request expired"
     assert phase == "entry" or observed
     assert snapshot() == before  # Session/scope/generation/message expiry/token/lease/attempt all roll back.
-    expected_checkpoint = {"entry": "before_acquisition", "acquire": "after_acquisition",
-                "candidate": "pre_claim_mutation"}.get(phase, "post_flush_precommit")
+    # The label names the first detecting guard, not the flush that changed the clock.
+    # Scope writes autoflush before candidate scans; new-session creation flushes explicitly.
+    # Both therefore expire before the normal-body pre-mutation guard, unlike early returns.
+    expected_checkpoint = {
+        "entry": "before_acquisition",
+        "acquire": "after_acquisition",
+        "candidate": "pre_claim_mutation",
+        "flush": "post_flush_precommit",
+        "scope": "pre_claim_mutation",
+        "new-session": "pre_claim_mutation",
+        "missing": "post_flush_precommit",
+        "closed": "post_flush_precommit",
+    }[phase]
     assert [error.expiry_detected_at for error in expiry_errors] == [expected_checkpoint]
 
 

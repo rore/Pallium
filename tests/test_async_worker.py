@@ -1218,3 +1218,45 @@ def test_canceled_thread_worker_stops_before_second_provider_call(test_db_url: s
     rebuilder._vector_embedder.embed_process_result.assert_not_called()
     rebuilder._maybe_assign_workstreams.assert_not_called()
     rebuilder._maybe_trigger_fact_consolidation.assert_not_called()
+
+def test_worker_source_success_resets_budget_before_persistent_rebuild_transient_failure(monkeypatch, capsys):
+    from app import worker as worker_module
+
+    calls = {"source": 0, "rebuild": 0}
+    ticks = [-worker_module.MAX_REBUILD_WAIT_SECONDS]
+    sleeps = []
+
+    def source(**_kwargs):
+        calls["source"] += 1
+        return types.SimpleNamespace(source_item_id=f"source-{calls['source']}",
+            processing_status="completed", processing_attempts=1, packages_processed=[],
+            failure_category=None, processing_error=None)
+
+    def rebuild(**_kwargs):
+        calls["rebuild"] += 1
+        native = sqlite3.OperationalError("disk I/O error: controlled-sensitive-rebuild-text")
+        native.sqlite_errorcode = sqlite3.SQLITE_IOERR | (1 << 8)
+        raise SAOperationalError("statement", {}, native)
+
+    def clock():
+        ticks[0] += worker_module.MAX_REBUILD_WAIT_SECONDS
+        return ticks[0]
+
+    service = types.SimpleNamespace(process_next_source_item_summary=source,
+                                    process_next_thread_rebuild=rebuild)
+    monkeypatch.setattr(worker_module, "build_storage_provider", lambda _config: object())
+    monkeypatch.setattr(worker_module, "build_service", lambda *_a, **_kw: types.SimpleNamespace(service=service))
+    result = run_worker(["--worker-id", "mixed-progress-control"],
+        config=AppConfig(storage_backend="memory", vector_index=VectorIndexConfig(enabled=False)),
+        sleep_fn=sleeps.append, clock=clock,
+        should_stop=lambda: calls["rebuild"] >= 12 or calls["source"] >= 13,
+        install_signal_handlers=False)
+    assert result == 0
+    assert calls == {"source": 12, "rebuild": 12}
+    assert sleeps == [1.0] * 12
+    output = capsys.readouterr()
+    assert "giving up" not in output.err
+    assert "controlled-sensitive-rebuild-text" not in output.err
+    assert output.err.count("operation_family=thread_rebuild") == 12
+    assert output.err.count("consecutive=1 backoff=1.0s") == 12
+    assert output.err.count("native_sqlite_code_family=ioerr") == 12

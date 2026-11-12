@@ -4,6 +4,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import re
 import time
 from asyncio import CancelledError
 from collections.abc import Awaitable
@@ -83,10 +84,10 @@ from api.schemas import (
     SupersedeMemoryResponse,
 )
 from core.claude_wake import ClaudeWakeRegistry
-from core.codex_wake import CodexWakeReservation
+from core.codex_wake import CodexWakeReservation, _relay_snapshot_timings
 from core.container_ref import canonicalize_container_ref, validate_explicit_container_ref
 from core.history_presentation import compact_history
-from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, ImmediateTransactionBusyError, LookupRequestLinkError, SourceTurnSnapshotConflictError, SupersessionConflictError
+from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, ImmediateTransactionBusyError, LookupRequestLinkError, SourceTurnSnapshotConflictError, SupersessionConflictError, _relay_writer_context, _relay_writer_observation, _relay_request_writer_observation
 from core.relay import RELAY_MESSAGE_MAX_CHARS, RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError
 from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit, new_id, utc_now
 from core.service import PalliumService, _sanitize_work_ref_metadata
@@ -778,12 +779,13 @@ def create_router(
             )
         return HTTPException(status_code=422, detail=str(exc))
 
-    def _relay_sync_call(operation_name: str, operation, *, started=None):
+    def _relay_sync_call(operation_name: str, operation, *, started=None, delivery_ref=None):
         if started is None:
             started = time.monotonic()
         try:
             try:
-                result = operation()
+                with _relay_writer_context(operation_name):
+                    result = operation()
             except ImmediateTransactionBusyError as exc:
                 stage = getattr(exc, "acquisition_stage", None)
                 if type(stage) is not str or stage not in ImmediateTransactionBusyError.ACQUISITION_STAGES:
@@ -796,11 +798,26 @@ def create_router(
                     phase_ms = None
                 else:
                     phase_ms = {key: phase_ms[key] for key in sorted(phase_ms)}
-                logger.warning(
-                    "relay operation=%s outcome=busy duration_ms=%d acquisition_stage=%s acquisition_phase_ms=%s",
-                    operation_name, int((time.monotonic() - started) * 1000), stage,
-                    phase_ms if phase_ms is not None else "unknown",
-                )
+                delivery_fields = ()
+                if operation_name == "ack":
+                    public_ref = "unknown"
+                    try:
+                        if (type(delivery_ref) is str and len(delivery_ref) == 47
+                                and re.fullmatch(r"relay-delivery-[0-9a-f]{32}", delivery_ref)):
+                            public_ref = delivery_ref
+                    except BaseException:
+                        pass
+                    delivery_fields = (public_ref,)
+                try:
+                    logger.warning(
+                        "relay operation=%s outcome=busy duration_ms=%d acquisition_stage=%s acquisition_phase_ms=%s observed_relay_writer=%s"
+                        + (" delivery_ref=%s" if delivery_fields else ""),
+                        operation_name, int((time.monotonic() - started) * 1000), stage,
+                        phase_ms if phase_ms is not None else "unknown",
+                        _relay_writer_observation(exc), *delivery_fields,
+                    )
+                except BaseException:
+                    pass
                 raise
             elapsed_ms = int((time.monotonic() - started) * 1000)
             if elapsed_ms >= 100:
@@ -809,11 +826,11 @@ def create_router(
         except relay_errors as exc:
             raise _relay_http_error(exc) from exc
 
-    async def _relay_call(operation_name: str, operation, *, wake_admission=False):
+    async def _relay_call(operation_name: str, operation, *, wake_admission=False, delivery_ref=None):
         started = time.monotonic()
         try:
             return await _run_relay_operation(
-                lambda: _relay_sync_call(operation_name, operation, started=started),
+                lambda: _relay_sync_call(operation_name, operation, started=started, delivery_ref=delivery_ref),
                 wake_admission=wake_admission,
             )
         except relay_errors as exc:
@@ -827,8 +844,12 @@ def create_router(
         service_ms: int | None = None
         worker_start_ms: int | None = None
         snapshot_ms: int | None = None
+        snapshot_timings: dict[str, int] = {}
         error_status: int | None = None
         error_category = "none"
+        expiry_detected_at = "none"
+        request_owner = "unknown"
+        blocking_owner = "unknown"
         outcome = "error"
         request_data = request.model_dump()
         if request.claim_expires_at_ms is None:
@@ -844,10 +865,24 @@ def create_router(
                     worker_start_ms = int((worker_started - started) * 1000)
                     captured = None
                     if relay_turn_snapshot_callback is not None:
+                        timing_token = None
+                        try:
+                            timing_token = _relay_snapshot_timings.set(snapshot_timings)
+                        except Exception:
+                            pass
                         try:
                             captured = relay_turn_snapshot_callback(request_data)
                         except Exception:
                             logger.warning("Relay turn wake snapshot unavailable")
+                        finally:
+                            if timing_token is not None:
+                                try:
+                                    _relay_snapshot_timings.reset(timing_token)
+                                except Exception:
+                                    try:
+                                        _relay_snapshot_timings.set(None)
+                                    except Exception:
+                                        pass
                     if captured is not None:
                         relay_request["codex_wake_endpoint_id"] = captured.recipient_endpoint_id
                         relay_request["codex_wake_generation"] = captured.generation
@@ -911,30 +946,79 @@ def create_router(
             outcome = "ready"
             return projected
         except HTTPException as exc:
+            try:
+                request_owner = _relay_request_writer_observation(exc.__cause__)
+                blocking_owner = _relay_writer_observation(exc.__cause__)
+            except BaseException:
+                pass
             status = exc.status_code
             error_status = status if type(status) is int and 400 <= status <= 599 else None
             if error_status == 409 and type(exc.detail) is str and exc.detail == "Relay claim request expired":
                 error_category = "claim_expired"
+                expiry_detected_at = "unknown"
+                try:
+                    cause = exc.__cause__
+                    if isinstance(cause, RelayConflictError):
+                        detected_at = getattr(cause, "expiry_detected_at", None)
+                        if type(detected_at) is str and detected_at in {
+                            "before_acquisition",
+                            "after_acquisition",
+                            "pre_claim_mutation",
+                            "post_flush_precommit",
+                        }:
+                            expiry_detected_at = detected_at
+                except BaseException:
+                    # Preserve the primary HTTP error when metadata fails.
+                    pass
             else:
                 error_category = {409: "conflict", 503: "busy"}.get(error_status, "http_error")
             raise
         except BaseException as exc:
+            try:
+                request_owner = _relay_request_writer_observation(exc)
+            except BaseException:
+                pass
             error_category = "cancelled" if isinstance(exc, CancelledError) else "unexpected"
             raise
         finally:
             if started is not None:
+                elapsed_ms = int((time.monotonic() - started) * 1000)
+                snapshot_details = ""
+                if elapsed_ms >= 100 or outcome != "ready":
+                    try:
+                        phases = {}
+                        for name in ("connection", "sql", "decode_validation", "settlement"):
+                            value = snapshot_timings.get(name)
+                            phases[name] = (value // 1_000_000 if type(value) is int
+                                            and 0 <= value <= 60_000_000_000 else "unknown")
+                        if snapshot_timings.get("sql_fallback"):
+                            # Legacy validation also queries SQL; do not misattribute its time.
+                            phases["sql"] = phases["decode_validation"] = "unknown"
+                        if snapshot_timings.get("timing_invalid"):
+                            phases = dict.fromkeys(phases, "unknown")
+                        pool = {}
+                        for name in ("pool_size", "pool_overflow"):
+                            value = snapshot_timings.get(name)
+                            lower = 0 if name == "pool_size" else -1_000_000
+                            pool[name] = value if type(value) is int and lower <= value <= 1_000_000 else "unknown"
+                        snapshot_details = f" snapshot_phase_ms={phases} snapshot_pool={pool}"
+                    except Exception:
+                        snapshot_details = " snapshot_phase_ms=unknown snapshot_pool=unknown"
                 logger.info(
                     "relay_turn_timing delivery_ref=%s service_ms=%s "
                     "route_ready_ms=%d outcome=%s worker_start_ms=%s snapshot_ms=%s "
-                    "error_status=%s error_category=%s",
+                    "error_status=%s error_category=%s%s expiry_detected_at=%s%s",
                     request.wake_delivery_id,
                     service_ms if service_ms is not None else "none",
-                    int((time.monotonic() - started) * 1000),
+                    elapsed_ms,
                     outcome,
                     worker_start_ms if worker_start_ms is not None else "none",
                     snapshot_ms if snapshot_ms is not None else "none",
                     error_status if error_status is not None else "none",
                     error_category,
+                    snapshot_details,
+                    expiry_detected_at,
+                    f" request_owner={request_owner} blocking_owner={blocking_owner}" if outcome != "ready" else "",
                 )
 
     @router.get("/relay/pending-candidate", response_model=RelayPendingCandidateResponse | None)
@@ -1151,7 +1235,12 @@ def create_router(
 
     @router.post("/relay/deliveries/ack", response_model=RelayAckResponse)
     async def relay_ack(request: RelayAckRequest, background_tasks: BackgroundTasks):
-        result = await _relay_call("ack", lambda: _relay().acknowledge(**request.model_dump()))
+        delivery_ref = None
+        try:
+            delivery_ref = request.delivery_id
+        except BaseException:
+            pass
+        result = await _relay_call("ack", lambda: _relay().acknowledge(**request.model_dump()), delivery_ref=delivery_ref)
         if relay_ack_callback is not None:
             # Response-owned cleanup still drains before ASGI lifespan shutdown.
             background_tasks.add_task(_complete_relay_ack, result,

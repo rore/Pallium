@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+import os
+
 from datetime import datetime, timedelta
 from typing import Callable
+from time import monotonic_ns as _diagnostic_monotonic_ns, time_ns as _diagnostic_wall_ns
 
-from sqlalchemy import bindparam, delete, func, or_, select, text, update
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy import bindparam, delete, event, func, or_, select, text, update
+from sqlalchemy.orm import Session, aliased, load_only
 
 from core.contracts import MemoryRetentionPolicy
 from core.relay import RELAY_TRACE_MAX_ROWS
@@ -35,6 +39,9 @@ from storage.sqlite_schema import (
     RelayCodexWakeReservationRecord,
     RelayMessageRecord,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class SQLiteRetentionMixin:
@@ -485,13 +492,62 @@ class SQLiteRetentionMixin:
 
             marker_present, cursor_time, cursor_id, prepared_stats, scanned_count, last_scanned_key, deletable_ids = self._with_retry(_prepare)
 
+            intervals, listeners = [], []
+
             def _do(session):
+                lexical_rows = None
+                if deletable_ids:
+                    connection = session.connection()
+                    driver = connection.connection.driver_connection
+                    mode = connection.exec_driver_sql("PRAGMA journal_mode").scalar()
+                    if mode == "wal" and not driver.in_transaction:
+                        # Pin a real read snapshot before discovering row identities.
+                        connection.exec_driver_sql("BEGIN DEFERRED")
+                        result = session.execute(text(
+                            "SELECT (SELECT target_id FROM index_entries "
+                            "WHERE id = lexical_fts.index_entry_id), lexical_fts.index_entry_id, lexical_fts.rowid "
+                            "FROM lexical_fts WHERE index_entry_id IN ("
+                            "SELECT id FROM index_entries WHERE target_kind = 'source_item' "
+                            "AND index_type = 'lexical' AND target_id IN :source_ids)"
+                        ).bindparams(bindparam("source_ids", expanding=True)), {"source_ids": deletable_ids})
+                        try:
+                            lexical_rows = result.all()
+                        finally:
+                            result.close()
                 # First DML owns the writer, even if the marker has not been created.
                 guarded = session.execute(update(MaintenanceStateRecord).where(
                     MaintenanceStateRecord.key == RETENTION_MAINTENANCE_KEY,
                     MaintenanceStateRecord.source_scan_cursor_created_at == cursor_time,
                     MaintenanceStateRecord.source_scan_cursor_id == cursor_id,
                 ).values(source_scan_cursor_id=cursor_id))
+                interval = None
+                try:
+                    interval = {
+                        "observed_held_utc_ns": _diagnostic_wall_ns(),
+                        "observed_held_ns": _diagnostic_monotonic_ns(),
+                        "settlement": "unknown", "settled_utc_ns": "unknown", "held_ms": "unknown",
+                        "eligible_sources": "unknown",
+                    }
+                    intervals.append(interval)
+
+                    def settled(outcome):
+                        try:
+                            ended_ns, ended_utc_ns = _diagnostic_monotonic_ns(), _diagnostic_wall_ns()
+                            interval.update(settlement=outcome, settled_utc_ns=ended_utc_ns,
+                                            settled_ns=ended_ns,
+                                            held_ms=max(0, (ended_ns - interval["observed_held_ns"]) // 1_000_000))
+                        except Exception:
+                            pass
+
+                    # Transaction events record memory only; emit after the enclosing context unwinds.
+                    for name, callback in (
+                        ("after_commit", lambda _session: settled("commit")),
+                        ("after_rollback", lambda _session: settled("rollback")),
+                    ):
+                        listeners.append((session, name, callback))
+                        event.listen(session, name, callback, once=True)
+                except Exception:
+                    pass
                 if guarded.rowcount != (1 if marker_present else 0):
                     return None
                 current = session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY)
@@ -519,13 +575,32 @@ class SQLiteRetentionMixin:
                         stats = self._merge_retention_stats(stats, RetentionRunStats(skipped_protected_source_items=1))
                         continue
                     eligible_ids.append(record.id)
+                try:
+                    if interval is not None:
+                        interval["eligible_sources"] = len(eligible_ids)
+                        interval["validated_ns"] = _diagnostic_monotonic_ns()
+                except Exception:
+                    pass
                 if eligible_ids:
-                    # FTS metadata is unindexed: scan once while the index-entry mapping still exists.
-                    session.execute(text(
-                        "DELETE FROM lexical_fts WHERE index_entry_id IN ("
-                        "SELECT id FROM index_entries WHERE target_kind = 'source_item' "
-                        "AND index_type = 'lexical' AND target_id IN :source_ids)"
-                    ).bindparams(bindparam("source_ids", expanding=True)), {"source_ids": eligible_ids})
+                    if lexical_rows is not None:
+                        rows = [{"rowid": rowid, "entry_id": entry_id}
+                                for source_id, entry_id, rowid in lexical_rows if source_id in eligible_ids]
+                        if rows:
+                            session.execute(text(
+                                "DELETE FROM lexical_fts WHERE rowid = :rowid AND index_entry_id = :entry_id"
+                            ), rows)
+                    else:
+                        # Non-WAL or an existing native transaction retains the original path.
+                        session.execute(text(
+                            "DELETE FROM lexical_fts WHERE index_entry_id IN ("
+                            "SELECT id FROM index_entries WHERE target_kind = 'source_item' "
+                            "AND index_type = 'lexical' AND target_id IN :source_ids)"
+                        ).bindparams(bindparam("source_ids", expanding=True)), {"source_ids": eligible_ids})
+                try:
+                    if interval is not None:
+                        interval["fts_done_ns"] = _diagnostic_monotonic_ns()
+                except Exception:
+                    pass
                 for source_id in eligible_ids:
                     stats = self._merge_retention_stats(stats, self._delete_source_item_cascade_in_session(
                         session, source_id, durable_types=durable_types, working_types=working_types,
@@ -534,9 +609,51 @@ class SQLiteRetentionMixin:
                     maintenance_record.source_scan_cursor_created_at, maintenance_record.source_scan_cursor_id = last_scanned_key
                 elif cursor_time is not None and cursor_id:
                     self._clear_source_scan_cursor_in_session(maintenance_record)
+                try:
+                    if interval is not None:
+                        interval["body_done_ns"] = _diagnostic_monotonic_ns()
+                except Exception:
+                    pass
                 return stats, scanned_count
 
-            result = self._with_retry(_do)
+            try:
+                result = self._with_retry(_do)
+            finally:
+                for session, name, callback in listeners:
+                    try:
+                        event.remove(session, name, callback)
+                    except Exception:
+                        pass
+                for interval in intervals:
+                    phase_ms = ("unknown",) * 4
+                    try:
+                        boundaries = [interval.get(key) for key in (
+                            "observed_held_ns", "validated_ns", "fts_done_ns", "body_done_ns", "settled_ns")]
+                        previous = None
+                        for position, boundary in enumerate(boundaries):
+                            if (type(boundary) is not int or boundary < 0
+                                    or (previous is not None and boundary < previous)):
+                                boundaries[position] = None
+                            else:
+                                previous = boundary
+                        phase_ms = tuple((end - start) // 1_000_000
+                                         if start is not None and end is not None else "unknown"
+                                         for start, end in zip(boundaries, boundaries[1:]))
+                    except Exception:
+                        pass
+                    try:
+                        logger.warning(
+                            "sqlite_main_writer role=source_retention pid=%s db_binding=%s "
+                            "observed_held_utc_ns=%s settled_utc_ns=%s held_ms=%s settlement=%s "
+                            "validation_phase_ms=%s fts_phase_ms=%s cascade_phase_ms=%s "
+                            "settlement_phase_ms=%s eligible_sources=%s",
+                            os.getpid(), self._main_db_diagnostic_binding(),
+                            interval["observed_held_utc_ns"], interval["settled_utc_ns"],
+                            interval["held_ms"], interval["settlement"], *phase_ms,
+                            interval["eligible_sources"],
+                        )
+                    except Exception:
+                        pass
             if result is not None:
                 return result
         raise RuntimeError("source retention cursor changed repeatedly during preparation")
@@ -850,7 +967,9 @@ class SQLiteRetentionMixin:
             if relation.from_kind == "memory_object"
         }
         source_index_records = session.scalars(
-            select(IndexEntryRecord).where(
+            select(IndexEntryRecord).options(
+                load_only(IndexEntryRecord.id, IndexEntryRecord.index_type),
+            ).where(
                 IndexEntryRecord.target_kind == "source_item",
                 IndexEntryRecord.target_id == source_item_id,
             )
