@@ -571,7 +571,7 @@ def _assert_linux_no_managed_processes(home: Path) -> None:
     if result.returncode:
         raise RuntimeError("cannot enumerate Linux processes for repair")
     codex = re.compile(r'^\s*(?:"[^"]*/codex"|(?:\S*/)?codex)\s+queue\s+--profile\s+pallium-relay\b', re.IGNORECASE)
-    managed = re.compile(r"(?:app\.run\s+(?:service\s+run|serve|all)|app\.(?:processor|cleaner|snapshot))(?:\s|$)", re.IGNORECASE)
+    managed = re.compile(r"(?:app\.run\s+(?:service\s+run|serve|all)|app\.(?:processor|cleaner|relay_expiry_cleaner|snapshot))(?:\s|$)", re.IGNORECASE)
     for line in result.stdout.splitlines():
         parts = line.strip().split(maxsplit=1)
         if len(parts) != 2 or not parts[0].isdecimal():
@@ -651,7 +651,7 @@ $procs = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
     $c = [string]$_.CommandLine
     $isInstalledPython = $_.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$_.ExecutablePath))
     $service = $isInstalledPython -and ($c -match '(?i)app\.run\s+service\s+run') -and ($c -match $portPattern) -and ($c -match $homePattern)
-    $managed = $isInstalledPython -and (($c -match '(?i)app\.run\s+serve') -or ($c -match '(?i)app\.(?:processor|cleaner|snapshot)(?:\s|$)'))
+    $managed = $isInstalledPython -and (($c -match '(?i)app\.run\s+serve') -or ($c -match '(?i)app\.(?:processor|cleaner|relay_expiry_cleaner|snapshot)(?:\s|$)'))
     $codexQueue = $c -match '(?i)^\s*(?:"[^"]*[\\/]codex(?:\.exe)?"|(?:\S*[\\/])?codex(?:\.exe)?)\s+queue\s+--profile\s+pallium-relay\b'
     $service -or $managed -or $codexQueue
 })
@@ -1100,6 +1100,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
             "--processors", str(processors),
             "--cleaners", "1",
         ]
+        if config.storage_backend == "sqlite":
+            supervisor_args.append("--relay-expiry-cleaner")
         return run_supervisor(
             supervisor_args,
             log_file=home / "logs" / "pallium.log",

@@ -125,6 +125,7 @@ class SQLiteStorageProvider(
 
     def __init__(self, database_url: str, relay_database_url: str | None = None) -> None:
         self._relay_writer_lock = threading.Lock()
+        self._relay_expiry_managed = False
         separate_relay = relay_database_url is not None and not self._same_sqlite_file(
             database_url, relay_database_url
         )
@@ -195,6 +196,14 @@ class SQLiteStorageProvider(
         path = cls._sqlite_path(database_url)
         if path is None or not path.exists():
             return
+        try:
+            with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as connection, connection:
+                cls._validate_relay_connection(connection, path, require_tables=require_tables)
+        except sqlite3.Error as exc:
+            raise RuntimeError(f"cannot inspect existing Relay database: {path}") from exc
+
+    @staticmethod
+    def _validate_relay_connection(connection, path: Path, *, require_tables: bool = False) -> None:
         required = {
             "relay_sessions": set(),
             "relay_messages": {"sender_endpoint_id"},
@@ -208,31 +217,25 @@ class SQLiteStorageProvider(
                 "position", "created_at", "updated_at",
             }
         }
-        try:
-            with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as connection, connection:
-                tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-                relay_tables = (set(required) | set(optional)) & tables
-                required_relay_tables = set(required) & tables
-                if (
-                    (relay_tables and required_relay_tables != set(required))
-                    or (require_tables and not required_relay_tables)
-                ):
-                    raise RuntimeError(f"Relay schema is incomplete in {path}; refusing startup")
-                for table, columns in {**required, **optional}.items():
-                    if table not in tables:
-                        continue
-                    actual = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
-                    missing = columns - actual
-                    if missing:
-                        raise RuntimeError(
-                            f"Relay schema missing required columns in {table}: {', '.join(sorted(missing))}"
-                        )
-                    if "actor_ref" in actual:
-                        raise RuntimeError(
-                            f"Relay schema is actor-scoped in {table}; refusing startup"
-                        )
-        except sqlite3.Error as exc:
-            raise RuntimeError(f"cannot inspect existing Relay database: {path}") from exc
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        relay_tables = (set(required) | set(optional)) & tables
+        required_relay_tables = set(required) & tables
+        if (
+            (relay_tables and required_relay_tables != set(required))
+            or (require_tables and not required_relay_tables)
+        ):
+            raise RuntimeError(f"Relay schema is incomplete in {path}; refusing startup")
+        for table, columns in {**required, **optional}.items():
+            if table not in tables:
+                continue
+            actual = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+            missing = columns - actual
+            if missing:
+                raise RuntimeError(
+                    f"Relay schema missing required columns in {table}: {', '.join(sorted(missing))}"
+                )
+            if "actor_ref" in actual:
+                raise RuntimeError(f"Relay schema is actor-scoped in {table}; refusing startup")
 
     @classmethod
     def _create_engine(cls, database_url: str):
@@ -254,14 +257,43 @@ class SQLiteStorageProvider(
     @classmethod
     def open_relay_maintenance(cls, relay_database_url: str) -> "SQLiteStorageProvider":
         """Open an existing Relay database without running schema migrations."""
-        cls._validate_relay_schema(relay_database_url, require_tables=True)
+        url = make_url(relay_database_url)
+        path = cls._sqlite_path(relay_database_url)
+        if path is None or url.query.get("uri") or str(url.database).startswith("file:") or not path.is_file():
+            raise ValueError("Relay maintenance requires an existing file-backed SQLite database")
+        uri = f"{path.resolve().as_uri()}?mode=rw"
+        def connect_existing():
+            connection = sqlite3.connect(uri, uri=True, check_same_thread=False)
+            try:
+                cls._validate_relay_connection(connection, path, require_tables=True)
+            except BaseException:
+                connection.close()
+                raise
+            return connection
+        engine = create_engine(relay_database_url, future=True, creator=connect_existing)
+        try:
+            cls._register_sqlite_connect_hooks(engine)
+            with engine.connect():
+                pass
+        except BaseException:
+            engine.dispose()
+            raise
         instance = cls.__new__(cls)
         instance._relay_writer_lock = threading.Lock()
-        engine = cls._create_engine(relay_database_url)
+        instance._relay_expiry_managed = False
         factory = sessionmaker(engine, expire_on_commit=False, class_=Session)
         instance._engine = instance._relay_engine = engine
         instance._session_factory = instance._relay_session_factory = factory
         return instance
+
+    def enable_managed_relay_expiry(self, expected_database_url: str) -> None:
+        expected_url, actual_url = make_url(expected_database_url), self._relay_engine.url
+        expected, actual = self._sqlite_path(expected_database_url), self._sqlite_path(str(actual_url))
+        if (expected is None or actual is None or expected_url.query.get("uri") or actual_url.query.get("uri")
+                or str(expected_url.database).startswith("file:") or str(actual_url.database).startswith("file:")
+                or not expected.is_file() or expected.resolve() != actual.resolve()):
+            raise ValueError("managed Relay expiry requires the actual file-backed Relay database")
+        self._relay_expiry_managed = True
 
     def close(self) -> None:
         """Release both SQLite engine pools owned by this provider."""

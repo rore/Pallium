@@ -207,7 +207,7 @@ if (Test-Path $PidFile) {
 }
 
 # Strategy 3: kill by commandline signature — catches the supervisor and its
-# processor/cleaner/snapshot subprocesses even when the parent chain was
+# processor/cleaner/Relay-expiry/snapshot subprocesses even when the parent chain was
 # severed by the wscript → pythonw fire-and-forget launcher pattern.
 # Standalone `app.run mcp` processes are client-owned stdio bridges; killing
 # one disconnects its Codex task permanently, so service restart leaves them
@@ -218,6 +218,7 @@ $signatures = @(
     "service_launcher.py",
     "app.processor",
     "app.cleaner",
+    "app.relay_expiry_cleaner",
     "app.snapshot",
     "app.run serve",
     "app.run all"
@@ -283,7 +284,7 @@ if ($remainingPids.Count -gt 0) {
     $survivors = @($allManagedProcesses | Where-Object {
         $c = [string]$_.CommandLine
         $inTree = $managedIds.Contains([int]$_.ProcessId)
-        $managedComponent = $_.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$_.ExecutablePath)) -and ($c -match '(?i)(?:app\.(?:processor|cleaner|snapshot)|app\.run\s+(?:serve|all))')
+        $managedComponent = $_.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$_.ExecutablePath)) -and ($c -match '(?i)(?:app\.(?:processor|cleaner|relay_expiry_cleaner|snapshot)|app\.run\s+(?:serve|all))')
         $codexQueue = $c -match '(?i)^\s*(?:"[^"]*[\\/]codex(?:\.exe)?"|(?:\S*[\\/])?codex(?:\.exe)?)\s+queue\s+--profile\s+pallium-relay\b'
         (($inTree -and $c -match '(?i)app\.run\s+service\s+run' -and $c -match $servicePortPattern) -or $managedComponent -or $codexQueue)
     })

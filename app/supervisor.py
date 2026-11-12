@@ -170,6 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--processors", "--workers", dest="processors", type=int, default=1)
     parser.add_argument("--cleaners", type=int, default=1)
+    parser.add_argument("--relay-expiry-cleaner", action="store_true")
     parser.add_argument("--reload", action="store_true")
     return parser
 
@@ -418,6 +419,7 @@ def _start_api_with_retry(
     stop: object | None = None,
     run_dir: Path | None = None,
     token_fn: Callable[[], str] = _generate_launch_token,
+    relay_expiry_database_url: str | None = None,
 ) -> subprocess.Popen | None:
     """Start the API server, retrying on startup crashes.
 
@@ -435,6 +437,9 @@ def _start_api_with_retry(
             return None
         nonce = token_fn()
         env = {**os.environ, "PALLIUM_API_LAUNCH_TOKEN": nonce}
+        env.pop("PALLIUM_API_RELAY_EXPIRY_DATABASE_URL", None)
+        if relay_expiry_database_url is not None:
+            env["PALLIUM_API_RELAY_EXPIRY_DATABASE_URL"] = relay_expiry_database_url
         started = time.monotonic()
         proc = popen_factory(cmd, cwd=os.getcwd(), env=env)
         emit_runtime_log("supervisor", f"started api pid={proc.pid} host={host} port={port} attempt={attempt} budget_seconds={_API_START_TIMEOUT_SECONDS:.0f}")
@@ -501,12 +506,33 @@ def run_supervisor(
         config = AppConfig.from_env()
         snapshot_config = config.snapshot
     except Exception as exc:
+        if parsed.relay_expiry_cleaner:
+            emit_runtime_log("supervisor", "managed Relay expiry configuration failed", stderr=True)
+            return 1
         emit_runtime_log("supervisor", f"config load failed, snapshots disabled: {exc}", stderr=True)
         from app.config import SnapshotConfig
         config = None
         snapshot_config = SnapshotConfig()
 
-    # Restore snapshot before spawning any children
+    relay_expiry_database_url = None
+    if parsed.relay_expiry_cleaner:
+        try:
+            from storage.sqlite import SQLiteStorageProvider
+            if config.storage_backend != "sqlite":
+                raise ValueError("Managed Relay expiry requires SQLite")
+            relay_url = config.resolved_relay_sqlite_url
+            if relay_url != "sqlite:///:memory:":
+                relay_path = SQLiteStorageProvider._sqlite_path(relay_url)
+                if relay_path is None:
+                    raise ValueError("Managed Relay expiry requires a file-backed database")
+                relay_expiry_database_url = f"sqlite:///{relay_path.resolve().as_posix()}"
+                validation = SQLiteStorageProvider.open_relay_maintenance(relay_expiry_database_url)
+                validation.close()
+        except Exception as exc:
+            emit_runtime_log("supervisor", f"managed Relay expiry validation failed error_type={type(exc).__name__}", stderr=True)
+            return 1
+
+    # Restore snapshot before spawning any children.
     if snapshot_config.enabled and snapshot_config.snapshot_path:
         snapshot_dir = Path(snapshot_config.snapshot_path)
         if snapshot_dir.is_dir():
@@ -549,6 +575,22 @@ def run_supervisor(
 
     with graceful_stop(install=True) as stop:
         try:
+            if relay_expiry_database_url is not None:
+                if stop.requested:
+                    return 0
+                expiry_command = [sys.executable, "-m", "app.relay_expiry_cleaner",
+                                  "--database-url", relay_expiry_database_url]
+                try:
+                    expiry_process = _popen_with_log(expiry_command, cwd=os.getcwd())
+                except OSError as exc:
+                    emit_runtime_log("supervisor", f"Relay expiry launch failed error_type={type(exc).__name__}", stderr=True)
+                    return 1
+                slots.append(_ManagedSlot(command=expiry_command, label="relay-expiry-cleaner",
+                                          process=expiry_process, restartable=True, restart_times=[]))
+                if expiry_process.poll() is not None:
+                    emit_runtime_log("supervisor", "Relay expiry cleaner exited before API launch", stderr=True)
+                    return 1
+                emit_runtime_log("supervisor", f"started Relay expiry cleaner pid={expiry_process.pid}")
             # Start API with retry — onnxruntime on Windows/Python 3.13 has a
             # non-deterministic heap corruption bug during model initialization.
             # Once past startup the process is stable, so we retry until healthy.
@@ -559,6 +601,7 @@ def run_supervisor(
                 sleep_fn=sleep_fn,
                 wait_for_api_fn=wait_for_api_fn,
                 stop=stop,
+                **({"relay_expiry_database_url": relay_expiry_database_url} if relay_expiry_database_url is not None else {}),
             )
             if server is None:
                 if stop.requested:
@@ -662,6 +705,7 @@ def run_supervisor(
                             sleep_fn=sleep_fn,
                             wait_for_api_fn=wait_for_api_fn,
                             stop=stop,
+                            **({"relay_expiry_database_url": relay_expiry_database_url} if relay_expiry_database_url is not None else {}),
                         )
                         if new_proc is None:
                             if not stop.requested:

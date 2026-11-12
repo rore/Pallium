@@ -22,8 +22,11 @@ def app_factory(tmp_path, monkeypatch):
         monkeypatch.setattr(codex_bridge_pipe, name, lambda *a, **kw: None)
     apps = []
 
-    def create():
-        app = main.create_app(_test_config(tmp_path))
+    def create(*, managed_expiry=False):
+        config = _test_config(tmp_path)
+        options = ({"_relay_expiry_database_url": config.resolved_relay_sqlite_url}
+                   if managed_expiry else {})
+        app = main.create_app(config, **options)
         apps.append(app)
         return app
 
@@ -70,12 +73,13 @@ def test_http_trace_uses_app_owner_without_memory_trace_facade(client, monkeypat
     assert client.get(f"/relay/messages/{sent.json()['message_id']}", params=scope).json()["deliveries"][0]["state"] == "delivered"
 
 
-def test_trace_constructor_failure_keeps_http_available(app_factory, monkeypatch, caplog):
+@pytest.mark.parametrize("managed_expiry", (False, True))
+def test_trace_constructor_failure_keeps_http_available(app_factory, monkeypatch, caplog, managed_expiry):
     def failed():
         raise RuntimeError("private-constructor-token")
 
     monkeypatch.setattr(main, "RelayTraceWriter", failed)
-    app = app_factory()
+    app = app_factory(managed_expiry=managed_expiry)
     assert app.state.relay_trace_writer is None
     with TestClient(app) as http:
         assert http.get("/health").status_code == 200
@@ -211,7 +215,8 @@ def test_http_trace_rejection_reason_preserves_receipts_and_privacy(
     assert all("東京" not in record.getMessage() for record in records)
 
 
-def test_partial_app_construction_closes_trace_before_storage(app_factory, monkeypatch):
+@pytest.mark.parametrize("managed_expiry", (False, True))
+def test_partial_app_construction_closes_trace_before_storage(app_factory, monkeypatch, managed_expiry):
     workers, order = [], []
     original_storage = main.build_storage_provider
     sentinel = RuntimeError("controlled route construction failure")
@@ -239,14 +244,15 @@ def test_partial_app_construction_closes_trace_before_storage(app_factory, monke
     monkeypatch.setattr(main, "build_storage_provider", storage)
     monkeypatch.setattr(main, "mount_dashboard", fail)
     with pytest.raises(RuntimeError) as error:
-        app_factory()
+        app_factory(managed_expiry=managed_expiry)
     assert error.value is sentinel
     assert len(workers) == 1 and order == ["storage"]
 
 
 @pytest.mark.parametrize("exit_kind", ["startup_failure", "shutdown", "cancel"])
-def test_app_trace_drains_before_storage_on_every_lifecycle_exit(app_factory, monkeypatch, exit_kind):
-    app = app_factory()
+@pytest.mark.parametrize("managed_expiry", (False, True))
+def test_app_trace_drains_before_storage_on_every_lifecycle_exit(app_factory, monkeypatch, exit_kind, managed_expiry):
+    app = app_factory(managed_expiry=managed_expiry)
     worker = app.state.relay_trace_writer
     entered, release, closing, storage_closed = (threading.Event() for _ in range(4))
     trace_done = threading.Event()
@@ -317,3 +323,84 @@ def test_app_trace_drains_before_storage_on_every_lifecycle_exit(app_factory, mo
         assert future.result(10) == ("cancelled" if exit_kind == "cancel" else exit_kind)
     assert trace_done.is_set() and storage_closed.is_set()
     app.state._close_constructed()
+
+
+@pytest.mark.parametrize("cleanup_raises", (False, True))
+def test_managed_expiry_initialization_failure_closes_acquired_resources(
+    app_factory, monkeypatch, cleanup_raises,
+):
+    original_build = main.build_service
+    order = []
+    sentinel = ValueError("controlled managed-expiry validation failure")
+
+    def build(*args, **kwargs):
+        result = original_build(*args, **kwargs)
+        close_service, close_storage = result.service.close, result.storage.close
+
+        def enable(_database):
+            order.append("expiry")
+            raise sentinel
+
+        def service_close():
+            order.append("service")
+            close_service()
+            if cleanup_raises:
+                raise RuntimeError("controlled cleanup failure")
+
+        def storage_close():
+            order.append("storage")
+            close_storage()
+
+        monkeypatch.setattr(result.storage, "enable_managed_relay_expiry", enable)
+        monkeypatch.setattr(result.service, "close", service_close)
+        monkeypatch.setattr(result.storage, "close", storage_close)
+        return result
+
+    def unexpected_trace():
+        pytest.fail("trace construction must follow managed-expiry validation")
+
+    monkeypatch.setattr(main, "build_service", build)
+    monkeypatch.setattr(main, "RelayTraceWriter", unexpected_trace)
+    with pytest.raises(ValueError) as error:
+        app_factory(managed_expiry=True)
+    assert error.value is sentinel
+    assert order == ["expiry", "service", "storage"]
+
+
+@pytest.mark.parametrize("database,token", (("", None), ("", "test-owner"), ("sqlite:///managed.db", None)))
+def test_managed_expiry_production_factory_requires_supervisor_context(monkeypatch, database, token):
+    monkeypatch.setenv("PALLIUM_API_RELAY_EXPIRY_DATABASE_URL", database)
+    if token is None:
+        monkeypatch.delenv("PALLIUM_API_LAUNCH_TOKEN", raising=False)
+    else:
+        monkeypatch.setenv("PALLIUM_API_LAUNCH_TOKEN", token)
+    with pytest.raises(RuntimeError, match="supervisor launch context"):
+        main.app()
+
+
+@pytest.mark.parametrize("managed_expiry", (False, True))
+def test_production_factory_forwards_managed_expiry_and_closes_trace_owner(
+    app_factory, monkeypatch, managed_expiry,
+):
+    built = app_factory(managed_expiry=managed_expiry)
+    database = str(built.state.pallium_service._storage._relay_engine.url)
+    if managed_expiry:
+        monkeypatch.setenv("PALLIUM_API_RELAY_EXPIRY_DATABASE_URL", database)
+        monkeypatch.setenv("PALLIUM_API_LAUNCH_TOKEN", "test-owner")
+    else:
+        monkeypatch.delenv("PALLIUM_API_RELAY_EXPIRY_DATABASE_URL", raising=False)
+        monkeypatch.delenv("PALLIUM_API_LAUNCH_TOKEN", raising=False)
+    constructed, calls = threading.Event(), []
+
+    def construct(**kwargs):
+        calls.append(kwargs)
+        constructed.set()
+        return built
+
+    monkeypatch.setattr(main, "create_app", construct)
+    startup = main.app()
+    with TestClient(startup):
+        assert constructed.wait(3)
+    assert calls == ([{"_relay_expiry_database_url": database}] if managed_expiry else [{}])
+    assert startup.state._initialization_error is None
+    assert built.state.relay_trace_writer._closed

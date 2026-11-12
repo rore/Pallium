@@ -9,6 +9,7 @@ import threading
 import time
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -181,7 +182,8 @@ def _recover_interrupted_swap(index_path: Path) -> None:
         logger.info("Cleaned interrupted swap remnants at %s", index_path)
 
 
-def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverrides | None = None) -> FastAPI:
+def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverrides | None = None,
+               *, _relay_expiry_database_url: str | None = None) -> FastAPI:
     # Check MCP availability
     mcp_available = False
     mcp_app = None
@@ -237,6 +239,13 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             cleanup_stack.callback(service.close)
             if relay_trace_writer is not None:
                 cleanup_stack.callback(relay_trace_writer.close)
+    if _relay_expiry_database_url is not None:
+        try:
+            build_result.storage.enable_managed_relay_expiry(_relay_expiry_database_url)
+        except BaseException:
+            with contextlib.suppress(BaseException):
+                close_resources()
+            raise
     relay_limiter = anyio.CapacityLimiter(4)
     wake_admission_limiter = anyio.CapacityLimiter(3)
     diagnostic_limiter = anyio.CapacityLimiter(2)
@@ -861,6 +870,9 @@ class _StartupGate:
 
 def app(*, on_retained_terminal: Callable[[], None] | None = None) -> FastAPI:
     """Production ASGI factory: bind before non-abandoning initialization."""
+    expiry_database = os.environ.get("PALLIUM_API_RELAY_EXPIRY_DATABASE_URL")
+    if expiry_database is not None and (not expiry_database or not os.environ.get("PALLIUM_API_LAUNCH_TOKEN")):
+        raise RuntimeError("Managed Relay expiry requires the supervisor launch context")
     @contextlib.asynccontextmanager
     async def lifespan(startup: FastAPI):
         if startup.state._owner is not None:
@@ -870,7 +882,9 @@ def app(*, on_retained_terminal: Callable[[], None] | None = None) -> FastAPI:
 
         async def initialize():
             try:
-                built = await anyio.to_thread.run_sync(create_app, abandon_on_cancel=False)
+                factory = create_app if expiry_database is None else partial(
+                    create_app, _relay_expiry_database_url=expiry_database)
+                built = await anyio.to_thread.run_sync(factory, abandon_on_cancel=False)
                 built.state._production_bootstrap = True
                 built.state._on_retained_terminal = on_retained_terminal
                 if startup.state._closing:

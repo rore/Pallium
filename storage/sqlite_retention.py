@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Callable
 
 from sqlalchemy import bindparam, delete, func, or_, select, text, update
 from sqlalchemy.orm import Session, aliased
@@ -38,6 +39,57 @@ from storage.sqlite_schema import (
 
 class SQLiteRetentionMixin:
     _RETENTION_LEASE_RENEWAL_BATCH = 50
+
+    def relay_expire_window(
+        self, *, after_id: str | None = None, upper_id: str | None = None,
+        cutoff: datetime | None = None, limit: int = 64, should_stop: Callable | None = None,
+    ) -> dict:
+        if type(limit) is not int or not 1 <= limit <= 64:
+            raise ValueError("Relay expiry window limit must be between 1 and 64")
+        if any(value is not None and (type(value) is not str or not value) for value in (after_id, upper_id)):
+            raise ValueError("Relay expiry cursors must be nonempty strings or None")
+        if cutoff is not None and not isinstance(cutoff, datetime):
+            raise ValueError("Relay expiry cutoff must be a datetime")
+        current = self._normalize_datetime(cutoff) if cutoff is not None else utc_now()
+        durable = datetime.max.replace(tzinfo=current.tzinfo)
+        def check_stop():
+            if should_stop is not None and should_stop():
+                raise InterruptedError("Relay expiry window cancelled")
+        check_stop()
+        with self._begin_low_priority_relay_write() as session:
+            if upper_id is None:
+                upper_id = session.scalar(select(RelayDeliveryRecord.id).order_by(RelayDeliveryRecord.id.desc()).limit(1))
+            rows = []
+            if upper_id is not None:
+                window = select(RelayDeliveryRecord.id, RelayDeliveryRecord.message_id, RelayDeliveryRecord.state).where(
+                    RelayDeliveryRecord.id <= upper_id)
+                if after_id is not None:
+                    window = window.where(RelayDeliveryRecord.id > after_id)
+                rows = session.execute(window.order_by(RelayDeliveryRecord.id).limit(limit)).all()
+            message_ids = {row.message_id for row in rows if row.state in {"pending", "claimed"}
+                           and type(row.message_id) is str and row.message_id}
+            eligible_messages = set()
+            if message_ids:
+                for message_id, expires_at in session.execute(select(RelayMessageRecord.id, RelayMessageRecord.expires_at)
+                        .where(RelayMessageRecord.id.in_(message_ids))):
+                    expiry = self._normalize_datetime(expires_at)
+                    if expiry is not None and expiry != durable and expiry <= current:
+                        eligible_messages.add(message_id)
+            eligible = [row.id for row in rows if row.state in {"pending", "claimed"} and row.message_id in eligible_messages]
+            check_stop()
+            expired = 0
+            if eligible:
+                expired = session.execute(update(RelayDeliveryRecord).where(
+                    RelayDeliveryRecord.id.in_(eligible), RelayDeliveryRecord.state.in_(("pending", "claimed")),
+                    RelayDeliveryRecord.message_id.in_(select(RelayMessageRecord.id).where(
+                        RelayMessageRecord.id.in_(eligible_messages), RelayMessageRecord.expires_at <= current,
+                        RelayMessageRecord.expires_at < durable)),
+                ).values(state="expired", claim_token=None).execution_options(synchronize_session=False)).rowcount
+            check_stop()
+            next_id = rows[-1].id if rows else after_id
+            result = dict(after_id=next_id, upper_id=upper_id, scanned=len(rows), expired=expired,
+                          sweep_complete=len(rows) < limit or next_id == upper_id)
+        return result
 
     def relay_cleanup_trace(self, *, now: datetime | None = None, limit: int = 64) -> int:
         if type(limit) is not int or not 1 <= limit <= 64:

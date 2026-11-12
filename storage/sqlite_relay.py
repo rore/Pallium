@@ -1519,19 +1519,26 @@ class SQLiteRelayMixin:
                 raise ValueError("invalid Relay claim expiry")
             claim_deadline = time.monotonic() + (claim_expires_at_ms / 1000 - time.time())
 
-        def check_claim_expiry():
+        def check_claim_expiry(checkpoint: str):
             if claim_deadline is not None and time.monotonic() >= claim_deadline:
-                raise RelayConflictError("Relay claim request expired")
+                error = RelayConflictError("Relay claim request expired")
+                try:
+                    error.expiry_detected_at = checkpoint
+                except BaseException:
+                    # Diagnostics must not replace the expiry error.
+                    pass
+                raise error
 
-        check_claim_expiry()
+        check_claim_expiry("before_acquisition")
         current = _now(now)
+        managed_expiry = getattr(self, "_relay_expiry_managed", False) is True
         with self._begin_relay_immediate() as db:
-            check_claim_expiry()
+            check_claim_expiry("after_acquisition")
 
             def finalize(result):
                 if claim_deadline is not None:
                     db.flush()
-                    check_claim_expiry()  # Still inside the transaction: expiration rolls everything back.
+                    check_claim_expiry("post_flush_precommit")  # Still inside the transaction: expiration rolls everything back.
                 return result
 
             def eligible_deliveries(endpoint_id):
@@ -1675,19 +1682,20 @@ class SQLiteRelayMixin:
                     if title is not None:
                         registered.title = title
 
-            db.execute(
-                update(RelayDeliveryRecord)
-                .where(
-                    RelayDeliveryRecord.state.in_(("pending", "claimed")),
-                    RelayDeliveryRecord.message_id.in_(
-                        select(RelayMessageRecord.id).where(
-                            RelayMessageRecord.expires_at <= current
-                        )
-                    ),
+            if not managed_expiry:
+                db.execute(
+                    update(RelayDeliveryRecord)
+                    .where(
+                        RelayDeliveryRecord.state.in_(("pending", "claimed")),
+                        RelayDeliveryRecord.message_id.in_(
+                            select(RelayMessageRecord.id).where(
+                                RelayMessageRecord.expires_at <= current
+                            )
+                        ),
+                    )
+                    .values(state="expired", claim_token=None)
+                    .execution_options(synchronize_session=False)
                 )
-                .values(state="expired", claim_token=None)
-                .execution_options(synchronize_session=False)
-            )
 
             eligible_query = eligible_deliveries(registered.id)
             eligible_count = count_eligible(eligible_query)
@@ -1725,7 +1733,7 @@ class SQLiteRelayMixin:
                 empty_response = response([])
                 # A delivery envelope exceeds any savings from fewer remaining-count digits.
                 if max_response_chars <= _compact_json_chars(empty_response):
-                    check_claim_expiry()
+                    check_claim_expiry("pre_claim_mutation")
                     return finalize(empty_response)
 
             def claim_view(delivery, message, token, payload):
@@ -1789,7 +1797,7 @@ class SQLiteRelayMixin:
             json_floor = None
             with db.execute(eligible_query) as rows:
                 for delivery, message in rows:
-                    check_claim_expiry()
+                    check_claim_expiry("pre_claim_mutation")
                     if required_trigger is not None and not selected and delivery.id != required_trigger:
                         break
                     if max_chars and used + render_floor + (2 if selected else 0) > max_chars:
@@ -1882,7 +1890,7 @@ class SQLiteRelayMixin:
                         used += grown_size - size
 
             claimed: list[dict[str, Any]] = []
-            check_claim_expiry()
+            check_claim_expiry("pre_claim_mutation")
             for delivery, message, view, _, token in selected:
                 delivery.state = "claimed"
                 delivery.claim_token = token

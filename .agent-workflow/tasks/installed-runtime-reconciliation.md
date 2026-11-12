@@ -31,13 +31,13 @@
 
 **Verification plan:** Source identities and paused-CI byte fingerprints; complete runtime hunk/PR correspondence and no-loss coverage; AST/static checks only locally. Identify original tests/source-matched evidence for managed expiry, trace startup/failure cleanup, retention/FTS snapshots, vector save locking and retained diagnostics. Existing ordinary CI supplies actual focused tests and the selected full non-slow lane when required; no unrelated failure or helper qualification is a prerequisite. Recheck all accepted source bytes and public disclosures before any publication.
 
-**Plan review:** Agent technical review: existing standing-architect deployed/main source assessment is reused as source comparison/disposition evidence, not reconstructed as approval of an unseen composed patch. New persistence/lifecycle composition decisions and exact review reuse will be stated after tracing; manager owns the handoff.
+**Plan review:** Agent technical review: standing architect TECHNICAL PLAN GO for the conservative source-reconciliation approach, reviewed record/head 890b606d1acc72ea583dc6b170970ae63637230a over main d7ecc2b2b89624ef8444934e0332f930b9894f84. Existing source comparison is reused, with explicit six-call expiry mapping and combined trace/expiry initialization/cleanup decisions below. No remaining generic architecture or human-scope blocker. Independent implementation-result acceptance and publication gates remain separate.
 
-**Approvals:** The manager relays the human top-priority reconciliation objective and releases ordinary isolated source work within the stated exclusions. No direct-human technical-plan quotation or installed-activation approval has been supplied here; do not fabricate one. Any necessary High-risk approval predicate must be satisfied by genuine applicable evidence before its governed runtime edits/publication.
+**Approvals:** Approved by user 2026-11-12: "that's top priority". Genuine context, relayed and adopted by the manager: the human had been presented identifying/preserving deployed local fixes, reconciling them into main with focused review/verification, then updating the installed service WITHOUT losing fixes. This consent covers the conservative source approach; it is not a fabricated yes/approve response, an agent substitution or a waiver. It does not authorize removing fixes, materially new behavior, migrations or any installed/live operation. Manager releases source implementation; result review/publication/main merge and separately authorized activation retain their existing owners and gates.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 
 <!-- agent-workflow:end -->
 
@@ -47,7 +47,7 @@ Branch `fix/installed-runtime-reconciliation` starts at main `d7ecc2b2b89624ef84
 
 ## Implementation checkpoint
 
-Agent Workflow, configuration, expanded template and risk/plan-review rules were read before this record and before any runtime/test code edit. The isolated checkout was created from the supplied main. Initial broad tracked-diff status timed out; it is not evidence of cleanliness or a runtime failure. Source preparation continues; State Blocked applies only to uncovered pre-edit review/High-risk approval predicates, not to archive comparison or hunk mapping. No runtime code has been changed.
+Agent Workflow, configuration, expanded template and risk/plan-review rules were read before this record and before any runtime/test code edit. The isolated checkout was created from the supplied main. Initial broad tracked-diff status timed out; it is not evidence of cleanliness or a runtime failure. This was the historical discovery-only checkpoint, before the now-recorded source implementation release. The prior missing-approval wording is superseded by genuine consent and independent technical PLAN GO above; State now permits source implementation.
 
 Intended runtime source paths (subject to hunk disposition, not a blind-copy allowlist):
 
@@ -83,4 +83,30 @@ The frozen snapshot contains 34 original source files: 25 runtime paths and nine
 
 Exact current PR heads were read without checking out or changing their branches. Existing PR380 checkpoint/rollback and PR381 compact/vector source/test evidence were found; PR381 records the matching vector working-source digest and 138 focused passes, which remain a narrow reuse candidate pending dependency/context verification. New composed behavior is not qualified by that evidence. Main trace-lifecycle tests were located, including constructor, shutdown and route-construction failure cleanup. No tests, repository modules, services or data were executed/read.
 
-Concrete next slice: preserve main claim filtering/batching/payload fitting while carrying checkpoint diagnostics at all six call sites, and compose managed-expiry initialization/factory forwarding into main trace-writer resource ownership. Keep the cleaner/supervisor/CLI/storage/restart group indivisible. The remaining pre-edit gate is genuine applicable High-risk human plan approval plus technical review coverage for those newly composed persistence/lifecycle changes; existing source comparison or another PR result is not relabelled as that approval. Manager owns this narrowly specified handoff. Source comparison/disposition continues independently; no unrelated PR failure, CI helper qualification or installed activation is a gate.
+Concrete next slice: preserve main claim filtering/batching/payload fitting while carrying checkpoint diagnostics at all six call sites, and compose managed-expiry initialization/factory forwarding into main trace-writer resource ownership. Keep the cleaner/supervisor/CLI/storage/restart group indivisible. The subsequent standing-architect technical PLAN GO and genuine human plan-consent evidence are now recorded above; no generic pre-edit approval blocker remains. Manager owns independent source-result review and publication release. Source implementation and unresolved-hunk disposition continue; no unrelated PR failure, CI helper qualification or installed activation is a gate.
+
+## Governed source seam decisions
+
+Expiry call mapping, before code edits: before acquisition -> `before_acquisition`; inside acquired transaction -> `after_acquisition`; post-flush/precommit -> `post_flush_precommit`; empty-response early return -> `pre_claim_mutation`; metadata-scan iteration guard -> `pre_claim_mutation`; final selected-delivery mutation guard -> `pre_claim_mutation`. All six main guards stay in their original execution positions, using the existing diagnostic stage vocabulary. Keep main runtime/session/container filtering, exact-trigger order, batching and payload fitting; add managed-expiry suppression and diagnostic observation around that logic, not the older query.
+
+Combined ownership order: build storage/service, initialize the trace-owner slot before the common idempotent `close_resources`, enable managed expiry when explicitly supplied, then construct/use the trace writer under that same ownership. Any expiry-init failure closes resources already acquired and re-raises the original failure. Normal/failed lifecycle closes/drains trace work before service and storage disposal; duplicate close remains harmless. Production factory forwards the private expiry keyword only in supervised configured mode, preserving the default factory path. Retain cleaner/storage/supervisor/CLI/run/worker/restart wiring together.
+
+Named checks: `test_impossible_turn_budget_preserves_expiry_rollback`, `test_claim_expiry_rolls_back_waits_mutation_and_early_returns`, `test_claim_supplied_expiry_during_metadata_scan_rolls_back`, `test_partial_app_construction_closes_trace_before_storage`, `test_app_trace_drains_before_storage_on_every_lifecycle_exit`, and `test_trace_constructor_failure_keeps_http_available`. Extend/reuse their assertions for the combined paths and add only missing managed-expiry failure/factory interactions. Existing source/evidence is not a pass on changed composition. New tests are authored before the corresponding source changes; no local execution is authorized.
+
+Service-default compatibility composition: retain main's existing `prepare_codex_wake_start` under the held owner lock; its fresh-SQLite initialization already precedes supervisor maintenance validation. Forward the deployed managed-expiry flag for SQLite service configuration only, preserving main's non-SQLite service mode without applying SQLite-only validation to it. This retains existing behavior rather than adding bootstrap/migration work. Extend `test_fresh_service_run_initializes_under_existing_owner_lock_before_supervisor` for both backends.
+
+First-slice handoff correction: the developer's final mutation warning identified an ambiguous-context patch that had not landed. The manager inspected the actual test file and original attempted patch, then applied the same authored invalid-schema, stop-before-open and failure-cleanup/privacy controls with unique context. No production code or accepted test assertion was changed by this correction. Static parsing and source review are separate from still-unrun test execution; this is not a claimed pass or completed reconciliation.
+
+## First-slice independent source review
+
+Agent technical review: the independent standing architect reviewed the corrected first managed-expiry/lifecycle source slice over `890b606d1acc72ea583dc6b170970ae63637230a` and main `d7ecc2b2b89624ef8444934e0332f930b9894f84`, including both new files in full. Source identity was verified before and after review. The verdict is **SOURCE HOLD**, not completed reconciliation, merge approval or installed acceptance.
+
+Mandatory connected corrections:
+
+- Carry the deployed connection-acquisition cleanup in `storage/sqlite_queue.py` used by the new maintenance window. If acquiring the connection fails, close the created session and preserve the original failure. Add the cleaner/window regression and unchanged-delivery-state readback.
+- Exercise `run_supervisor` with the managed-cleaner flag using its existing injectable seams: validation-before-spawn, cleaner startup failure/immediate exit, API failure/cancellation cleanup, restart environment preservation/clearing, and cleaner restart-budget exhaustion.
+- Add continuous cleaner recovery/retry-budget controls and the delivery-state interactions: claimed expiry rejects the old receipt; acknowledged and durable deliveries remain unchanged. Preserve cursor, closure and sanitized logging behavior.
+
+The review accepted the six expiry-guard positions/labels, preservation of main's claim algorithm, combined initialization and trace-before-storage ownership, existing-file-only validation and the corrected error-path test tail. It identified no new public disclosure in this slice. It did not qualify the still-unimplemented runtime groups or claim any test execution.
+
+Verification adequacy: AST/static source checks are useful but insufficient for runtime acceptance. A genuine import-linter run on the candidate reported no boundary violations; the whole-change selector requires the full non-slow lane. Local tests remain unrun. The reviewer explicitly permits an **incomplete, findings-recorded DRAFT for ordinary CI** after metadata gates; meaningful test-first RED is allowed and GREEN is not a prerequisite to that draft. The findings must be corrected and the candidate independently reviewed and actually tested before merge. Separate human result review and separately authorized live activation remain outstanding.

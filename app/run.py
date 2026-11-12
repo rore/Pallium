@@ -76,6 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--processors", type=int, default=1)
     parser.add_argument("--cleaners", type=int, default=1)
+    parser.add_argument("--relay-expiry-cleaner", action="store_true",
+                        help="Supervise a dedicated Relay expiry cleaner in all mode")
     parser.add_argument("--reload", action="store_true")
     parser.add_argument("--processor-id", default=None)
     parser.add_argument("--cleaner-id", default=None)
@@ -95,6 +97,8 @@ def run(args: list[str] | None = None) -> int:
         from app.cli.service import service_main
         return service_main(raw_args[1:])
     parsed, remaining = build_parser().parse_known_args(args)
+    if parsed.relay_expiry_cleaner and parsed.mode != "all":
+        build_parser().error("--relay-expiry-cleaner requires all mode")
     if parsed.mode not in ("setup", "service") and remaining:
         build_parser().error(f"unrecognized arguments: {' '.join(remaining)}")
     if parsed.mode in {"serve", "all"}:
@@ -181,6 +185,8 @@ def run(args: list[str] | None = None) -> int:
     ]
     if parsed.reload:
         supervisor_args.append("--reload")
+    if parsed.relay_expiry_cleaner:
+        supervisor_args.append("--relay-expiry-cleaner")
     return run_supervisor(supervisor_args)
 
 

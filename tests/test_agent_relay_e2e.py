@@ -2100,6 +2100,7 @@ def test_impossible_turn_budget_preserves_expiry_rollback(client, monkeypatch, s
     from types import SimpleNamespace
     import time as native_time
     import storage.sqlite_relay as module
+    expiry_errors = _capture_expiry_diagnostics(monkeypatch, module)
     from storage.sqlite_schema import RelayEndpointGenerationRecord
 
     _turn(client,'claude-code','budget-expiry-sender')
@@ -2150,6 +2151,8 @@ def test_impossible_turn_budget_preserves_expiry_rollback(client, monkeypatch, s
     response = client.post('/relay/turn',json=body)
     assert response.status_code == 409 and response.json() == {'detail':'Relay claim request expired'}
     assert observed == [seam] and snapshot() == before
+    expected_checkpoint = "pre_claim_mutation" if seam == "pre-mutation" else "post_flush_precommit"
+    assert [error.expiry_detected_at for error in expiry_errors] == [expected_checkpoint]
 
 
 def test_impossible_turn_budget_keeps_structural_refresh_outside_claim_transaction(client):
@@ -2374,6 +2377,7 @@ def test_unreachable_and_closed_destinations_reject_without_new_state(client, re
 def test_claim_expiry_rolls_back_waits_mutation_and_early_returns(client, monkeypatch, phase, relay_admission_clock):
     from types import SimpleNamespace
     import storage.sqlite_relay as module
+    expiry_errors = _capture_expiry_diagnostics(monkeypatch, module)
     from storage.sqlite_schema import RelayEndpointGenerationRecord
 
     storage = client.app.state.pallium_service._storage
@@ -2462,6 +2466,9 @@ def test_claim_expiry_rolls_back_waits_mutation_and_early_returns(client, monkey
     assert response.json()["detail"] == "Relay claim request expired"
     assert phase == "entry" or observed
     assert snapshot() == before  # Session/scope/generation/message expiry/token/lease/attempt all roll back.
+    expected_checkpoint = {"entry": "before_acquisition", "acquire": "after_acquisition",
+                "candidate": "pre_claim_mutation"}.get(phase, "post_flush_precommit")
+    assert [error.expiry_detected_at for error in expiry_errors] == [expected_checkpoint]
 
 
 @pytest.mark.parametrize("expiry", (True, False, 0, -1, 1.5, "1000", 2**53))
@@ -2556,3 +2563,16 @@ def test_turn_session_field_stays_required_and_opencode_stays_nonnull():
         RelayTurnResponse.model_validate(empty)
     with pytest.raises(ValidationError, match="session"):
         RelayOpenCodeWakeResponse.model_validate({**empty, "session": None, "wake": None, "restored": False})
+
+
+def _capture_expiry_diagnostics(monkeypatch, module):
+    errors = []
+    original = module.RelayConflictError
+
+    class ObservedConflict(original):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            errors.append(self)
+
+    monkeypatch.setattr(module, "RelayConflictError", ObservedConflict)
+    return errors

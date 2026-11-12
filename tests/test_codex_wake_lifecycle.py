@@ -80,14 +80,21 @@ def test_existing_unmarked_store_requires_offline_upgrade(lifecycle_config, monk
     assert run_module.run([mode]) == 1
 
 
-def test_fresh_service_run_initializes_under_existing_owner_lock_before_supervisor(lifecycle_config, monkeypatch):
+@pytest.mark.parametrize("backend", ("sqlite", "memory"))
+def test_fresh_service_run_initializes_under_existing_owner_lock_before_supervisor(lifecycle_config, monkeypatch, backend):
     config, home = lifecycle_config
+    config = replace(config, storage_backend=backend)
+    monkeypatch.setattr(AppConfig, "from_env", staticmethod(lambda: config))
     monkeypatch.setattr("app.dependencies.build_semantic_plugins", lambda *a: {})
     monkeypatch.setattr(service, "_processor_count", lambda *a: 0)
     monkeypatch.setattr(service, "assert_service_stopped", lambda *a: pytest.fail("fresh service required installed unit"))
 
-    def supervisor(*args, **kwargs):
-        assert _marker(config) == (0,)
+    def supervisor(arguments, **kwargs):
+        assert ("--relay-expiry-cleaner" in arguments) is (backend == "sqlite")
+        if backend == "sqlite":
+            assert _marker(config) == (0,)
+        else:
+            assert not (home / "data" / "pallium-relay.db").exists()
         contender = service._PalliumLock(home / "run" / "pallium.lock")
         assert not contender.acquire()
         return 0
