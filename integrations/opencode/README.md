@@ -96,10 +96,11 @@ in one OpenCode configuration.
   "$schema": "https://opencode.ai/config.json",
   "plugins": ["./integrations/opencode"],
   "mcp": {
-    "pallium": {
-      "type": "remote",
-      "url": "http://localhost:19836/mcp",
-      "enabled": true
+    "servers": {
+      "pallium": {
+        "type": "remote",
+        "url": "http://localhost:19836/mcp"
+      }
     }
   }
 }
@@ -116,6 +117,23 @@ because each adapter imports its shared helper by relative path.
 The `mcp` block follows OpenCode's
 [remote MCP configuration](https://opencode.ai/docs/mcp-servers/). If Pallium
 uses another port, change both the service command and MCP URL.
+
+### Current-session MCP identity
+
+OpenCode sends the invoking session ID in each MCP tool request's
+`_meta["ai.opencode/sessionID"]`. Pallium uses that request-local value for
+the current Relay address, work-reference list/attach/detach, and recovery
+receive. Direct and Code Mode tools use the same identity path. No shared-server
+`PALLIUM_AGENT_REF` or per-session `PALLIUM_THREAD_REF` is needed for this path.
+
+The ID is correlation, not authentication or authorization. Keep the injected
+container scope and existing permissions; Pallium does not derive scope from the
+ID. Present malformed metadata or a conflicting configured runtime fails closed.
+When this metadata is absent, existing intentional launcher configuration still
+works; an unconfigured client fails rather than guessing a session.
+
+Do not set one global session ID to repair a shared MCP connection. It would
+identify the wrong conversation when several sessions use that connection.
 
 ### 3. Add the Pallium guidance
 

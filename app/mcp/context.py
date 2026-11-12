@@ -131,6 +131,29 @@ def resolve_codex_thread_ref(meta: object) -> tuple[str | None, str | None]:
     return supplied[0], None
 
 
+def resolve_opencode_thread_ref(meta: object) -> tuple[str | None, str | None]:
+    """Read OpenCode's request-local correlation ID, not an authorization grant."""
+    if isinstance(meta, Mapping):
+        values = meta
+    elif callable(model_dump := getattr(meta, "model_dump", None)):
+        values = model_dump()
+    else:
+        return None, None
+    if not isinstance(values, Mapping) or "ai.opencode/sessionID" not in values:
+        return None, None
+    if any(key in values for key in ("threadId", "turnId", "x-codex-turn-metadata", "pallium_hermes")):
+        return None, "conflicting OpenCode runtime metadata"
+    session_id = values["ai.opencode/sessionID"]
+    if (
+        not isinstance(session_id, str)
+        or session_id != session_id.strip()
+        or not 0 < len(session_id) <= 255
+        or not session_id.isprintable()
+    ):
+        return None, "invalid OpenCode session identity metadata"
+    return session_id, None
+
+
 def resolve_context(
     *,
     container_ref: str | None = None,

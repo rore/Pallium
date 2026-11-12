@@ -184,3 +184,48 @@ def test_claude_registry_pid_mismatch_fails_closed(
     monkeypatch.setattr(context.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(context.os, "getppid", lambda: 123)
     assert resolve_context().thread_ref is None
+
+
+@pytest.mark.parametrize("session_id", ["ses_a", "任务-α", "ü" * 255])
+def test_opencode_request_session_identity_is_opaque(session_id):
+    from app.mcp.context import resolve_opencode_thread_ref
+
+    assert resolve_opencode_thread_ref({"ai.opencode/sessionID": session_id}) == (session_id, None)
+
+
+@pytest.mark.parametrize("metadata", [None, {}, {"threadId": "codex-task"}, {"unrelated": "value"}])
+def test_absent_opencode_metadata_does_not_claim_another_runtime(metadata):
+    from app.mcp.context import resolve_opencode_thread_ref
+
+    assert resolve_opencode_thread_ref(metadata) == (None, None)
+
+
+@pytest.mark.parametrize("session_id", [None, "", " ", " leading", "trailing ", "a\nb", "a\x00b", 3, False, [], {}, "x" * 256])
+def test_invalid_opencode_request_identity_fails_closed(session_id):
+    from app.mcp.context import resolve_opencode_thread_ref
+
+    identity, error = resolve_opencode_thread_ref({"ai.opencode/sessionID": session_id})
+    assert identity is None
+    assert error == "invalid OpenCode session identity metadata"
+
+
+@pytest.mark.parametrize("field", ["threadId", "turnId", "x-codex-turn-metadata", "pallium_hermes"])
+def test_mixed_opencode_runtime_metadata_fails_closed(field):
+    from app.mcp.context import resolve_opencode_thread_ref
+
+    assert resolve_opencode_thread_ref({"ai.opencode/sessionID": "ses_a", field: {}}) == (
+        None, "conflicting OpenCode runtime metadata",
+    )
+
+
+def test_opencode_request_accepts_sdk_metadata_without_changing_it():
+    from pydantic import BaseModel, ConfigDict
+    from app.mcp.context import resolve_opencode_thread_ref
+
+    class Metadata(BaseModel):
+        model_config = ConfigDict(extra="allow")
+
+    metadata = Metadata.model_validate({"ai.opencode/sessionID": "ses_a", "progressToken": "progress"})
+    before = metadata.model_dump()
+    assert resolve_opencode_thread_ref(metadata) == ("ses_a", None)
+    assert metadata.model_dump() == before

@@ -1,6 +1,7 @@
 # First · Relay Reliability
 - add-wake-first-relay-delivery
 - fix-opencode-plugin-reliability
+- fix-opencode-mcp-session-identity
 - add-relay-retention-and-lifecycle-hardening
 
 # Parallel · Session History
