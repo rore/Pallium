@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 from pydantic import BeforeValidator, Field, StrictInt, StrictStr
 
 from app.mcp.client import PalliumMcpClient
-from app.mcp.context import current_hermes_request, resolve_codex_thread_ref, resolve_context, resolve_relay_context
+from app.mcp.context import current_hermes_request, resolve_codex_thread_ref, resolve_context, resolve_opencode_thread_ref, resolve_relay_context
 from core.history_presentation import compact_history
 from core.relay import RELAY_TRACE_MAX_SEQUENCE, _RELAY_EXPIRY_OMITTED, _opaque, parse_selector, validate_alias, validate_runtime
 from core.work_ref import readable_work_ref
@@ -1290,18 +1290,25 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
             return "hermes", hermes_request.identity.session_id, None
         runtime = ctx.agent_ref
         session_ref = ctx.thread_ref
+        metadata = None
+        if request_ctx:
+            try:
+                metadata = request_ctx.request_context.meta
+            except ValueError:
+                pass
+        opencode_session, opencode_error = resolve_opencode_thread_ref(metadata)
+        if opencode_error:
+            return None, None, f"Error: {opencode_error}. Current-session Relay tools remain fail-closed."
+        if opencode_session is not None:
+            if runtime not in (None, "opencode"):
+                return None, None, "Error: OpenCode session metadata conflicts with configured runtime."
+            return "opencode", opencode_session, None
         if not runtime:
             return None, None, (
                 "Error: PALLIUM_AGENT_REF is not set. Current-session Relay tools "
                 "require integration-injected runtime identity."
             )
         if runtime == "codex":
-            metadata = None
-            if request_ctx:
-                try:
-                    metadata = request_ctx.request_context.meta
-                except ValueError:
-                    pass
             session_ref, metadata_error = resolve_codex_thread_ref(metadata)
             if metadata_error:
                 return None, None, (

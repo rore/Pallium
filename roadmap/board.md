@@ -49,6 +49,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- fix-opencode-mcp-session-identity
 - improve-session-history-search-quality
 - add-global-relay-recipient-discovery
 
