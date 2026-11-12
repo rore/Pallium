@@ -29,7 +29,7 @@
 
 **Plan:** First implementation step: invoke the /agent-workflow skill to create this Work Record and classify risk before any code edit (completed through the documented native-host fallback). Start from the supplied main revision; inventory every runtime hunk against installed base/current main/relevant PR heads, preserve non-runtime drift separately, trace both composition definitions and all callers, then prepare the smallest coherent source delta with existing/new focused contracts. Reuse the standing architect assessment; manager routes only new concrete composition/review decisions. Run no local application/test code; obtain actual tests through authorized ordinary CI after applicable publication gates.
 
-**Verification plan:** Source identities and paused-CI byte fingerprints; complete runtime hunk/PR correspondence and no-loss coverage; AST/static checks only locally. Identify original tests/source-matched evidence for managed expiry, trace startup/failure cleanup, retention/FTS snapshots, vector save locking and retained diagnostics. Existing ordinary CI supplies actual focused tests and the selected full non-slow lane when required; no unrelated failure or helper qualification is a prerequisite. Recheck all accepted source bytes and public disclosures before any publication.
+**Verification plan:** Runtime preservation -> original hunk/digest ledger and source-correspondence reviews; source contracts -> AST/diff checks and caller-facing lifecycle/authority/budget controls; managed expiry and diagnostics -> actual HTTP/state-readback journeys plus separately classified tool/storage/primitive controls; regressions -> whole-change selector, full Linux Python3.12/3.13 non-slow lanes and Windows smoke; import boundaries -> genuine source-matched import-linter evidence; public privacy -> changed-content and versioned-record disclosure checks. Local verification remains static only. No unrelated failure or helper qualification is a prerequisite; recheck accepted source identity before publication.
 
 **Plan review:** Agent technical review: standing architect TECHNICAL PLAN GO for the conservative source-reconciliation approach, reviewed record/head 890b606d1acc72ea583dc6b170970ae63637230a over main d7ecc2b2b89624ef8444934e0332f930b9894f84. Existing source comparison is reused, with explicit six-call expiry mapping and combined trace/expiry initialization/cleanup decisions below. No remaining generic architecture or human-scope blocker. Independent implementation-result acceptance and publication gates remain separate.
 
@@ -37,7 +37,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 
 <!-- agent-workflow:end -->
 
@@ -354,3 +354,51 @@ Whole-change whitespace and added-content privacy/security checks passed, includ
 The genuine metadata selector exited0 and selected the full lane; its application-test command was not executed locally. Fresh whole-change Redline and the documented Windows workflow adapter each completed with **advisory exit1**, with zero failing blocking workflow predicates. Both `origin/main` and `HEAD`, the actual whole-change path list and fresh actual verdict were supplied. Whole-PR size, unsatisfied API/persistence checkpoints under shadow policy and verification-plan mapping advisories remain recorded, not waived or represented as exit0. The adapter used the existing interpreter only in its subprocess environment and launched no CLI worker.
 
 These static and metadata results permit only the already-released ordinary draft publication. Corrected-test/full-lane runtime results, setup-latency cause, possible candidate performance effects and existing independent result/human/persistence acceptance remain open. The blocked architect bridge-source review and separate earlier incident tracks are not discharged. Retain this checkout for unfinished reconciliation; do not merge, activate, rerun unchanged source or alter installed/runtime/environment state.
+
+## Verification: completed ordinary CI on the reviewed software
+
+Software revision `3e0ad1ac8714eb8348376176c2842957212c57dc` passed ordinary CI run43323344499 and workflow run43323344068. Fresh exact-head PR checks confirm both full selected Linux lanes, Windows smoke, aggregate CI, Agent Workflow and Redline succeeded. Focused, Windows-full and nightly-slow lanes were not selected; no result is claimed for them.
+
+| Selected lane | Actual result |
+|---|---|
+| Linux Python3.12, job131549589305 | 9002 passed /106 skipped /2 xfailed |
+| Linux Python3.13, job131549589329 | 9002 passed /106 skipped /2 xfailed |
+| Windows smoke, job131549589270 | 843 passed /7 skipped |
+
+The Windows job also passed a separate process-sensitive serial step with9 passes. The two Windows steps are not combined into a unique-test total.
+
+The Linux JUnit artifacts13992082851 and13993160441 were downloaded and parsed independently of the publisher's report. Each contains9110 case records with9002 passes,106 skips and2 expected failures, matching its job log. The following selected records passed in **each** Linux profile; rows are coverage groups, not an additional unique-test total or a claim that every control is end-to-end:
+
+| Selected records | Passed per Linux profile |
+|---|---:|
+| Native/configuration reconciliation module | 45 |
+| Managed-expiry module | 32 |
+| Writer-diagnostics module | 62 |
+| Trace-lifecycle module | 23 |
+| Native-buffer round-trip cases | 2 |
+| Native HTTP setup-expiry/late-BEGIN cases | 2 |
+| Corrected active-claim lifecycle case | 1 |
+| Corrected registered expiry-presence cases | 8 |
+| Buffer/path fake equivalence cases | 2 |
+
+The count-audited prerequisite scopes now have actual passing execution, not merely authored expectations. The original claim/ACK, expiry-field/TTL/Unicode and native late-admission refusal assertions remained in those executed tests. Earlier API/body substitutions, mocked native primitives, direct storage controls and real HTTP/hook journeys retain their previously stated evidence classes. This does not qualify a native host, full Windows suite, slow lane or live client round trip.
+
+All software changes since accepted source anchor `324fa7bd83d4babdc6f92afb76f6d6f1638cb8ad` are confined to the five connected test modules already recorded; production is unchanged. This Work Record's state/verification metadata is the only subsequent repository change. Prior SOURCE GO verdicts remain source evidence for their exact unchanged slices, not fabricated human result review or automatic merge/activation approval. The final clean-context technical result review below is complete; separate High-risk human result review and the persistence checkpoint remain unsatisfied. No label is added to manufacture that review.
+
+Both earlier Linux3.12 deadline failures, the first CI failures and the genuine source-citation correction remain preserved. Passing these bounded test prerequisites does not diagnose the multi-second setup latency, exclude indirect candidate performance effects or prove live Relay recovery. The bridge-source handoff and installed/non-runtime drift remain separate unfinished work. No local test, collection, application import, installed edit, restart or deployment occurred.
+
+Skill feedback trigger1 dropped for this checkpoint: repeated credential-selector stalls are an environment/authentication execution issue with an existing documented command-scoped fallback, not an established Agent Workflow defect. No upstream package skill was edited and no public defect report was filed.
+
+## Result review
+
+Agent technical review: clean-context non-implementer **CONDITIONAL TECHNICAL GO for separate human result/persistence review**, with no blocking source or security findings. The reviewer inspected the owning record, archived independent review results/manifests/source snapshots, original/current hunk ledgers, five post-anchor test deltas and actual CI/JUnit evidence. Earlier independent SOURCE GO slices are reused only after verifying their unchanged production correspondence; they are not relabelled as human result approval or replaced by a new architecture review.
+
+Reviewed revision: `3e0ad1ac8714eb8348376176c2842957212c57dc` software, with only this Work Record's state and verification metadata being finalized.
+
+Verification adequacy: **adequate for the recorded software-reconciliation milestone and handoff to required human review**. The reviewer independently checked both JUnit ZIPs, raw summaries and checkout identity, testcase uniqueness, selected coverage, skip reasons and expected-failure classes. Both Linux profiles contain9002 passes/106 skips/2 expected failures, with zero failures/errors. Every selected reconciliation group above passed rather than skipped or expected-failed. The expected failures concern routing resumption and operational-fact derivation, not these corrections. Passing registration-count audits and unchanged native delayed-admission refusal controls preserve the prerequisite/subject separation; setup-latency cause and possible indirect candidate performance effects remain unresolved. Live-host/client recovery and unselected lanes are not claimed.
+
+Preservation/source correspondence: the reviewer compared all129 unique original context identities, paths, ordinals and delta digests with the current ledger, confirming19 already-main/110 carried or composed/zero pending or unaccounted. Runtime source matches the latest accepted archived snapshots after line-ending normalization, or remains unchanged from main. The genuine retention binding-producer condition is source-resolved and has passing production-chain execution. No new privacy disclosure, contract weakening, shared-fixture/native-control change, protected-contract edit, schema/dependency/CI change or mandatory technical correction was identified. Reused import-boundary execution remains160files/584dependencies,8contracts kept/0broken, not a fresh backend run.
+
+Human result/persistence review: **pending**. The owner was asked for separate source-result/persistence approval and conditional merge permission covering this software plus documentation-only finalization, with no installed/live authorization. The request was unanswered, not approved or declined. No approval or checkpoint label is inferred from that absence.
+
+The manager accepts this technical verdict within its stated scope and retains the source/record checkout for the pending human decision and unfinished delivery. Keep PR402 draft; do not merge, manufacture review labels, change installed state or silently widen the approved source. This does not reopen the already-approved source plan or require unrelated incident fixes. Technical GO is not human approval, checkpoint satisfaction, installed parity, native-host qualification or activation authorization.
