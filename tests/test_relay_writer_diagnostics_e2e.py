@@ -389,15 +389,21 @@ def test_exact_route_diagnostics_preserve_main_callback_authority(client, runtim
         relay_turn_admission_callback=lambda *_: calls.append("admission"),
     ))
     with TestClient(app) as route:
-        response = route.post("/relay/turn", json={
+        body = {
             "runtime": runtime, "session_ref": "exact-target",
             "container_ref": "git:example.test/diagnostics-東京",
             "wake_delivery_id": "relay-delivery-" + "c" * 32, "register_session": False,
-        })
+        }
+        if runtime == "hermes":
+            body.update(max_chars=20_000, max_response_chars=48_000)
+        response = route.post("/relay/turn", json=body)
     assert response.status_code == 200, response.text
     assert calls == (["turn"] if runtime == "hermes" else ["snapshot", "turn", "callback", "admission"])
     assert requests[0]["exact_delivery_id"] == "relay-delivery-" + "c" * 32
     assert requests[0]["register_session"] is False
+    assert requests[0]["max_chars"] == (20_000 if runtime == "hermes" else 0)
+    assert requests[0]["max_response_chars"] == (48_000 if runtime == "hermes" else 0)
+    assert requests[0]["max_messages"] == 3
     assert timing_scopes == [] if runtime == "hermes" else len(timing_scopes) == 1 and type(timing_scopes[0]) is dict
     assert _relay_snapshot_timings.get() is None
 
