@@ -1623,3 +1623,117 @@ def test_managed_supervisor_restores_missing_database_pair_before_children(tmp_p
         )
     finally:
         restored.close()
+
+
+@pytest.mark.parametrize("failure", (
+    "empty-snapshot-directory",
+    "partial-live-pair",
+    "corrupt-committed-snapshot",
+    "incomplete-committed-pair",
+    "pair-without-manifest",
+    "relay-schema-invalid-snapshot",
+))
+def test_managed_supervisor_recovery_refuses_invalid_pairs_before_children(
+    tmp_path, monkeypatch, capsys, failure,
+):
+    """Caller-entrypoint/storage negatives, not subprocess or native-host E2E."""
+    import sqlite3
+    from pathlib import Path
+
+    from app.config import AppConfig
+    from app.snapshot import create_snapshot, resolve_live_db_paths
+    from core.models import SourceItem
+    from storage.sqlite import SQLiteStorageProvider
+
+    main, relay = tmp_path / "main-東京.db", tmp_path / "relay-東京.db"
+    snapshots = tmp_path / "snapshots"
+    snapshots.mkdir()
+    main_url = f"sqlite:///{main.resolve().as_posix()}"
+    relay_url = f"sqlite:///{relay.resolve().as_posix()}"
+    for key, value in {
+        "PALLIUM_STORAGE_BACKEND": "sqlite",
+        "PALLIUM_SQLITE_URL": main_url,
+        "PALLIUM_RELAY_SQLITE_URL": relay_url,
+        "PALLIUM_SNAPSHOT_ENABLED": "true",
+        "PALLIUM_SNAPSHOT_PATH": str(snapshots),
+    }.items():
+        monkeypatch.setenv(key, value)
+    config = AppConfig.from_env()
+    assert config.resolved_relay_sqlite_url == relay_url
+    assert config.snapshot.enabled and config.snapshot.snapshot_path == str(snapshots)
+    live_paths = resolve_live_db_paths(config)
+    storage = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    try:
+        storage.create_source_item(SourceItem(
+            source_type="test", source_id="recovery-source", content_type="text",
+            content="paired refusal 東京", container_ref="recovery-container",
+        ))
+        storage.relay_turn(
+            runtime="codex", session_ref="recovery-session", container_ref="recovery-container",
+            title="paired refusal 東京", max_chars=1000, max_messages=1, lease_seconds=60,
+        )
+    finally:
+        storage.close()
+
+    if failure == "relay-schema-invalid-snapshot":
+        # Replace only our closed Relay file, before the native snapshot backup.
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{relay}{suffix}").unlink(missing_ok=True)
+        connection = sqlite3.connect(str(relay))
+        try:
+            connection.execute("CREATE TABLE unrelated (value TEXT)")
+            connection.commit()
+            assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)
+            assert connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall() == [
+                ("unrelated",),
+            ]
+        finally:
+            connection.close()
+
+    if failure != "empty-snapshot-directory":
+        manifest = create_snapshot(live_paths, snapshots, pages_per_step=-1, sleep_between=0)
+        assert manifest is not None and manifest.is_file()
+        generation = _json.loads(manifest.read_text(encoding="utf-8"))["generation"]
+        pair = {role: snapshots / f"pallium-{generation}-{role}.db" for role in live_paths}
+        assert all(path.is_file() for path in pair.values())
+        if failure == "corrupt-committed-snapshot":
+            pair["relay"].write_bytes(b"not a SQLite database")
+        elif failure == "incomplete-committed-pair":
+            pair["relay"].unlink()
+        elif failure == "pair-without-manifest":
+            manifest.unlink()
+    snapshot_bytes = {path.name: path.read_bytes() for path in snapshots.iterdir()}
+    main_before = main.read_bytes()
+    for path in (main, relay):
+        if failure == "partial-live-pair" and path == main:
+            continue
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{path}{suffix}").unlink(missing_ok=True)
+    assert main.exists() == (failure == "partial-live-pair")
+    assert not relay.exists()
+
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0", "--relay-expiry-cleaner"],
+        popen_factory=lambda *_a, **_kw: pytest.fail("child launch reached after invalid recovery"),
+        wait_for_api_fn=lambda *_a, **_kw: pytest.fail("readiness reached after invalid recovery"),
+        sleep_fn=lambda _: pytest.fail("invalid recovery must not retry or poll"),
+        kill_fn=lambda *_a, **_kw: pytest.fail("invalid recovery must own no child"),
+    )
+    assert result == 1
+    output = capsys.readouterr()
+    if failure == "partial-live-pair":
+        assert "snapshot restore failed: partial live database pair; refusing snapshot restore" in output.err
+        assert main.read_bytes() == main_before
+        assert not relay.exists()
+    elif failure == "relay-schema-invalid-snapshot":
+        assert "managed Relay expiry validation failed error_type=RuntimeError" in output.err
+        for role, path in live_paths.items():
+            assert Path(path).read_bytes() == snapshot_bytes[pair[role].name]
+    else:
+        assert "managed Relay expiry validation failed error_type=ValueError" in output.err
+        assert not main.exists() and not relay.exists()
+    # No initialization, migration, partial publication or leftover restore staging.
+    for path in (main, relay):
+        for suffix in ("-wal", "-shm", ".restore.tmp"):
+            assert not Path(f"{path}{suffix}").exists()
+    assert {path.name: path.read_bytes() for path in snapshots.iterdir()} == snapshot_bytes

@@ -526,8 +526,6 @@ def run_supervisor(
                 if relay_path is None:
                     raise ValueError("Managed Relay expiry requires a file-backed database")
                 relay_expiry_database_url = f"sqlite:///{relay_path.resolve().as_posix()}"
-                validation = SQLiteStorageProvider.open_relay_maintenance(relay_expiry_database_url)
-                validation.close()
         except Exception as exc:
             emit_runtime_log("supervisor", f"managed Relay expiry validation failed error_type={type(exc).__name__}", stderr=True)
             return 1
@@ -546,6 +544,15 @@ def run_supervisor(
             except Exception as exc:
                 emit_runtime_log("supervisor", f"snapshot restore failed: {exc}", stderr=True)
                 return 1
+
+    # Validate the restored Relay file before spawning any children.
+    if relay_expiry_database_url is not None:
+        try:
+            validation = SQLiteStorageProvider.open_relay_maintenance(relay_expiry_database_url)
+            validation.close()
+        except Exception as exc:
+            emit_runtime_log("supervisor", f"managed Relay expiry validation failed error_type={type(exc).__name__}", stderr=True)
+            return 1
 
     # Each managed slot: (command, label, process, restart_times)
     slots: list[_ManagedSlot] = []
