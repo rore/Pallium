@@ -1517,3 +1517,109 @@ def test_managed_supervisor_cleaner_restart_budget_shuts_down_owned_group(manage
     assert len(cleaner) == _MAX_RAPID_RESTARTS + 1
     assert len(api) == 1 and api[0]._terminated
     assert managed_supervisor.closed == [True]
+
+
+def test_managed_supervisor_restores_missing_database_pair_before_children(tmp_path, monkeypatch):
+    """Entrypoint/storage integration; only child and readiness/stop seams are fake."""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from app.config import AppConfig
+    from app.snapshot import create_snapshot, resolve_live_db_paths
+    from core.models import SourceItem
+    from storage.sqlite import SQLiteStorageProvider
+
+    main = tmp_path / "main-東京.db"
+    relay = tmp_path / "relay-東京.db"
+    snapshots = tmp_path / "snapshots"
+    snapshots.mkdir()
+    main_url = f"sqlite:///{main.resolve().as_posix()}"
+    relay_url = f"sqlite:///{relay.resolve().as_posix()}"
+    for key, value in {
+        "PALLIUM_STORAGE_BACKEND": "sqlite",
+        "PALLIUM_SQLITE_URL": main_url,
+        "PALLIUM_RELAY_SQLITE_URL": relay_url,
+        "PALLIUM_SNAPSHOT_ENABLED": "true",
+        "PALLIUM_SNAPSHOT_PATH": str(snapshots),
+    }.items():
+        monkeypatch.setenv(key, value)
+    config = AppConfig.from_env()
+    assert config.resolved_relay_sqlite_url == relay_url
+    assert config.snapshot.enabled and config.snapshot.snapshot_path == str(snapshots)
+    live_paths = resolve_live_db_paths(config)
+    source = SourceItem(source_type="test", source_id="snapshot-source", content_type="text",
+                        content="paired recovery 東京", container_ref="snapshot-container")
+    storage = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    try:
+        storage.create_source_item(source)
+        session = storage.relay_turn(
+            runtime="codex", session_ref="snapshot-session", container_ref="snapshot-container",
+            title="paired recovery 東京", max_chars=1000, max_messages=1, lease_seconds=60,
+        )["session"]
+        manifest = create_snapshot(live_paths, snapshots, pages_per_step=-1, sleep_between=0)
+        assert manifest is not None and manifest.is_file()
+    finally:
+        storage.close()
+    generation = _json.loads(manifest.read_text(encoding="utf-8"))["generation"]
+    snapshot_bytes = {
+        role: (snapshots / f"pallium-{generation}-{role}.db").read_bytes()
+        for role in live_paths
+    }
+    for path in (main, relay):
+        path.unlink()
+        Path(f"{path}-wal").unlink(missing_ok=True)
+        Path(f"{path}-shm").unlink(missing_ok=True)
+    assert not main.exists() and not relay.exists()
+
+    stop = SimpleNamespace(requested=False)
+    _use_stop(monkeypatch, stop)
+    commands, processes, settings = [], [], []
+
+    def spawn(command, **kwargs):
+        if not commands:
+            # Both files must already be the real restored pair before ANY child.
+            for role, path in live_paths.items():
+                assert Path(path).is_file()
+                assert Path(path).read_bytes() == snapshot_bytes[role]
+        commands.append(command)
+        if "serve" in command:
+            settings.append(kwargs["env"].get("PALLIUM_API_RELAY_EXPIRY_DATABASE_URL"))
+        process = FakePopen()
+        processes.append(process)
+        return process
+
+    def ready_then_stop(*_args, **_kwargs):
+        stop.requested = True
+        return True
+
+    # Do not substitute restore_snapshot, maintenance open/close, or schema validation.
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0", "--relay-expiry-cleaner"],
+        popen_factory=spawn, wait_for_api_fn=ready_then_stop,
+        should_stop=lambda: True, kill_fn=_fake_kill_fn,
+        sleep_fn=lambda _: pytest.fail("successful startup must not retry or poll"),
+    )
+    assert result == 0
+    assert len(commands) == 2
+    assert commands[0][1:] == ["-m", "app.relay_expiry_cleaner", "--database-url", relay_url]
+    assert commands[1][1:4] == ["-m", "app.run", "serve"]
+    assert settings == [relay_url]
+    assert stop.requested and all(process._terminated for process in processes)
+
+    # Read Relay before the regular provider can initialize either restored schema.
+    maintenance = SQLiteStorageProvider.open_relay_maintenance(relay_url)
+    try:
+        assert maintenance.relay_session_scope_by_endpoint(session["endpoint_id"]) == {
+            "runtime": "codex", "session_ref": "snapshot-session",
+            "container_ref": "snapshot-container",
+        }
+    finally:
+        maintenance.close()
+    restored = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    try:
+        item = restored.get_source_item(source.id)
+        assert (item.id, item.source_id, item.content, item.container_ref) == (
+            source.id, source.source_id, source.content, source.container_ref,
+        )
+    finally:
+        restored.close()
