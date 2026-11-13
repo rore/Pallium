@@ -8,6 +8,7 @@ import sqlite3
 import time
 import unicodedata
 import uuid
+from contextlib import nullcontext
 from dataclasses import asdict, replace
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -17,6 +18,7 @@ from typing import Any, Callable
 from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import defer
+from sqlalchemy.pool import QueuePool
 
 from core.relay import (
     RELAY_RECENT_SECONDS,
@@ -26,10 +28,11 @@ from core.relay import (
     RelayNotFoundError,
 )
 from redaction import redact_sensitive
-from core.errors import ImmediateTransactionBusyError
+from core.errors import ImmediateTransactionBusyError, _relay_opencode_verb
 from core.codex_wake import (
     CodexWakeRegistry, CodexWakeReservation, MAX_RESERVATIONS,
     WAKE_RETRY_COOLDOWN_SECONDS, retry_cooldown_elapsed,
+    _relay_snapshot_timings,
 )
 from storage.sqlite_schema import (
     RelayAliasRecord,
@@ -413,7 +416,33 @@ class SQLiteRelayMixin:
                 opencode_wake=request, now=current,
             )
         with self._begin_relay_immediate() as db:
+            owner = None
+            try:
+                candidate_owner = getattr(self, "_relay_writer_diagnostic", None)
+                if type(candidate_owner) is dict and candidate_owner.get("operation") == "opencode_wake":
+                    owner = candidate_owner
+                    owner["opencode_verb"] = _relay_opencode_verb(operation)
+            except BaseException:
+                pass
+
+            def observe(site):
+                try:
+                    self._observe_relay_turn_site(owner, site, opencode=True)
+                except BaseException:
+                    if type(owner) is dict:
+                        owner["opencode_body"] = None
+
+            def render_candidate(item):
+                observe("candidate_validate")
+                result = _delivery_render_safe(*item)
+                if result is False:
+                    observe("candidate_fetch")
+                return result
+
+            observe("body_setup")
+            observe("binding")
             session, wake = self._opencode_binding(db, request, current, enrollment=operation == "enroll")
+            observe("state_update")
             if operation == "enroll":
                 if wake is None:
                     wake = RelayOpenCodeWakeRecord(
@@ -445,6 +474,7 @@ class SQLiteRelayMixin:
                     wake.terminal = 1
                     wake.retry_not_before = current + timedelta(seconds=min(30, 2 ** min(wake.failures + 1, 5)))
             if operation == "poll":
+                observe("anchor_lookup")
                 anchor = db.get(RelayDeliveryRecord, wake.delivery_id) if wake.delivery_id else None
                 message = db.get(RelayMessageRecord, anchor.message_id) if anchor else None
                 eligible = anchor is not None and message is not None and _now(message.expires_at) > current and (
@@ -462,6 +492,7 @@ class SQLiteRelayMixin:
                         wake.failures += 1
                         wake.retry_not_before = None
                 if wake.delivery_id is None:
+                    observe("candidate_execute")
                     candidate = db.execute(
                         select(RelayDeliveryRecord, RelayMessageRecord)
                         .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
@@ -474,13 +505,15 @@ class SQLiteRelayMixin:
                             _wake_pending(current, True),
                         ).order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
                     )
-                    row = next((item for item in candidate if _delivery_render_safe(*item)), None)
+                    observe("candidate_fetch")
+                    row = next((item for item in candidate if render_candidate(item)), None)
                     if row is not None:
                         wake.generation += 1
                         wake.delivery_id = row[0].id
                         wake.admitted = wake.terminal = wake.failures = 0
                         wake.claim_attempts = wake.payload_chars = None
                         wake.retry_not_before = None
+            observe("response")
             return {
                 "session": self._relay_session_view(db, session, current, RELAY_RECENT_SECONDS),
                 "wake": self._opencode_wake_view(wake), "deliveries": [],
@@ -506,27 +539,96 @@ class SQLiteRelayMixin:
         })
 
     def relay_codex_wake_snapshot(self):
-        with self._relay_session_factory() as db:
-            db.connection().exec_driver_sql("BEGIN")  # One consistent marker/row snapshot.
-            cursor = db.connection().connection.driver_connection.cursor()
+        try:
+            timings = _relay_snapshot_timings.get()
+        except Exception:
+            timings = None
+
+        def invalidate():
             try:
+                timings["timing_invalid"] = 1
+            except Exception:
+                pass
+
+        def clock():
+            if timings is not None:
                 try:
-                    marker_id, generation, marker_count, encoded = _wake_snapshot_envelope(cursor)
-                except sqlite3.OperationalError as error:
-                    if str(error) not in ("no such function: json_group_array", "no such function: json_array"):
-                        raise
-                    marker = db.execute(select(RelayCodexWakeStateRecord.generation).where(
-                        RelayCodexWakeStateRecord.id == 1
-                    )).first()
-                    cursor.execute(_WAKE_SNAPSHOT_ROWS_SQL)
-                    rows, marker_count = cursor.fetchall(), None
-                else:
-                    marker = None if marker_id is None else SimpleNamespace(generation=generation)
-                    rows = _decode_wake_snapshot_rows(encoded)
+                    value = time.perf_counter_ns()
+                    if type(value) is int:
+                        return value
+                except Exception:
+                    pass
+                invalidate()
+            return None
+
+        def finish(name, started):
+            if started is not None:
+                try:
+                    ended = time.perf_counter_ns()
+                    if type(ended) is not int:
+                        raise ValueError("invalid diagnostic clock")
+                    elapsed = ended - started
+                    if type(elapsed) is int and elapsed >= 0:
+                        previous = timings.get(name, 0)
+                        if type(previous) is not int or previous < 0:
+                            raise ValueError("invalid diagnostic aggregate")
+                        timings[name] = previous + elapsed
+                    else:
+                        invalidate()
+                except Exception:
+                    invalidate()
+
+        def observe(name, operation):
+            started = clock()
+            try:
+                return operation()
             finally:
-                cursor.close()
-            items = self._validate_wake_authority(db, marker, rows=rows, marker_count=marker_count)
-            return marker is not None, items
+                finish(name, started)
+
+        if timings is not None:
+            try:
+                pool = self._relay_engine.pool
+                if type(pool) is QueuePool:
+                    timings["pool_size"] = pool.size()
+                    timings["pool_overflow"] = pool.overflow()
+            except Exception:
+                pass
+        exit_started = None
+        try:
+            with self._relay_session_factory() as db:
+                try:
+                    connection = observe("connection", db.connection)
+                    observe("sql", lambda: connection.exec_driver_sql("BEGIN"))
+                    cursor = observe("connection", lambda: db.connection().connection.driver_connection.cursor())
+                    try:
+                        try:
+                            marker_id, generation, marker_count, encoded = observe(
+                                "sql", lambda: _wake_snapshot_envelope(cursor))
+                        except sqlite3.OperationalError as error:
+                            if str(error) not in ("no such function: json_group_array", "no such function: json_array"):
+                                raise
+                            if timings is not None:
+                                try:
+                                    timings["sql_fallback"] = 1
+                                except Exception:
+                                    pass
+                            marker = observe("sql", lambda: db.execute(select(RelayCodexWakeStateRecord.generation).where(
+                                RelayCodexWakeStateRecord.id == 1
+                            )).first())
+                            observe("sql", lambda: cursor.execute(_WAKE_SNAPSHOT_ROWS_SQL))
+                            rows, marker_count = observe("sql", cursor.fetchall), None
+                        else:
+                            marker = None if marker_id is None else SimpleNamespace(generation=generation)
+                            rows = observe("decode_validation", lambda: _decode_wake_snapshot_rows(encoded))
+                    finally:
+                        observe("settlement", cursor.close)
+                    items = observe("decode_validation", lambda: self._validate_wake_authority(
+                        db, marker, rows=rows, marker_count=marker_count))
+                    return marker is not None, items
+                finally:
+                    exit_started = clock()
+        finally:
+            finish("settlement", exit_started)
 
     def relay_codex_trial_native_suppressed(self, endpoint_id: str) -> bool:
         """Read the endpoint tombstone and trial row from one snapshot."""
@@ -1519,19 +1621,60 @@ class SQLiteRelayMixin:
                 raise ValueError("invalid Relay claim expiry")
             claim_deadline = time.monotonic() + (claim_expires_at_ms / 1000 - time.time())
 
-        def check_claim_expiry():
+        def check_claim_expiry(checkpoint: str):
             if claim_deadline is not None and time.monotonic() >= claim_deadline:
-                raise RelayConflictError("Relay claim request expired")
+                error = RelayConflictError("Relay claim request expired")
+                try:
+                    error.expiry_detected_at = checkpoint
+                except BaseException:
+                    # Diagnostics must not replace the expiry error.
+                    pass
+                raise error
 
-        check_claim_expiry()
+        check_claim_expiry("before_acquisition")
         current = _now(now)
+        managed_expiry = getattr(self, "_relay_expiry_managed", False) is True
         with self._begin_relay_immediate() as db:
-            check_claim_expiry()
+            check_claim_expiry("after_acquisition")
+
+            owner = expiry_owner = None
+            try:
+                diagnostic_owner = getattr(self, "_relay_writer_diagnostic", None)
+                if type(diagnostic_owner) is dict:
+                    owner = diagnostic_owner
+                    if opencode_wake is not None:
+                        owner["opencode_verb"] = "context"
+                    if runtime == "codex" and exact_delivery_id is not None and not managed_expiry:
+                        expiry_owner = diagnostic_owner
+                        if owner.get("body_hook_state") != "invalid":
+                            owner["body_hook_state"] = "valid"
+                    else:
+                        diagnostic_owner["body_hook_state"] = "ineligible"
+            except BaseException:
+                pass
+
+            def observe(site):
+                self._observe_relay_turn_site(owner, site)
+
+            def observed_rows(rows):
+                iterator = iter(rows)
+                while True:
+                    observe("candidate_fetch")
+                    try:
+                        row = next(iterator)
+                    except StopIteration:
+                        return
+                    observe("candidate_project")
+                    yield row
+
+            observe("body_setup")
 
             def finalize(result):
                 if claim_deadline is not None:
+                    observe("final_flush")
                     db.flush()
-                    check_claim_expiry()  # Still inside the transaction: expiration rolls everything back.
+                    observe("final_check")
+                    check_claim_expiry("post_flush_precommit")  # Still inside the transaction: expiration rolls everything back.
                 return result
 
             def eligible_deliveries(endpoint_id):
@@ -1597,6 +1740,7 @@ class SQLiteRelayMixin:
                         "restored": reusable and delivery.state == "delivered",
                         "has_more": remaining > 0, "remaining_count": remaining,
                     })
+            observe("scope_lookup")
             current_scope = db.execute(
                 select(RelaySessionRecord, RelayEndpointGenerationRecord)
                 .outerjoin(
@@ -1675,22 +1819,35 @@ class SQLiteRelayMixin:
                     if title is not None:
                         registered.title = title
 
-            db.execute(
-                update(RelayDeliveryRecord)
-                .where(
-                    RelayDeliveryRecord.state.in_(("pending", "claimed")),
-                    RelayDeliveryRecord.message_id.in_(
-                        select(RelayMessageRecord.id).where(
-                            RelayMessageRecord.expires_at <= current
+            if not managed_expiry:
+                observe("expiry_update")
+            with (nullcontext(None) if managed_expiry else self._observe_relay_expiry(db, expiry_owner)) as expiry_tag:
+                if not managed_expiry:
+                    db.execute(
+                        update(RelayDeliveryRecord)
+                        .where(
+                            RelayDeliveryRecord.state.in_(("pending", "claimed")),
+                            RelayDeliveryRecord.message_id.in_(
+                                select(RelayMessageRecord.id).where(
+                                    RelayMessageRecord.expires_at <= current
+                                )
+                            ),
                         )
-                    ),
-                )
-                .values(state="expired", claim_token=None)
-                .execution_options(synchronize_session=False)
-            )
+                        .values(state="expired", claim_token=None)
+                        .execution_options(synchronize_session=False, _pallium_relay_expiry=expiry_tag)
+                    )
+                    self._observe_relay_turn_site(expiry_owner, "post_return", expiry=True)
 
             eligible_query = eligible_deliveries(registered.id)
-            eligible_count = count_eligible(eligible_query)
+            observe("eligible_count")
+            count_owner = owner if type(owner) is dict and owner.get("operation") == "turn" and expiry_owner is None else None
+            with (self._observe_relay_expiry(db, count_owner, count=True)
+                  if count_owner is not None else nullcontext(None)) as count_tag:
+                count_query = eligible_query
+                if count_tag is not None:
+                    count_query = count_query.execution_options(_pallium_relay_count=count_tag)
+                eligible_count = count_eligible(count_query)
+                self._observe_relay_turn_site(count_owner, "post_return", count=True)
             eligible_query = eligible_query.order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
             required_trigger = exact_delivery_id
             batch_trigger = required_trigger is not None and max_messages != 1
@@ -1725,7 +1882,7 @@ class SQLiteRelayMixin:
                 empty_response = response([])
                 # A delivery envelope exceeds any savings from fewer remaining-count digits.
                 if max_response_chars <= _compact_json_chars(empty_response):
-                    check_claim_expiry()
+                    check_claim_expiry("pre_claim_mutation")
                     return finalize(empty_response)
 
             def claim_view(delivery, message, token, payload):
@@ -1787,9 +1944,10 @@ class SQLiteRelayMixin:
             ))
             append_overhead = None
             json_floor = None
+            observe("candidate_execute")
             with db.execute(eligible_query) as rows:
-                for delivery, message in rows:
-                    check_claim_expiry()
+                for delivery, message in (observed_rows(rows) if owner is not None else rows):
+                    check_claim_expiry("pre_claim_mutation")
                     if required_trigger is not None and not selected and delivery.id != required_trigger:
                         break
                     if max_chars and used + render_floor + (2 if selected else 0) > max_chars:
@@ -1881,8 +2039,9 @@ class SQLiteRelayMixin:
                         selected[index] = (delivery, message, grown, grown_size, token)
                         used += grown_size - size
 
+            observe("claim_mutation")
             claimed: list[dict[str, Any]] = []
-            check_claim_expiry()
+            check_claim_expiry("pre_claim_mutation")
             for delivery, message, view, _, token in selected:
                 delivery.state = "claimed"
                 delivery.claim_token = token

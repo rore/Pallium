@@ -835,6 +835,7 @@ def test_claim_ambiguous_unsafe_bodies_still_get_full_validation(exact_client):
 def test_claim_supplied_expiry_during_metadata_scan_rolls_back(exact_client, claim_budget_sample, monkeypatch, budget_kind):
     import time
     import storage.sqlite_relay as relay_storage
+    expiry_errors = _capture_expiry_diagnostics(monkeypatch, relay_storage)
 
     client, storage = exact_client
     first = send(client, payload="x")
@@ -875,3 +876,18 @@ def test_claim_supplied_expiry_during_metadata_scan_rolls_back(exact_client, cla
     sessions = client.get("/relay/sessions", params=SCOPE)
     assert sessions.status_code == 200
     assert next(row for row in sessions.json() if row["session_ref"] == "target")["title"] is None
+    expected_checkpoint = "pre_claim_mutation"
+    assert [error.expiry_detected_at for error in expiry_errors] == [expected_checkpoint]
+
+
+def _capture_expiry_diagnostics(monkeypatch, module):
+    errors = []
+    original = module.RelayConflictError
+
+    class ObservedConflict(original):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            errors.append(self)
+
+    monkeypatch.setattr(module, "RelayConflictError", ObservedConflict)
+    return errors

@@ -266,7 +266,7 @@ def test_source_chunk_batches_fts_and_preserves_other_targets(test_db_url, numbe
     scans = []
     def observe(_conn, _cursor, statement, parameters, _context, _many):
         if statement.lstrip().upper().startswith("DELETE FROM LEXICAL_FTS"):
-            scans.append((statement, parameters))
+            scans.append((statement, parameters, _many))
     try:
         protected = _make_source(storage, source_id="protected-evidence",
                                  occurred_at=now - timedelta(days=100))
@@ -304,9 +304,12 @@ def test_source_chunk_batches_fts_and_preserves_other_targets(test_db_url, numbe
         for source in doomed:
             with pytest.raises(KeyError):
                 storage.get_source_item(source.id)
-        for sql, parameters in scans:
+        for sql, parameters, many in scans:
+            # Row-identity deletion is executemany; explain one binding, not the batch.
+            # Keep the original statement-count, no-correlation and plan assertions below.
+            plan_parameters = parameters[0] if many else parameters
             with storage._engine.connect() as connection:
-                plan = connection.exec_driver_sql("EXPLAIN QUERY PLAN " + sql, parameters).fetchall()
+                plan = connection.exec_driver_sql("EXPLAIN QUERY PLAN " + sql, plan_parameters).fetchall()
             details = [row[3] for row in plan]
             assert sum("SCAN lexical_fts" in item for item in details) == 1
             assert not any("CORRELATED" in item for item in details)
@@ -1255,4 +1258,225 @@ def test_source_retention_retries_transient_preparation_without_writes(test_db_u
     finally:
         if listener is not None:
             event.remove(storage._engine, "before_cursor_execute", listener)
+        storage.close()
+
+
+@pytest.mark.parametrize("mode", ("wal", "delete", "active-native-transaction"))
+@pytest.mark.parametrize("lexical_rows", (False, True))
+def test_retention_snapshot_guarded_fts_delete_and_fallback_preserve_other_targets(
+    test_db_url, monkeypatch, mode, lexical_rows,
+):
+    from sqlalchemy import event
+
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 10, 27, tzinfo=UTC)
+    trace, deletes = [], []
+    original_ttl, original_retry = storage._source_item_raw_ttl_expired, storage._with_retry
+
+    def observe(_conn, _cursor, statement, parameters, _context, many):
+        sql = statement.lstrip().upper()
+        if sql.startswith("SELECT (SELECT TARGET_ID FROM INDEX_ENTRIES"):
+            trace.append("snapshot")
+        elif sql.startswith("UPDATE MAINTENANCE_STATE") and "SOURCE_SCAN_CURSOR_ID" in sql:
+            trace.append("writer")
+        elif sql.startswith("DELETE FROM LEXICAL_FTS"):
+            trace.append("fts")
+            deletes.append((sql, many, parameters))
+
+    def ttl(record, **kwargs):
+        if "writer" in trace:
+            trace.append("fresh-check")
+        return original_ttl(record, **kwargs)
+
+    try:
+        source = _make_source(storage, source_id="snapshot-東京", occurred_at=now - timedelta(days=90))
+        keeper = _make_memory(storage, memory_type="decision", created_at=now, source_items=[])
+        entry = storage.find_index_entry(target_kind="source_item", target_id=source.id,
+                                        index_type="lexical", text_view_name="source_item.content")
+        if not lexical_rows:
+            with storage._engine.begin() as writer:
+                writer.execute(text("DELETE FROM lexical_fts WHERE index_entry_id=:id"), {"id": entry.id})
+        if mode == "delete":
+            with storage._engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+                assert connection.exec_driver_sql("PRAGMA journal_mode=DELETE").scalar() == "delete"
+        elif mode == "active-native-transaction":
+            def retry(fn):
+                def active(session):
+                    connection = session.connection()
+                    if not connection.connection.driver_connection.in_transaction:
+                        connection.exec_driver_sql("BEGIN DEFERRED")
+                    return fn(session)
+                return original_retry(active)
+            monkeypatch.setattr(storage, "_with_retry", retry)
+        monkeypatch.setattr(storage, "_source_item_raw_ttl_expired", ttl)
+        event.listen(storage._engine, "before_cursor_execute", observe)
+        stats = storage.run_retention_pass(now=now, batch_size=1, retention_policy=_TEST_RETENTION_POLICY)
+        assert stats.deleted_source_items == 1 and stats.deleted_index_entries == 1
+        assert trace.index("writer") < trace.index("fresh-check")
+        if mode == "wal":
+            assert trace.index("snapshot") < trace.index("writer")
+            assert len(deletes) == int(lexical_rows)
+            if lexical_rows:
+                assert "ROWID =" in deletes[0][0] and "INDEX_ENTRY_ID =" in deletes[0][0]
+                assert trace.index("fresh-check") < trace.index("fts")
+        else:
+            assert "snapshot" not in trace
+            assert len(deletes) == 1 and "INDEX_ENTRY_ID IN" in deletes[0][0]
+        with pytest.raises(KeyError):
+            storage.get_source_item(source.id)
+        assert storage.get_memory_object(keeper.id).lifecycle == "active"
+        assert keeper.id in {hit.target_id for hit in storage.search_index_entries(["decision"], limit=10).hits}
+    finally:
+        if event.contains(storage._engine, "before_cursor_execute", observe):
+            event.remove(storage._engine, "before_cursor_execute", observe)
+        storage.close()
+
+
+@pytest.mark.parametrize("interference", ("rowid-reuse", "fresh-protection"))
+def test_retention_wal_upgrade_retry_refreshes_fts_identity_and_source_eligibility(
+    test_db_url, monkeypatch, interference,
+):
+    from types import SimpleNamespace
+    from sqlalchemy import event, update
+    import storage.sqlite as sqlite_module
+    from storage.sqlite_schema import SourceItemRecord
+
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 10, 27, tzinfo=UTC)
+    snapshots, retries, changed = [], [], []
+
+    def observe(_conn, _cursor, statement, _parameters, _context, _many):
+        sql = statement.lstrip().upper()
+        if sql.startswith("SELECT (SELECT TARGET_ID FROM INDEX_ENTRIES"):
+            snapshots.append(True)
+        if sql.startswith("UPDATE MAINTENANCE_STATE") and "SOURCE_SCAN_CURSOR_ID" in sql and not changed:
+            assert snapshots, "source FTS identities must be read before writer acquisition"
+            changed.append(True)
+            with storage._engine.begin() as writer:
+                if interference == "rowid-reuse":
+                    writer.exec_driver_sql("DELETE FROM lexical_fts WHERE rowid=?", (rowid,))
+                    writer.exec_driver_sql(
+                        "INSERT INTO lexical_fts(rowid,text_view,index_entry_id,target_kind,target_id,text_view_name,container_ref) "
+                        "SELECT ?,text_view,index_entry_id,target_kind,target_id,text_view_name,container_ref "
+                        "FROM lexical_fts WHERE index_entry_id=? LIMIT 1", (rowid, keeper_entry.id))
+                else:
+                    writer.execute(update(SourceItemRecord).where(SourceItemRecord.id == source.id).values(
+                        processing_status="processing", processing_claimed_by="active-processor",
+                        processing_lease_expires_at=now + timedelta(minutes=1)))
+
+    try:
+        source = _make_source(storage, source_id="stale-row-東京", occurred_at=now - timedelta(days=90))
+        keeper = _make_source(storage, source_id="fresh-keeper", occurred_at=now)
+        source_entry = storage.find_index_entry(target_kind="source_item", target_id=source.id,
+            index_type="lexical", text_view_name="source_item.content")
+        keeper_entry = storage.find_index_entry(target_kind="source_item", target_id=keeper.id,
+            index_type="lexical", text_view_name="source_item.content")
+        with storage._engine.connect() as connection:
+            rowid = connection.execute(text("SELECT rowid FROM lexical_fts WHERE index_entry_id=:id"),
+                                       {"id": source_entry.id}).scalar_one()
+        monkeypatch.setattr(sqlite_module, "time", SimpleNamespace(**{**vars(sqlite_module.time), "sleep": retries.append}))
+        event.listen(storage._engine, "before_cursor_execute", observe)
+        stats = storage.run_retention_pass(now=now, batch_size=1, retention_policy=_TEST_RETENTION_POLICY)
+        assert changed == [True] and len(snapshots) == 2 and len(retries) == 1
+        assert storage.get_source_item(keeper.id).content == keeper.content
+        if interference == "rowid-reuse":
+            assert stats.deleted_source_items == 1
+            with storage._engine.connect() as connection:
+                assert connection.execute(text("SELECT index_entry_id FROM lexical_fts WHERE rowid=:id"),
+                                          {"id": rowid}).scalar_one() == keeper_entry.id
+            with pytest.raises(KeyError):
+                storage.get_source_item(source.id)
+        else:
+            assert stats.deleted_source_items == 0
+            assert storage.get_source_item(source.id).processing_status == "processing"
+            assert source.id in {hit.target_id for hit in storage.search_index_entries(["content"], limit=10).hits}
+    finally:
+        if event.contains(storage._engine, "before_cursor_execute", observe):
+            event.remove(storage._engine, "before_cursor_execute", observe)
+        storage.close()
+
+
+@pytest.mark.parametrize("fault", (None, "clock", "partial-install", "remove-after-cleanup", "logger"))
+def test_retention_diagnostic_observers_settle_then_cleanup_without_changing_result(
+    test_db_url, monkeypatch, fault,
+):
+    from types import SimpleNamespace
+    from sqlalchemy import event
+    import storage.sqlite_retention as retention_module
+
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 10, 27, tzinfo=UTC)
+    installed, removed, logged = [], [], []
+
+    def listen(target, name, callback, **kwargs):
+        installed.append((target, name, callback))
+        event.listen(target, name, callback, **kwargs)
+        if fault == "partial-install" and len(installed) == 2:
+            raise RuntimeError("controlled observer installation failure")
+
+    def remove(target, name, callback):
+        removed.append((target, name, callback))
+        event.remove(target, name, callback)
+        if fault == "remove-after-cleanup":
+            raise RuntimeError("controlled observer-removal diagnostic failure")
+
+    def warning(message, *args):
+        assert all(not session.in_transaction() for session, _name, _callback in installed)
+        logged.append((message, args))
+        if fault == "logger":
+            raise RuntimeError("controlled logging failure")
+
+    def fail_clock():
+        raise RuntimeError("controlled timing failure")
+
+    try:
+        source = _make_source(storage, source_id="observer-東京", occurred_at=now - timedelta(days=90))
+        # Exercise the consumer with its reviewed producer contract; the frozen queue producer is pending.
+        monkeypatch.setattr(storage, "_main_db_diagnostic_binding", lambda: "db-" + "a" * 64, raising=False)
+        monkeypatch.setattr(retention_module, "event", SimpleNamespace(listen=listen, remove=remove), raising=False)
+        monkeypatch.setattr(retention_module, "logger", SimpleNamespace(warning=warning), raising=False)
+        if fault == "clock":
+            monkeypatch.setattr(retention_module, "_diagnostic_monotonic_ns", fail_clock, raising=False)
+        stats = storage.run_retention_pass(now=now, batch_size=1, retention_policy=_TEST_RETENTION_POLICY)
+        assert stats.deleted_source_items == 1
+        with pytest.raises(KeyError):
+            storage.get_source_item(source.id)
+        assert removed == installed
+        assert all(not event.contains(*binding) for binding in installed)
+        if fault == "clock":
+            assert not installed and not logged
+        else:
+            assert len(installed) == 2 and len(logged) == 1
+            message, args = logged[0]
+            assert "sqlite_main_writer role=source_retention" in message
+            assert args[1] == "db-" + "a" * 64 and args[5] == "commit" and args[-1] == 1
+    finally:
+        for target, name, callback in installed:
+            if event.contains(target, name, callback):
+                event.remove(target, name, callback)
+        storage.close()
+
+
+def test_retention_source_cascade_loads_only_required_index_entry_fields(test_db_url):
+    from sqlalchemy import event
+    from storage.sqlite_schema import IndexEntryRecord
+
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 10, 27, tzinfo=UTC)
+    loaded = []
+
+    def observe(record, _context):
+        loaded.append(set(record.__dict__) - {"_sa_instance_state"})
+
+    try:
+        source = _make_source(storage, source_id="column-projection", occurred_at=now - timedelta(days=90))
+        event.listen(IndexEntryRecord, "load", observe)
+        stats = storage.run_retention_pass(now=now, batch_size=1, retention_policy=_TEST_RETENTION_POLICY)
+        assert stats.deleted_source_items == stats.deleted_index_entries == 1
+        assert loaded == [{"id", "index_type"}]
+        with pytest.raises(KeyError):
+            storage.get_source_item(source.id)
+    finally:
+        if event.contains(IndexEntryRecord, "load", observe):
+            event.remove(IndexEntryRecord, "load", observe)
         storage.close()

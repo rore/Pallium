@@ -3994,9 +3994,14 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
     assert events == ["turn", "callback"]
     records = [record.getMessage() for record in caplog.records if delivery_id in record.getMessage()]
     assert len(records) == 1
+    snapshot_suffix = re.escape(
+        " snapshot_phase_ms={'connection': 'unknown', 'sql': 'unknown', "
+        "'decode_validation': 'unknown', 'settlement': 'unknown'} "
+        "snapshot_pool={'pool_size': 'unknown', 'pool_overflow': 'unknown'} expiry_detected_at=none"
+    )
     match = re.fullmatch(
         rf"relay_turn_timing delivery_ref={delivery_id} service_ms=(\d+) route_ready_ms=(\d+) outcome=ready "
-        rf"worker_start_ms=(\d+) snapshot_ms=(\d+) error_status=none error_category=none",
+        rf"worker_start_ms=(\d+) snapshot_ms=(\d+) error_status=none error_category=none" + snapshot_suffix,
         records[0],
     )
     assert match, records[0]
@@ -4069,10 +4074,16 @@ def test_relay_turn_logs_service_time_when_exact_wake_fails(
         if "relay_turn_timing" in record.getMessage()
     ]
     assert len(records) == 1
+    snapshot_suffix = re.escape(
+        " snapshot_phase_ms={'connection': 'unknown', 'sql': 'unknown', "
+        "'decode_validation': 'unknown', 'settlement': 'unknown'} "
+        "snapshot_pool={'pool_size': 'unknown', 'pool_overflow': 'unknown'} "
+        "expiry_detected_at=none request_owner=unknown blocking_owner=unknown"
+    )
     match = re.fullmatch(
         rf"relay_turn_timing delivery_ref={delivery_id} service_ms=(\d+) "
         rf"route_ready_ms=(\d+) outcome=error worker_start_ms=0 snapshot_ms=125 "
-        rf"error_status=501 error_category=http_error",
+        rf"error_status=501 error_category=http_error" + snapshot_suffix,
         records[0],
     )
     assert match, records[0]
@@ -4132,7 +4143,10 @@ def test_relay_turn_logs_safe_failure_category(client, caplog, monkeypatch, fail
                 assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
     records = [r.getMessage() for r in caplog.records if r.getMessage().startswith("relay_turn_timing")]
     assert len(records) == 1
-    fields = dict(part.split("=", 1) for part in records[0].split()[1:])
+    # Appended diagnostic dictionaries contain spaces; retain the original scalar-prefix checks.
+    timing_prefix, separator, _diagnostics = records[0].partition(" snapshot_phase_ms=")
+    assert separator == " snapshot_phase_ms="
+    fields = dict(part.split("=", 1) for part in timing_prefix.split()[1:])
     assert fields["error_status"] == (str(status) if status is not None else "none")
     assert fields["error_category"] == category
     assert int(fields["worker_start_ms"]) >= 0 and int(fields["snapshot_ms"]) >= 0
@@ -4166,7 +4180,17 @@ def test_relay_turn_logs_failure_before_worker_entry(client, caplog, failure):
     assert len(records) == 1
     assert "service_ms=none" in records[0]
     status, category = ("none", "cancelled") if failure == "cancelled" else ("409", "claim_expired")
-    assert records[0].endswith(f"worker_start_ms=none snapshot_ms=none error_status={status} error_category={category}")
+    expiry_checkpoint = "none" if failure == "cancelled" else "unknown"
+    snapshot_suffix = (
+        " snapshot_phase_ms={'connection': 'unknown', 'sql': 'unknown', "
+        "'decode_validation': 'unknown', 'settlement': 'unknown'} "
+        "snapshot_pool={'pool_size': 'unknown', 'pool_overflow': 'unknown'} "
+        f"expiry_detected_at={expiry_checkpoint} request_owner=unknown blocking_owner=unknown"
+    )
+    assert records[0].endswith(
+        f"worker_start_ms=none snapshot_ms=none error_status={status} error_category={category}"
+        + snapshot_suffix
+    )
 
 
 def test_relay_turn_logs_actual_expiry_without_claim_then_preserves_delivery_lifecycle(client, caplog):
@@ -4193,7 +4217,12 @@ def test_relay_turn_logs_actual_expiry_without_claim_then_preserves_delivery_lif
     after = client.get("/relay/messages/" + message_id, params=SCOPE).json()["deliveries"][0]
     assert after == before and after["state"] == "pending" and after["attempts"] == 0
     records = [r.getMessage() for r in caplog.records if r.getMessage().startswith("relay_turn_timing")]
-    assert len(records) == 1 and records[0].endswith("error_status=409 error_category=claim_expired")
+    assert len(records) == 1
+    timing_prefix, separator, diagnostics = records[0].partition(" snapshot_phase_ms=")
+    assert separator == " snapshot_phase_ms="
+    assert timing_prefix.endswith("error_status=409 error_category=claim_expired")
+    assert " expiry_detected_at=before_acquisition request_owner=" in diagnostics
+    assert " blocking_owner=" in diagnostics
     assert payload not in records[0] and SCOPE["container_ref"] not in records[0]
     fresh = client.post("/relay/turn", json=body)
     assert fresh.status_code == 200, fresh.text

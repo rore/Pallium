@@ -234,13 +234,36 @@ class FakeIndex:
     def search(self, query_vector, k: int, exact: bool = False) -> FakeResults:
         return FakeResults(keys=[], distances=[])
 
-    def save(self, path: str) -> None:
+    def save(self, path: str | None = None) -> bytearray | None:
         vecs = {str(k): v for k, v in self._vectors.items()}
-        Path(path).write_text(json.dumps({"vectors": vecs}), encoding="utf-8")
+        data = json.dumps({"vectors": vecs})
+        if path is None:
+            return bytearray(data.encode("utf-8"))
+        Path(path).write_text(data, encoding="utf-8")
 
     def load(self, path: str) -> None:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         self._vectors = {int(k): v for k, v in data["vectors"].items()}
+
+
+@pytest.mark.parametrize("vectors", [{}, {7: [1.0, 0.0, 0.5], 42: [0.0, -1.0, 0.25]}], ids=["empty", "populated"])
+def test_rebuild_fake_save_buffer_matches_path(vectors, tmp_path: Path):
+    index = FakeIndex(ndim=3)
+    for key, vector in vectors.items():
+        index.add(key, vector)
+
+    buffer = index.save()
+    assert isinstance(buffer, (bytes, bytearray))
+    assert buffer == json.dumps({"vectors": {str(k): v for k, v in vectors.items()}}).encode("utf-8")
+
+    index_path = tmp_path / "fake.index"
+    assert index.save(str(index_path)) is None
+    assert index_path.read_bytes() == buffer
+
+    loaded = FakeIndex(ndim=3)
+    loaded.load(str(index_path))
+    assert loaded._vectors == vectors
+    assert loaded.save() == buffer
 
 
 @pytest.fixture()

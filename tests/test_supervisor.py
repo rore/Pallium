@@ -1338,3 +1338,402 @@ def test_startup_budget_preserves_real_probe_fencing(tmp_path, monkeypatch, capl
         assert len(killed) == (0 if scenario == "dead" else len(spawned))
         if scenario in {"timeout", "foreign"}:
             assert durations == [120.0] * 5
+
+
+@pytest.fixture
+def managed_supervisor(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from app.config import AppConfig, SnapshotConfig
+    from storage.sqlite import SQLiteStorageProvider
+
+    main_database = f"sqlite:///{(tmp_path / 'main.db').resolve().as_posix()}"
+    database = f"sqlite:///{(tmp_path / 'relay.db').resolve().as_posix()}"
+    config = AppConfig(storage_backend="sqlite", sqlite_url=main_database, relay_sqlite_url=database,
+                       snapshot=SnapshotConfig(enabled=False))
+    assert config.resolved_relay_sqlite_url == database
+    validated, closed = [], []
+    validation = SimpleNamespace(close=lambda: closed.append(True))
+
+    def open_existing(url):
+        validated.append(url)
+        assert url == database
+        return validation
+
+    monkeypatch.setattr(AppConfig, "from_env", staticmethod(lambda: config))
+    monkeypatch.setattr(SQLiteStorageProvider, "open_relay_maintenance", staticmethod(open_existing))
+    monkeypatch.setattr("app.supervisor._kill_tree", _fake_kill_fn)
+    monkeypatch.setattr("app.supervisor._tcp_probe", lambda *_a: pytest.fail("unit test reached a native probe"))
+    stop = SimpleNamespace(requested=False)
+    _use_stop(monkeypatch, stop)
+    return SimpleNamespace(database=database, config=config, validated=validated,
+                           closed=closed, validation=validation, stop=stop)
+
+
+@pytest.mark.parametrize("failure", ("configuration", "backend", "open", "close"))
+def test_managed_supervisor_validation_failure_spawns_nothing(managed_supervisor, monkeypatch, capsys, failure):
+    from dataclasses import replace
+    from app.config import AppConfig
+    from storage.sqlite import SQLiteStorageProvider
+
+    context = managed_supervisor
+
+    def fail(*_args, **_kwargs):
+        raise ValueError("controlled-sensitive-validation-text")
+
+    if failure == "configuration":
+        monkeypatch.setattr(AppConfig, "from_env", staticmethod(fail))
+    elif failure == "backend":
+        monkeypatch.setattr(AppConfig, "from_env", staticmethod(lambda: replace(context.config, storage_backend="memory")))
+    elif failure == "open":
+        monkeypatch.setattr(SQLiteStorageProvider, "open_relay_maintenance", staticmethod(fail))
+    else:
+        monkeypatch.setattr(context.validation, "close", fail)
+    spawned = []
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0", "--relay-expiry-cleaner"],
+        popen_factory=lambda *_a, **_kw: spawned.append(True),
+        sleep_fn=lambda _: None, clock=lambda: 0.0, kill_fn=_fake_kill_fn,
+    )
+    assert result == 1 and spawned == []
+    output = capsys.readouterr()
+    assert "controlled-sensitive-validation-text" not in output.out + output.err
+
+
+@pytest.mark.parametrize("failure", ("launch", "immediate-exit"))
+def test_managed_supervisor_cleaner_start_failure_prevents_api(managed_supervisor, failure, capsys):
+    commands = []
+    cleaner = FakePopen(poll_returns=[7])
+
+    def spawn(command, **_kwargs):
+        commands.append(command)
+        assert "app.relay_expiry_cleaner" in command
+        if failure == "launch":
+            raise OSError("controlled-sensitive-launch-text")
+        return cleaner
+
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0", "--relay-expiry-cleaner"],
+        popen_factory=spawn, sleep_fn=lambda _: None, clock=lambda: 0.0,
+        wait_for_api_fn=lambda *_a, **_kw: pytest.fail("API readiness reached after cleaner failure"),
+        kill_fn=_fake_kill_fn,
+    )
+    assert result == 1 and len(commands) == 1
+    assert commands[0][-2:] == ["--database-url", managed_supervisor.database]
+    assert managed_supervisor.validated == [managed_supervisor.database]
+    assert managed_supervisor.closed == [True]
+    output = capsys.readouterr()
+    assert "controlled-sensitive-launch-text" not in output.out + output.err
+
+
+@pytest.mark.parametrize("outcome", ("failed-api", "cancel-before-api", "cancel-readiness"))
+def test_managed_supervisor_failed_or_cancelled_api_closes_owned_cleaner(managed_supervisor, outcome):
+    context = managed_supervisor
+    cleaner, api = FakePopen(), []
+    commands = []
+
+    def spawn(command, **_kwargs):
+        commands.append(command)
+        if "app.relay_expiry_cleaner" in command:
+            if outcome == "cancel-before-api":
+                context.stop.requested = True
+            return cleaner
+        assert "serve" in command
+        instance = FakePopen()
+        api.append(instance)
+        return instance
+
+    def readiness(*_args, **_kwargs):
+        if outcome == "cancel-readiness":
+            context.stop.requested = True
+        return False
+
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0", "--relay-expiry-cleaner"],
+        popen_factory=spawn, sleep_fn=lambda _: None, clock=lambda: 0.0,
+        wait_for_api_fn=readiness, kill_fn=_fake_kill_fn,
+    )
+    assert result == (1 if outcome == "failed-api" else 0)
+    assert cleaner._terminated
+    assert len(api) == (5 if outcome == "failed-api" else 0 if outcome == "cancel-before-api" else 1)
+    assert all(process._killed for process in api)
+    assert managed_supervisor.closed == [True]
+
+
+@pytest.mark.parametrize("managed", (False, True))
+def test_supervisor_api_restart_preserves_managed_setting_or_clears_inherited_setting(
+    managed_supervisor, monkeypatch, managed,
+):
+    monkeypatch.setenv("PALLIUM_API_RELAY_EXPIRY_DATABASE_URL", "unrelated-inherited-setting")
+    cleaner, api, settings = FakePopen(), [], []
+
+    def spawn(command, **kwargs):
+        if "app.relay_expiry_cleaner" in command:
+            assert managed
+            return cleaner
+        assert "serve" in command
+        settings.append(kwargs["env"].get("PALLIUM_API_RELAY_EXPIRY_DATABASE_URL"))
+        process = FakePopen(poll_returns=[1] if not api else [])
+        api.append(process)
+        return process
+
+    bounded_stop = _counter_stop(4)
+    arguments = ["--processors", "0", "--cleaners", "0"]
+    if managed:
+        arguments.append("--relay-expiry-cleaner")
+    result = run_supervisor(
+        arguments, popen_factory=spawn, sleep_fn=lambda _: None,
+        wait_for_api_fn=lambda *_a, **_kw: True, clock=lambda: 0.0,
+        should_stop=lambda: len(api) >= 2 or bounded_stop(), kill_fn=_fake_kill_fn,
+    )
+    assert result == 0 and len(api) == 2
+    assert settings == [managed_supervisor.database if managed else None] * 2
+    assert managed_supervisor.validated == ([managed_supervisor.database] if managed else [])
+    assert managed_supervisor.closed == ([True] if managed else [])
+    assert api[-1]._terminated
+    if managed:
+        assert cleaner._terminated
+
+
+def test_managed_supervisor_cleaner_restart_budget_shuts_down_owned_group(managed_supervisor):
+    cleaner, api = [], []
+
+    def spawn(command, **_kwargs):
+        if "app.relay_expiry_cleaner" in command:
+            process = FakePopen(poll_returns=[None, 7] if not cleaner else [7])
+            cleaner.append(process)
+            return process
+        assert "serve" in command
+        process = FakePopen()
+        api.append(process)
+        return process
+
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0", "--relay-expiry-cleaner"],
+        popen_factory=spawn, sleep_fn=lambda _: None, clock=lambda: 0.0,
+        wait_for_api_fn=lambda *_a, **_kw: True,
+        should_stop=_counter_stop(_MAX_RAPID_RESTARTS + 2), kill_fn=_fake_kill_fn,
+    )
+    assert result == 7
+    assert len(cleaner) == _MAX_RAPID_RESTARTS + 1
+    assert len(api) == 1 and api[0]._terminated
+    assert managed_supervisor.closed == [True]
+
+
+def test_managed_supervisor_restores_missing_database_pair_before_children(tmp_path, monkeypatch):
+    """Entrypoint/storage integration; only child and readiness/stop seams are fake."""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from app.config import AppConfig
+    from app.snapshot import create_snapshot, resolve_live_db_paths
+    from core.models import SourceItem
+    from storage.sqlite import SQLiteStorageProvider
+
+    main = tmp_path / "main-東京.db"
+    relay = tmp_path / "relay-東京.db"
+    snapshots = tmp_path / "snapshots"
+    snapshots.mkdir()
+    main_url = f"sqlite:///{main.resolve().as_posix()}"
+    relay_url = f"sqlite:///{relay.resolve().as_posix()}"
+    for key, value in {
+        "PALLIUM_STORAGE_BACKEND": "sqlite",
+        "PALLIUM_SQLITE_URL": main_url,
+        "PALLIUM_RELAY_SQLITE_URL": relay_url,
+        "PALLIUM_SNAPSHOT_ENABLED": "true",
+        "PALLIUM_SNAPSHOT_PATH": str(snapshots),
+    }.items():
+        monkeypatch.setenv(key, value)
+    config = AppConfig.from_env()
+    assert config.resolved_relay_sqlite_url == relay_url
+    assert config.snapshot.enabled and config.snapshot.snapshot_path == str(snapshots)
+    live_paths = resolve_live_db_paths(config)
+    source = SourceItem(source_type="test", source_id="snapshot-source", content_type="text",
+                        content="paired recovery 東京", container_ref="snapshot-container")
+    storage = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    try:
+        storage.create_source_item(source)
+        session = storage.relay_turn(
+            runtime="codex", session_ref="snapshot-session", container_ref="snapshot-container",
+            title="paired recovery 東京", max_chars=1000, max_messages=1, lease_seconds=60,
+        )["session"]
+        manifest = create_snapshot(live_paths, snapshots, pages_per_step=-1, sleep_between=0)
+        assert manifest is not None and manifest.is_file()
+    finally:
+        storage.close()
+    generation = _json.loads(manifest.read_text(encoding="utf-8"))["generation"]
+    snapshot_bytes = {
+        role: (snapshots / f"pallium-{generation}-{role}.db").read_bytes()
+        for role in live_paths
+    }
+    for path in (main, relay):
+        path.unlink()
+        Path(f"{path}-wal").unlink(missing_ok=True)
+        Path(f"{path}-shm").unlink(missing_ok=True)
+    assert not main.exists() and not relay.exists()
+
+    stop = SimpleNamespace(requested=False)
+    _use_stop(monkeypatch, stop)
+    commands, processes, settings = [], [], []
+
+    def spawn(command, **kwargs):
+        if not commands:
+            # Both files must already be the real restored pair before ANY child.
+            for role, path in live_paths.items():
+                assert Path(path).is_file()
+                assert Path(path).read_bytes() == snapshot_bytes[role]
+        commands.append(command)
+        if "serve" in command:
+            settings.append(kwargs["env"].get("PALLIUM_API_RELAY_EXPIRY_DATABASE_URL"))
+        process = FakePopen()
+        processes.append(process)
+        return process
+
+    def ready_then_stop(*_args, **_kwargs):
+        stop.requested = True
+        return True
+
+    # Do not substitute restore_snapshot, maintenance open/close, or schema validation.
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0", "--relay-expiry-cleaner"],
+        popen_factory=spawn, wait_for_api_fn=ready_then_stop,
+        should_stop=lambda: True, kill_fn=_fake_kill_fn,
+        sleep_fn=lambda _: pytest.fail("successful startup must not retry or poll"),
+    )
+    assert result == 0
+    assert len(commands) == 2
+    assert commands[0][1:] == ["-m", "app.relay_expiry_cleaner", "--database-url", relay_url]
+    assert commands[1][1:4] == ["-m", "app.run", "serve"]
+    assert settings == [relay_url]
+    assert stop.requested and all(process._terminated for process in processes)
+
+    # Read Relay before the regular provider can initialize either restored schema.
+    maintenance = SQLiteStorageProvider.open_relay_maintenance(relay_url)
+    try:
+        assert maintenance.relay_session_scope_by_endpoint(session["endpoint_id"]) == {
+            "runtime": "codex", "session_ref": "snapshot-session",
+            "container_ref": "snapshot-container",
+        }
+    finally:
+        maintenance.close()
+    restored = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    try:
+        item = restored.get_source_item(source.id)
+        assert (item.id, item.source_id, item.content, item.container_ref) == (
+            source.id, source.source_id, source.content, source.container_ref,
+        )
+    finally:
+        restored.close()
+
+
+@pytest.mark.parametrize("failure", (
+    "empty-snapshot-directory",
+    "partial-live-pair",
+    "corrupt-committed-snapshot",
+    "incomplete-committed-pair",
+    "pair-without-manifest",
+    "relay-schema-invalid-snapshot",
+))
+def test_managed_supervisor_recovery_refuses_invalid_pairs_before_children(
+    tmp_path, monkeypatch, capsys, failure,
+):
+    """Caller-entrypoint/storage negatives, not subprocess or native-host E2E."""
+    import sqlite3
+    from pathlib import Path
+
+    from app.config import AppConfig
+    from app.snapshot import create_snapshot, resolve_live_db_paths
+    from core.models import SourceItem
+    from storage.sqlite import SQLiteStorageProvider
+
+    main, relay = tmp_path / "main-東京.db", tmp_path / "relay-東京.db"
+    snapshots = tmp_path / "snapshots"
+    snapshots.mkdir()
+    main_url = f"sqlite:///{main.resolve().as_posix()}"
+    relay_url = f"sqlite:///{relay.resolve().as_posix()}"
+    for key, value in {
+        "PALLIUM_STORAGE_BACKEND": "sqlite",
+        "PALLIUM_SQLITE_URL": main_url,
+        "PALLIUM_RELAY_SQLITE_URL": relay_url,
+        "PALLIUM_SNAPSHOT_ENABLED": "true",
+        "PALLIUM_SNAPSHOT_PATH": str(snapshots),
+    }.items():
+        monkeypatch.setenv(key, value)
+    config = AppConfig.from_env()
+    assert config.resolved_relay_sqlite_url == relay_url
+    assert config.snapshot.enabled and config.snapshot.snapshot_path == str(snapshots)
+    live_paths = resolve_live_db_paths(config)
+    storage = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    try:
+        storage.create_source_item(SourceItem(
+            source_type="test", source_id="recovery-source", content_type="text",
+            content="paired refusal 東京", container_ref="recovery-container",
+        ))
+        storage.relay_turn(
+            runtime="codex", session_ref="recovery-session", container_ref="recovery-container",
+            title="paired refusal 東京", max_chars=1000, max_messages=1, lease_seconds=60,
+        )
+    finally:
+        storage.close()
+
+    if failure == "relay-schema-invalid-snapshot":
+        # Replace only our closed Relay file, before the native snapshot backup.
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{relay}{suffix}").unlink(missing_ok=True)
+        connection = sqlite3.connect(str(relay))
+        try:
+            connection.execute("CREATE TABLE unrelated (value TEXT)")
+            connection.commit()
+            assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)
+            assert connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall() == [
+                ("unrelated",),
+            ]
+        finally:
+            connection.close()
+
+    if failure != "empty-snapshot-directory":
+        manifest = create_snapshot(live_paths, snapshots, pages_per_step=-1, sleep_between=0)
+        assert manifest is not None and manifest.is_file()
+        generation = _json.loads(manifest.read_text(encoding="utf-8"))["generation"]
+        pair = {role: snapshots / f"pallium-{generation}-{role}.db" for role in live_paths}
+        assert all(path.is_file() for path in pair.values())
+        if failure == "corrupt-committed-snapshot":
+            pair["relay"].write_bytes(b"not a SQLite database")
+        elif failure == "incomplete-committed-pair":
+            pair["relay"].unlink()
+        elif failure == "pair-without-manifest":
+            manifest.unlink()
+    snapshot_bytes = {path.name: path.read_bytes() for path in snapshots.iterdir()}
+    main_before = main.read_bytes()
+    for path in (main, relay):
+        if failure == "partial-live-pair" and path == main:
+            continue
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{path}{suffix}").unlink(missing_ok=True)
+    assert main.exists() == (failure == "partial-live-pair")
+    assert not relay.exists()
+
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0", "--relay-expiry-cleaner"],
+        popen_factory=lambda *_a, **_kw: pytest.fail("child launch reached after invalid recovery"),
+        wait_for_api_fn=lambda *_a, **_kw: pytest.fail("readiness reached after invalid recovery"),
+        sleep_fn=lambda _: pytest.fail("invalid recovery must not retry or poll"),
+        kill_fn=lambda *_a, **_kw: pytest.fail("invalid recovery must own no child"),
+    )
+    assert result == 1
+    output = capsys.readouterr()
+    if failure == "partial-live-pair":
+        assert "snapshot restore failed: partial live database pair; refusing snapshot restore" in output.err
+        assert main.read_bytes() == main_before
+        assert not relay.exists()
+    elif failure == "relay-schema-invalid-snapshot":
+        assert "managed Relay expiry validation failed error_type=RuntimeError" in output.err
+        for role, path in live_paths.items():
+            assert Path(path).read_bytes() == snapshot_bytes[pair[role].name]
+    else:
+        assert "managed Relay expiry validation failed error_type=ValueError" in output.err
+        assert not main.exists() and not relay.exists()
+    # No initialization, migration, partial publication or leftover restore staging.
+    for path in (main, relay):
+        for suffix in ("-wal", "-shm", ".restore.tmp"):
+            assert not Path(f"{path}{suffix}").exists()
+    assert {path.name: path.read_bytes() for path in snapshots.iterdir()} == snapshot_bytes

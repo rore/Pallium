@@ -97,9 +97,17 @@ def test_client_close_rotation_serializes_workers_and_closes_handlers(monkeypatc
     paths = sorted((tmp_path / "logs").glob("*"))
     assert len(paths) == 2 and all(0 < path.stat().st_size <= 4096 for path in paths)
     assert len(closed) == 116
+    diagnostic_suffix = (
+        "unresolved=False ready_call=unknown read_precheck_budget_ms=unknown "
+        "read_was_pending=unknown read_settled=unknown "
+        "request_epoch=unknown request_sequence=unknown request_verb=unknown"
+    )
     for path in paths:
         lines = path.read_text(encoding="utf-8").splitlines()
-        assert lines and all("reason=cleanup own_pid=" in line and line.endswith("unresolved=False") for line in lines)
+        assert lines and all(
+            "reason=cleanup own_pid=" in line and line.endswith(diagnostic_suffix)
+            for line in lines
+        )
 
 
 @pytest.mark.parametrize("failure", ["clean", "getter", "dispose"])

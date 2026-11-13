@@ -67,8 +67,20 @@ def main() -> None:
         if source == "clear":
             sys.exit(0)
 
-        cwd = payload.get("cwd", ".")
         session_id = payload.get("session_id")
+        if source == "compact":
+            container_ref = _common.get_pinned_container(session_id)
+            if container_ref:
+                output = format_injection(
+                    [], container_ref, budget_chars=1200,
+                    thread_ref=session_id, agent_ref=_common.AGENT_REF,
+                    visibility="private",
+                )
+                if output:
+                    emit_context(output, "SessionStart")
+            sys.exit(0)
+
+        cwd = payload.get("cwd", ".")
         container_ref = derive_container_ref(cwd)
         pin_container(session_id, container_ref, source=source)
         actor_ref = derive_actor_ref(cwd, session_id)

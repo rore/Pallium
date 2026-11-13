@@ -3,14 +3,17 @@ from __future__ import annotations
 import argparse
 import os
 import socket
+import sqlite3
 import time
 from collections.abc import Callable
+
+from sqlalchemy.exc import OperationalError as SAOperationalError
 
 from app.config import AppConfig
 from app.dependencies import build_service, build_storage_provider
 from app.runtime_logging import emit_runtime_log
 from app.signal_context import graceful_stop
-from core.errors import is_transient_error
+from core.errors import ImmediateTransactionBusyError, is_transient_error
 from core.contracts import ItemProcessingResult
 from storage.base import ThreadProcessingLease
 from storage.metrics import MetricsStore
@@ -37,6 +40,31 @@ def build_parser() -> argparse.ArgumentParser:
 
 def default_worker_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
+
+
+def _transient_warning_fields(error):
+    stage = native_family = "unknown"
+    try:
+        if isinstance(error, ImmediateTransactionBusyError):
+            value = error.acquisition_stage
+            if type(value) is str and value in ImmediateTransactionBusyError.ACQUISITION_STAGES:
+                stage = value
+    except Exception:
+        pass
+    try:
+        native = error.__cause__ if isinstance(error, ImmediateTransactionBusyError) else error
+        if isinstance(native, SAOperationalError):
+            native = native.orig
+        if isinstance(native, sqlite3.Error):
+            code = getattr(native, "sqlite_errorcode", None)
+            if type(code) is int and 0 <= code <= 65535:
+                native_family = {
+                    sqlite3.SQLITE_BUSY: "busy", sqlite3.SQLITE_LOCKED: "locked",
+                    sqlite3.SQLITE_IOERR: "ioerr", sqlite3.SQLITE_CANTOPEN: "cantopen",
+                }.get(code & 255, "unknown")
+    except Exception:
+        pass
+    return stage, native_family
 
 
 def run_worker(
@@ -92,20 +120,25 @@ def run_worker(
                 if _stopping():
                     return 0
                 try:
+                    operation_family = "source_processing"
                     result = process_next_item(
                         worker_id=worker_id,
                         lease_seconds=parsed.lease_seconds,
                         max_attempts=parsed.max_attempts,
                     )
                     if result is not None:
+                        consecutive_transient_errors = 0
                         _log_result(worker_id, result)
                         if parsed.once or _stopping():
                             return 0
                         if clock() - last_rebuild_check >= MAX_REBUILD_WAIT_SECONDS:
+                            operation_family = "thread_rebuild"
                             _try_thread_rebuild()
                             last_rebuild_check = clock()
                         continue
+                    operation_family = "thread_rebuild"
                     if _try_thread_rebuild():
+                        consecutive_transient_errors = 0
                         last_rebuild_check = clock()
                         if parsed.once or _stopping():
                             return 0
@@ -118,10 +151,13 @@ def run_worker(
                         _TRANSIENT_BACKOFF_MAX,
                         _TRANSIENT_BACKOFF_BASE * (2 ** (consecutive_transient_errors - 1)),
                     )
+                    acquisition_stage, native_family = _transient_warning_fields(exc)
                     emit_runtime_log(
                         "processor",
-                        f"worker_id={worker_id} transient_error={exc} "
-                        f"consecutive={consecutive_transient_errors} backoff={backoff:.1f}s",
+                        f"worker_id={worker_id} transient_error=retryable "
+                        f"consecutive={consecutive_transient_errors} backoff={backoff:.1f}s "
+                        f"operation_family={operation_family} acquisition_stage={acquisition_stage} "
+                        f"native_sqlite_code_family={native_family}",
                         stderr=True,
                     )
                     if consecutive_transient_errors >= _TRANSIENT_MAX_CONSECUTIVE:

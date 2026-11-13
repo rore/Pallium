@@ -32,7 +32,95 @@ class _QuietCloseHandler(RotatingFileHandler):
         pass
 
 
-def _client_close_diagnostic(reason, identity, unresolved):
+def _ready_failure_call(exc):
+    try:
+        from app.codex_bridge_pipe import NativeInventoryClient, ShadowUnavailable, _PipeIO
+
+        if not isinstance(exc, ShadowUnavailable) or exc.category not in {"deadline", "transport-failed"}:
+            return "unknown"
+        trace = exc.__traceback__
+        exchanges = 0
+        calls = []
+        for _ in range(32):
+            if trace is None:
+                return calls[0] if exchanges == 1 and len(calls) == 1 else "unknown"
+            code = trace.tb_frame.f_code
+            if code is NativeInventoryClient._exchange.__code__:
+                if trace.tb_frame.f_locals.get("verb") != "ready":
+                    return "unknown"
+                exchanges += 1
+                child = trace.tb_next
+                code = child.tb_frame.f_code if child is not None else None
+                if code not in {_PipeIO.write.__code__, _PipeIO.read.__code__}:
+                    return "unknown"
+                calls.append("write" if code is _PipeIO.write.__code__ else "read")
+            trace = trace.tb_next
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _ready_read_state(exc):
+    """Budget after event setup; completion means settled after cancellation."""
+    unknown = ("unknown", "unknown", "unknown")
+    try:
+        if _ready_failure_call(exc) != "read":
+            return unknown
+        from app.codex_bridge_pipe import _PipeIO
+
+        trace, reads, state = exc.__traceback__, 0, unknown
+        for _ in range(32):
+            if trace is None:
+                return state if reads == 1 else unknown
+            if trace.tb_frame.f_code is _PipeIO.read.__code__:
+                child = trace.tb_next
+                if child is None or child.tb_frame.f_code is not _PipeIO._operation.__code__:
+                    return unknown
+                reads += 1
+                values = child.tb_frame.f_locals
+                entered, deadline = values.get("entered_at"), values.get("deadline")
+                remaining = "unknown"
+                if (type(entered) in (int, float) and type(deadline) in (int, float)
+                        and -60 <= deadline - entered <= 3):
+                    remaining = int((deadline - entered) * 1000)
+                pending, completed = values.get("pending"), values.get("completed")
+                state = (remaining, pending if type(pending) is bool else "unknown",
+                         completed if type(completed) is bool else "unknown")
+            trace = trace.tb_next
+    except Exception:
+        pass
+    return unknown
+
+
+def _ready_failure_request(exc):
+    unknown = ("unknown", "unknown", "unknown")
+    try:
+        if _ready_failure_call(exc) not in {"read", "write"}:
+            return unknown
+        from app.codex_bridge_pipe import NativeInventoryClient, _integer
+
+        trace, requests = exc.__traceback__, []
+        for _ in range(32):
+            if trace is None:
+                return requests[0] if len(requests) == 1 else unknown
+            if trace.tb_frame.f_code is NativeInventoryClient._exchange.__code__:
+                values = trace.tb_frame.f_locals
+                client = values.get("self")
+                manifest, sequence = client.manifest, client.sequence
+                if type(manifest) is not dict or len(manifest) > 5 or values.get("verb") != "ready":
+                    return unknown
+                epoch = manifest.get("epoch")
+                if (type(epoch) is not str or len(epoch) != 32
+                        or re.fullmatch(r"[0-9a-f]{32}", epoch) is None or not _integer(sequence, 1)):
+                    return unknown
+                requests.append((epoch, sequence, "ready"))
+            trace = trace.tb_next
+    except BaseException:
+        pass
+    return unknown
+
+
+def _client_close_diagnostic(reason, identity, unresolved, ready_call="unknown", read_state=None, request=None):
     try:
         from app.runtime_logging import RuntimeLogFormatter
 
@@ -45,9 +133,26 @@ def _client_close_diagnostic(reason, identity, unresolved):
                 and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:[+-][0-9]{2}:[0-9]{2})?", value)):
             creation = value
         unresolved = unresolved if type(unresolved) is bool else "unknown"
+        if type(ready_call) is not str or ready_call not in {"write", "read", "unknown"}:
+            ready_call = "unknown"
+        budget, pending, settled = read_state if type(read_state) is tuple and len(read_state) == 3 else ("unknown",) * 3
+        if type(budget) is not int or not -60000 <= budget <= 3000:
+            budget = "unknown"
+        pending = pending if type(pending) is bool else "unknown"
+        settled = settled if type(settled) is bool else "unknown"
+        request_fields = ("unknown", "unknown", "unknown")
+        try:
+            if type(request) is tuple and len(request) == 3:
+                epoch, sequence, verb = request
+                if (type(epoch) is str and len(epoch) == 32 and re.fullmatch(r"[0-9a-f]{32}", epoch)
+                        and type(sequence) is int and 1 <= sequence <= 2**31 - 1
+                        and type(verb) is str and verb == "ready"):
+                    request_fields = epoch, sequence, verb
+        except BaseException:
+            pass
         record = logging.LogRecord("pallium.codex.close", logging.WARNING, "", 0,
-            "reason=%s own_pid=%s native_creation=%s unresolved=%s",
-            (reason, own_pid, creation, unresolved), None)
+            "reason=%s own_pid=%s native_creation=%s unresolved=%s ready_call=%s read_precheck_budget_ms=%s read_was_pending=%s read_settled=%s request_epoch=%s request_sequence=%s request_verb=%s",
+            (reason, own_pid, creation, unresolved, ready_call, budget, pending, settled, *request_fields), None)
         with _close_log_lock:
             home = os.environ.get("PALLIUM_HOME")
             directory = (Path(home).expanduser().resolve() if home else Path.home() / ".pallium") / "logs"
@@ -305,7 +410,7 @@ class InventoryWorker:
     def _valid_continuity(value):
         return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
-    def _finish(self, client, *, retire=False, reason="cleanup"):
+    def _finish(self, client, *, retire=False, reason="cleanup", ready_call="unknown", read_state=None, request=None):
         identity = (None, None)
         try:
             identity = (client.source.pid, client.source.creation)
@@ -322,7 +427,7 @@ class InventoryWorker:
             unresolved = unresolved or bool(getattr(client, "unresolved", False))
         self._restart_allowed = restart_allowed and not unresolved
         if self._retained and client is not None:
-            _client_close_diagnostic(reason, identity, unresolved)
+            _client_close_diagnostic(reason, identity, unresolved, ready_call, read_state, request)
 
     def _recover_if_gone(self, client, native_type, original_pipe, metadata, continuity,
                          *, allow_ready_retirement=False, ready_retirement_context="idle"):
@@ -354,7 +459,9 @@ class InventoryWorker:
                     previous_manifest = dict(manifest)
                     self._finish(client, retire=True, reason=(
                         f"{ready_retirement_context}-ready-deadline" if exc.category == "deadline"
-                        else f"{ready_retirement_context}-ready-transport"))
+                        else f"{ready_retirement_context}-ready-transport"),
+                        ready_call=_ready_failure_call(exc), read_state=_ready_read_state(exc),
+                        request=_ready_failure_request(exc))
                     exit_witness = getattr(client, "retired_service_exited", None)
                     owner_exited = callable(exit_witness) and exit_witness() is True
                     if (not self._restart_allowed or self.stop_event.is_set()

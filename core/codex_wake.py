@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from contextvars import ContextVar
 import json
 import logging
 import math
@@ -12,7 +13,7 @@ import threading
 import time
 from typing import Callable, TypeVar
 
-from core.errors import ImmediateTransactionBusyError
+from core.errors import ImmediateTransactionBusyError, _relay_writer_context, _relay_writer_observation
 
 MAX_RESERVATIONS = 256
 WAKE_RETRY_COOLDOWN_SECONDS = 60
@@ -22,6 +23,7 @@ MAX_LEGACY_JSON_CHARACTERS = 4 * 1024 * 1024
 _ENDPOINT_RE = re.compile(r"^relay-session-[0-9a-f]{32}$")
 _T = TypeVar("_T")
 logger = logging.getLogger(__name__)
+_relay_snapshot_timings = ContextVar("relay_snapshot_timings", default=None)
 
 
 def retry_cooldown_elapsed(retry_not_before: float | None, now: float) -> bool:
@@ -114,7 +116,8 @@ class CodexWakeRegistry:
             if not self._usable:
                 return False
             try:
-                self._relay.codex_wake_initialize(tuple(self._reservations.values()))
+                with _relay_writer_context("initialize"):
+                    self._relay.codex_wake_initialize(tuple(self._reservations.values()))
             except Exception as exc:
                 logger.warning("codex_wake_initialization_failed error_type=%s", type(exc).__name__)
             self._refresh()
@@ -122,13 +125,76 @@ class CodexWakeRegistry:
 
     def _transition(self, operation: str, **kwargs):
         try:
-            return self._relay.codex_wake_transition(operation, **kwargs)
+            with _relay_writer_context(operation):
+                return self._relay.codex_wake_transition(operation, **kwargs)
         except Exception as exc:
-            stage = getattr(exc, "acquisition_stage", None) if isinstance(exc, ImmediateTransactionBusyError) else None
-            if type(stage) is not str or stage not in ImmediateTransactionBusyError.ACQUISITION_STAGES:
-                stage = "unknown"
-            logger.warning("codex_wake_transition_failed operation=%s error_type=%s acquisition_stage=%s",
-                           operation, type(exc).__name__, stage)
+            stage, phase_ms = "unknown", "unknown"
+            if isinstance(exc, ImmediateTransactionBusyError):
+                try:
+                    value = exc.acquisition_stage
+                    if type(value) is str and value in ImmediateTransactionBusyError.ACQUISITION_STAGES:
+                        stage = value
+                except BaseException:
+                    pass
+                try:
+                    values = exc.acquisition_phase_ms
+                    if type(values) is dict and 0 < len(values) <= 4:
+                        values = values.copy()
+                        allowed = {"session_factory", "session_connection", "setup_pragma", "begin_immediate"}
+                        if (0 < len(values) <= 4 and all(
+                                type(key) is str and key in allowed and type(value) is int
+                                and 0 <= value <= 60_000 for key, value in values.items())):
+                            phase_ms = {key: values[key] for key in sorted(values)}
+                except BaseException:
+                    pass
+            delivery_ref, endpoint_id, generation = "unknown", "unknown", "unknown"
+            try:
+                shapes = {
+                    "reserve": {"values"}, "reconcile": {"reservation"},
+                    "outcome": {"reservation", "outcome"},
+                    "begin_native_attempt": {"reservation"},
+                    "replace": {"reservation", "values"}, "retry": {"reservation", "target"},
+                    "retry_target": {"reservation"},
+                    "correlate": {"delivery_id", "recipient_endpoint_id", "session_ref",
+                                  "container_ref", "attempts", "expected_generation"},
+                    "release_delivery": {"delivery_id"},
+                }
+                delivery, endpoint, proposed_generation = None, None, None
+                if kwargs.keys() == shapes.get(operation):
+                    reservation = kwargs.get("reservation")
+                    if type(reservation) is CodexWakeReservation:
+                        delivery, endpoint, proposed_generation = (
+                            reservation.delivery_id, reservation.recipient_endpoint_id, reservation.generation,
+                        )
+                    elif operation == "reserve":
+                        values = kwargs["values"]
+                        if type(values) is dict and values.keys() == {
+                                "delivery_id", "recipient_endpoint_id", "session_ref", "container_ref"}:
+                            delivery, endpoint = values["delivery_id"], values["recipient_endpoint_id"]
+                    elif operation == "correlate":
+                        delivery, endpoint, proposed_generation = (
+                            kwargs["delivery_id"], kwargs["recipient_endpoint_id"], kwargs["expected_generation"],
+                        )
+                    elif operation == "release_delivery":
+                        delivery = kwargs["delivery_id"]
+                if (type(delivery) is str and len(delivery) == 47
+                        and re.fullmatch(r"relay-delivery-[0-9a-f]{32}", delivery)):
+                    delivery_ref = delivery
+                if type(endpoint) is str and len(endpoint) == 46 and _ENDPOINT_RE.fullmatch(endpoint):
+                    endpoint_id = endpoint
+                if type(proposed_generation) is int and 1 <= proposed_generation < 2**63:
+                    generation = proposed_generation
+            except BaseException:
+                pass
+            try:
+                logger.warning(
+                    "codex_wake_transition_failed operation=%s error_type=%s acquisition_stage=%s observed_relay_writer=%s "
+                    "acquisition_phase_ms=%s delivery_ref=%s recipient_endpoint_id=%s generation=%s",
+                    operation, type(exc).__name__, stage, _relay_writer_observation(exc),
+                    phase_ms, delivery_ref, endpoint_id, generation,
+                )
+            except BaseException:
+                pass
             # A commit/return error can be ambiguous. Never launch from its
             # return value; the next operation reads the durable authority.
             return None

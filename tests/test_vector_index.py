@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -78,10 +79,13 @@ class FakeIndex:
             distances=[r[1] for r in results],
         )
 
-    def save(self, path: str) -> None:
+    def save(self, path: str | None = None) -> bytearray | None:
         # Write a marker so load can detect the file; convert numpy arrays to lists for JSON
         vecs = {str(k): (v.tolist() if hasattr(v, "tolist") else v) for k, v in self._vectors.items()}
-        Path(path).write_text(json.dumps({"vectors": vecs}), encoding="utf-8")
+        data = bytearray(json.dumps({"vectors": vecs}).encode("utf-8"))
+        if path is None:
+            return data
+        Path(path).write_bytes(data)
 
     def load(self, path: str) -> None:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -404,3 +408,156 @@ def test_search_results_sorted_by_similarity_descending(mock_usearch, tmp_path: 
     similarities = [r[1] for r in results]
     assert similarities == sorted(similarities, reverse=True)
     assert results[0][0] == "exact"
+
+
+def test_save_uses_native_buffer_without_copy_and_publishes_metadata_last(mock_usearch, tmp_path, monkeypatch):
+    import storage.vector_index as module
+    index = module.VectorIndex(tmp_path / "snapshot.index", 2, "generic")
+    index.add("שלום-α", [1., 0.])
+    serialize, write, replace = index._index.save, Path.write_bytes, module._replace_with_retry
+    buffers, published = [], []
+    def buffered():
+        value = serialize()
+        buffers.append(value)
+        return value
+    def writing(path, value):
+        assert value is buffers[-1] and isinstance(value, bytearray)
+        return write(path, value)
+    def replacing(source, target):
+        published.append(Path(target).name)
+        return replace(source, target)
+    monkeypatch.setattr(index._index, "save", buffered)
+    monkeypatch.setattr(Path, "write_bytes", writing)
+    monkeypatch.setattr(module, "_replace_with_retry", replacing)
+    index.save()
+    assert len(buffers) == 1
+    assert published == ["snapshot.index", "snapshot.index.idmap.json", "snapshot.index.meta.json"]
+    assert module.VectorIndex.load(index._index_path).search([1., 0.], 1)[0][0] == "שלום-α"
+
+
+@pytest.mark.parametrize("stage", ["serialize", "binary-write", "binary-replace", "idmap-write", "idmap-replace", "meta-write", "meta-replace"])
+def test_save_failure_preserves_cleanup_metadata_and_releases_mutation_lock(mock_usearch, tmp_path, monkeypatch, stage):
+    import storage.vector_index as module
+    index = module.VectorIndex.create_empty(tmp_path / "snapshot.index", 2, "generic")
+    index.add("old", [1., 0.])
+    index.save()
+    binary_before = index._index_path.read_bytes()
+    meta_path = Path(str(index._index_path) + ".meta.json")
+    meta_before = meta_path.read_bytes()
+    index.add("new", [0., 1.])
+    original = OSError("controlled persistence failure")
+    write_bytes, write_text, replace = Path.write_bytes, Path.write_text, module._replace_with_retry
+    def fail_serialize():
+        raise original
+    def failing_bytes(path, value):
+        write_bytes(path, value[:4])
+        raise original
+    def failing_text(path, value, *args, **kwargs):
+        if (stage == "idmap-write" and ".idmap." in path.name
+                or stage == "meta-write" and ".meta." in path.name):
+            write_text(path, value[:4], *args, **kwargs)
+            raise original
+        return write_text(path, value, *args, **kwargs)
+    def failing_replace(source, target):
+        if (stage == "binary-replace" and Path(target) == index._index_path
+                or stage == "idmap-replace" and str(target).endswith(".idmap.json")
+                or stage == "meta-replace" and str(target).endswith(".meta.json")):
+            raise original
+        return replace(source, target)
+    with monkeypatch.context() as patcher:
+        if stage == "serialize":
+            patcher.setattr(index._index, "save", fail_serialize)
+        if stage == "binary-write":
+            patcher.setattr(Path, "write_bytes", failing_bytes)
+        patcher.setattr(Path, "write_text", failing_text)
+        patcher.setattr(module, "_replace_with_retry", failing_replace)
+        with pytest.raises(OSError) as caught:
+            index.save()
+        assert caught.value is original
+    assert meta_path.read_bytes() == meta_before
+    if stage in {"serialize", "binary-write", "binary-replace"}:
+        assert index._index_path.read_bytes() == binary_before
+    assert list(tmp_path.glob("*.tmp")) == []
+    errors = []
+    def retry_from_another_thread():
+        try:
+            index.add("new", [0., 1.])  # Reentrant add-to-remove after failed save.
+            index.save()
+        except BaseException as exc:
+            errors.append(exc)
+    worker = threading.Thread(target=retry_from_another_thread, daemon=True)
+    worker.start(); worker.join(3)
+    assert not worker.is_alive() and not errors
+    loaded = module.VectorIndex.load(index._index_path)
+    assert loaded.entry_count() == 2 and loaded.search([0., 1.], 1)[0][0] == "new"
+
+
+@pytest.mark.parametrize("operation", ["add", "remove", "save"])
+def test_slow_binary_write_serializes_mutations_and_saves_but_not_search(mock_usearch, tmp_path, monkeypatch, operation):
+    from storage.vector_index import VectorIndex
+    index = VectorIndex.create_empty(tmp_path / "snapshot.index", 2, "generic")
+    index.add("old", [1., 0.])
+    index.save()
+    entered, release, attempted, done = (threading.Event() for _ in range(4))
+    write = Path.write_bytes
+    calls, errors = [], []
+    def slow_write(path, value):
+        calls.append(path)
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(5)
+        return write(path, value)
+    monkeypatch.setattr(Path, "write_bytes", slow_write)
+    def first_save():
+        try:
+            index.save()
+        except BaseException as exc:
+            errors.append(exc)
+    def overlap():
+        attempted.set()
+        try:
+            if operation == "add":
+                index.add("old", [0., 1.])
+            elif operation == "remove":
+                index.remove("old")
+            else:
+                index.save()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            done.set()
+    saver = threading.Thread(target=first_save, daemon=True)
+    worker = threading.Thread(target=overlap, daemon=True)
+    try:
+        saver.start()
+        assert entered.wait(3)
+        worker.start()
+        assert attempted.wait(3) and not done.wait(.05)
+        assert index.search([1., 0.], 1)[0][0] == "old"
+    finally:
+        release.set()
+        saver.join(3)
+        if worker.ident is not None:
+            worker.join(3)
+    assert not saver.is_alive() and not worker.is_alive() and not errors
+    index.save()
+    loaded = VectorIndex.load(index._index_path)
+    if operation == "remove":
+        assert loaded.entry_count() == 0
+    else:
+        assert loaded.entry_count() == 1
+        assert loaded.search([0., 1.] if operation == "add" else [1., 0.], 1)[0][1] == pytest.approx(1.)
+
+
+@pytest.mark.parametrize("populated", [False, True])
+def test_buffer_saved_native_index_round_trip(populated, tmp_path):
+    from storage.vector_index import VectorIndex
+    index = VectorIndex.create_empty(tmp_path / "native.index", 2, "generic")
+    if populated:
+        index.add("é-שלום", [1., 0.])
+        index.add("removed", [0., 1.])
+        index.remove("removed")
+    index.save()
+    loaded = VectorIndex.load(index._index_path)
+    assert loaded.entry_count() == int(populated)
+    assert (loaded.search([1., 0.], 1)[0][0] if populated else loaded.search([1., 0.], 1)) == ("é-שלום" if populated else [])

@@ -1403,7 +1403,7 @@ def test_codex_hook_reconciliation_preserves_mixed_peer_wrappers_and_matchers(
         if setup_codex._managed_hook_script(hook) == "session_start.py"
     ]
     assert len(managed) == 1
-    assert entries[-1]["matcher"] == "startup|resume"
+    assert entries[-1]["matcher"] == "startup|resume|compact"
 
 
 def test_codex_setup_refuses_accidental_live_checkout_replacement(

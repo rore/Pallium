@@ -188,9 +188,12 @@ async def test_registered_expiry_schema_is_optional_nullable_bounded_integer(too
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tool", ["pallium_relay_send", "pallium_relay_reply"])
 @pytest.mark.parametrize("expiry", ["omitted", None, 60, 604800])
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 async def test_registered_expiry_presence_reaches_http_and_public_status(
-    monkeypatch, asgi_post, asgi_get, tool, expiry,
+    monkeypatch, asgi_post, asgi_get, tool, expiry, relay_app, relay_admission_clock,
 ):
+    from storage import sqlite_queue
+
     recorded = []
 
     async def post(_client, path, payload, **kwargs):
@@ -198,8 +201,13 @@ async def test_registered_expiry_presence_reaches_http_and_public_status(
         return await asgi_post(path, payload)
 
     monkeypatch.setattr(PalliumMcpClient, "_post_or_error", post)
-    await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "expiry-sender", **_SCOPE})
-    await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+    storage = relay_app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
+    with relay_admission_clock(storage, expected_admissions=2):
+        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "expiry-sender", **_SCOPE})
+        await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
     arguments = {"message": "תשובה → 你好"}
     if tool == "pallium_relay_send":
         arguments.update(recipient=f"{_RUNTIME}:{_SESSION}", sender_runtime="codex", sender_session_ref="expiry-sender")

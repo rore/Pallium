@@ -769,7 +769,10 @@ def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
         message, observed_at = records[0].message.split(" observed_at=")
         assert message == "codex_retained_source_channel_closed category=transport-failed unresolved=True stopping=False"
         observed_at, identity = observed_at.split(" source_pid=")
+        identity, separator, diagnostics = identity.partition(" source_call=")
         assert identity == "42 source_creation=unknown source_state=unknown close_cause=unknown"
+        assert separator == " source_call=" and diagnostics
+        assert " service_stage=" in diagnostics and " io_settled=" in diagnostics
         assert bridge.datetime.fromisoformat(observed_at).utcoffset().total_seconds() == 0
         assert records[0].exc_info is None
         assert records[0].created > 0
@@ -1699,7 +1702,11 @@ def test_malformed_descriptor_release_busy_recovers_without_owner_replay(
     release_warnings = [record.message for record in caplog.records if record.name == "core.codex_wake"
                         and record.message.startswith("codex_wake_transition_failed operation=release error_type=ImmediateTransactionBusyError")]
     assert len(release_warnings) == 1
-    assert release_warnings[0].rpartition("acquisition_stage=")[2] in ImmediateTransactionBusyError.ACQUISITION_STAGES
+    stage_and_diagnostics = release_warnings[0].rpartition("acquisition_stage=")[2]
+    stage, separator, diagnostics = stage_and_diagnostics.partition(" observed_relay_writer=")
+    assert stage in ImmediateTransactionBusyError.ACQUISITION_STAGES
+    assert separator == " observed_relay_writer="
+    assert diagnostics.startswith("unknown acquisition_phase_ms=")
 
 @pytest.mark.parametrize("fault", ["lost", "malformed", "native-error", None])
 def test_write_is_fenced_across_concurrency_recovery_restart(http_wake, fault):

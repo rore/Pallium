@@ -1,19 +1,26 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import logging
+import os
 import sqlite3
 import time
 from time import monotonic_ns as _acquisition_monotonic_ns
+from time import monotonic_ns as _relay_writer_monotonic_ns
+from time import thread_time_ns as _relay_writer_thread_ns
+from itertools import count
+from time import monotonic_ns as _diagnostic_monotonic_ns, time_ns as _diagnostic_wall_ns
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 
-from sqlalchemy import func, select, text
+from sqlalchemy import event, func, select, text
 from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session
 
 from core.contracts import ProcessResult, PromotionHint, SupersessionHint
-from core.errors import ImmediateTransactionBusyError, is_transient_error
+from core.errors import ImmediateTransactionBusyError, is_transient_error, _relay_writer_operation_name, _relay_turn_body_view, _RELAY_TURN_SITES, _RELAY_EXPIRY_SITES, _relay_owner_detail_view, _relay_request_writer_view, _RELAY_OPENCODE_SITES, _relay_opencode_verb
 from core.visibility import visibility_matches_exact
 from core.models import new_id, utc_now
 from core.observability import OBSERVABILITY_METADATA_KEY
@@ -88,6 +95,13 @@ _CONTAINER_SCOPED_SIMILARITY_THRESHOLD = 0.85
 _MERGE_HISTORY_KEEP_LAST = 16
 
 
+logger = logging.getLogger(__name__)
+_relay_writer_ids = count(1)
+_RELAY_DIAGNOSTIC_BINDING = "_pallium_relay_diagnostic_binding"
+_RELAY_EXPIRY_TAG = "_pallium_relay_expiry"
+_RELAY_COUNT_TAG = "_pallium_relay_count"
+
+
 class SQLiteQueueMixin:
     _IMMEDIATE_ATTEMPTS = 3
     _IMMEDIATE_BUSY_TIMEOUT_MS = 100
@@ -96,12 +110,213 @@ class SQLiteQueueMixin:
     _IMMEDIATE_BACKOFF_SECONDS = 0.05
 
     @contextmanager
-    def _begin_immediate(self):
-        with self._begin_immediate_for(
-            self._session_factory,
-            busy_timeout_ms=self._QUEUE_IMMEDIATE_BUSY_TIMEOUT_MS,
-        ) as session:
-            yield session
+    def _begin_immediate(self, *, operation: str = "main_queue"):
+        started = None
+        try:
+            started = (_diagnostic_wall_ns(), _diagnostic_monotonic_ns())
+        except Exception:
+            pass
+        admitted = False
+        try:
+            with self._begin_immediate_for(
+                self._session_factory,
+                busy_timeout_ms=self._QUEUE_IMMEDIATE_BUSY_TIMEOUT_MS,
+            ) as session:
+                admitted = True
+                yield session
+        except ImmediateTransactionBusyError as exc:
+            if not admitted:
+                try:
+                    ended_utc_ns, ended_ns = _diagnostic_wall_ns(), _diagnostic_monotonic_ns()
+                    allowed = {
+                        "main_queue", "claim_next_source_item", "fail_source_item_processing",
+                        "commit_processed_source_item", "commit_process_result_and_complete_scope",
+                        "claim_thread_processing_scope", "claim_next_thread_processing_scope",
+                        "complete_thread_processing_scope", "claim_next_package_task",
+                        "claim_next_package_task_for_item", "fail_package_task",
+                        "cancel_disabled_package_work", "commit_package_process_result",
+                    }
+                    label = operation if type(operation) is str and operation in allowed else "unknown"
+                    stage = exc.acquisition_stage
+                    stage = stage if type(stage) is str and stage in ImmediateTransactionBusyError.ACQUISITION_STAGES else "unknown"
+                    origin = getattr(exc.__cause__, "orig", None)
+                    native = getattr(origin, "sqlite_errorcode", None) if isinstance(origin, sqlite3.Error) else None
+                    code = native if type(native) is int and 0 <= native <= 65535 else "unknown"
+                    logger.warning(
+                        "sqlite_main_acquisition_failed role=main_queue pid=%s db_binding=%s "
+                        "operation=%s started_utc_ns=%s ended_utc_ns=%s elapsed_ms=%s "
+                        "observed_attempts=unknown attempt_limit=%s acquisition_stage=%s native_code=%s",
+                        os.getpid(), self._main_db_diagnostic_binding(), label,
+                        started[0] if started else "unknown", ended_utc_ns,
+                        max(0, (ended_ns - started[1]) // 1_000_000) if started else "unknown",
+                        self._IMMEDIATE_ATTEMPTS, stage, code,
+                    )
+                except Exception:
+                    pass
+            raise
+
+    def _main_db_diagnostic_binding(self) -> str:
+        try:
+            url = self._engine.url
+            database = url.database
+            if (url.get_backend_name() != "sqlite" or type(database) is not str
+                    or not database or database == ":memory:" or database.startswith("file:")
+                    or url.query.get("uri")):
+                return "unknown"
+            # Configured binding only: no filesystem identity or alias probe.
+            normalized = os.path.normcase(os.path.abspath(database))
+            return "db-" + hashlib.sha256(normalized.encode("utf-8", errors="surrogatepass")).hexdigest()
+        except Exception:
+            return "unknown"
+
+    def _observe_relay_turn_site(self, owner, site, *, expiry=False, opencode=False, count=False):
+        """Holder-thread checkpoints; no SQL, locks or emission."""
+        key = "count_detail" if count else "expiry_detail" if expiry else "opencode_body" if opencode else "turn_body"
+        sites = _RELAY_EXPIRY_SITES if expiry or count else _RELAY_OPENCODE_SITES if opencode else _RELAY_TURN_SITES
+        initial = "observer_setup" if expiry or count else "body_setup"
+        try:
+            if type(owner) is not dict or owner.get("active") is not True:
+                return
+            previous = owner.get(key)
+            if site != initial and type(previous) is not dict:
+                return
+            if site not in sites | {"complete", "exception"}:
+                raise ValueError("invalid diagnostic site")
+            before = _relay_writer_monotonic_ns()
+            try:
+                cpu = _relay_writer_thread_ns()
+                if type(cpu) is not int or cpu < 0:
+                    cpu = None
+            except BaseException:
+                cpu = None
+            after = _relay_writer_monotonic_ns()
+            if type(before) is not int or type(after) is not int or not owner["started_ns"] <= before <= after:
+                raise ValueError("invalid diagnostic clock")
+            if site == initial:
+                body = dict(started_ns=before, cpu_started_ns=cpu,
+                    slowest_site="none", slowest_wall_ns=0, slowest_cpu_ns=None)
+            else:
+                if before < previous["sampled_ns"]:
+                    raise ValueError("reversed diagnostic clock")
+                body = previous.copy()
+                prior_cpu = previous["sample_cpu_ns"]
+                if cpu is not None and prior_cpu is not None and cpu < prior_cpu:
+                    cpu = None
+                if cpu is None:
+                    body["cpu_started_ns"] = None
+                elapsed = before-previous["sampled_ns"]
+                if elapsed >= previous["slowest_wall_ns"]:
+                    body.update(slowest_site=previous["site"], slowest_wall_ns=elapsed,
+                        slowest_cpu_ns=cpu-prior_cpu if cpu is not None and prior_cpu is not None else None)
+            body.update(site=site if site in sites else "none",
+                boundary_ns=before, sampled_ns=after, sample_cpu_ns=cpu,
+                state=site if site in {"complete", "exception"} else "inflight")
+            owner[key] = body
+        except BaseException:
+            try:
+                owner[key] = None
+                if expiry or count:
+                    owner["count_hook_state" if count else "body_hook_state"] = "invalid"
+            except BaseException:
+                pass
+
+    @contextmanager
+    def _observe_relay_expiry(self, session, owner, *, count=False):
+        """Observe one expiry or COUNT call on its existing writer connection."""
+        prefix = "count" if count else "expiry"
+        hook_state = "count_hook_state" if count else "body_hook_state"
+        statement_tag = _RELAY_COUNT_TAG if count else _RELAY_EXPIRY_TAG
+        installed = []
+        active = False
+        binding = None
+        tag = None
+
+        def invalidate():
+            try:
+                if type(owner) is dict:
+                    owner[hook_state] = "invalid"
+                    owner[prefix + "_detail"] = None
+            except BaseException:
+                pass
+
+        def observe(site, flag=None):
+            try:
+                if (not active or owner.get("active") is not True
+                        or binding.get("active") is not True
+                        or binding.get("owner") is not owner
+                        or session.info.get(_RELAY_DIAGNOSTIC_BINDING) is not binding):
+                    return
+                if flag is not None:
+                    owner[prefix + "_boundaries"][flag] = True
+                self._observe_relay_turn_site(owner, site, expiry=not count, count=count)
+            except BaseException:
+                invalidate()
+
+        def before_flush(*_):
+            observe("autoflush", "flush_entered")
+
+        def after_flush(*_):
+            observe("orm", "flush_returned")
+
+        def before_cursor(_conn, _cursor, _statement, _parameters, context, _many):
+            if not active:
+                return
+            try:
+                if context.execution_options.get(statement_tag) is tag:
+                    observe("cursor_envelope", "cursor_entered")
+            except BaseException:
+                invalidate()
+
+        def after_cursor(_conn, _cursor, _statement, _parameters, context, _many):
+            if not active:
+                return
+            try:
+                if context.execution_options.get(statement_tag) is tag:
+                    observe("orm_return", "cursor_returned")
+            except BaseException:
+                invalidate()
+
+        try:
+            binding = session.info.get(_RELAY_DIAGNOSTIC_BINDING)
+            if (type(binding) is not dict or binding.get("owner") is not owner
+                    or binding.get("active") is not True or type(owner) is not dict
+                    or owner.get("active") is not True):
+                invalidate()
+            else:
+                tag = object()
+                if count:
+                    owner[hook_state] = "valid"
+                owner[prefix + "_boundaries"] = dict.fromkeys(
+                    ("flush_entered", "flush_returned", "cursor_entered", "cursor_returned"), False)
+                self._observe_relay_turn_site(owner, "observer_setup", expiry=not count, count=count)
+                active = True
+                for target, name, callback in (
+                    (session, "before_flush", before_flush),
+                    (session, "after_flush_postexec", after_flush),
+                    (binding["connection"], "before_cursor_execute", before_cursor),
+                    (binding["connection"], "after_cursor_execute", after_cursor),
+                ):
+                    # Include a possibly partially installed listener in cleanup.
+                    installed.append((target, name, callback))
+                    event.listen(target, name, callback)
+                observe("orm")
+        except BaseException:
+            active = False
+            invalidate()
+        terminal = "complete"
+        try:
+            yield tag
+        except BaseException:
+            terminal = "exception"
+            raise
+        finally:
+            observe(terminal)
+            active = False
+            for target, name, callback in reversed(installed):
+                try:
+                    event.remove(target, name, callback)
+                except BaseException:
+                    invalidate()
 
     @contextmanager
     def _begin_relay_immediate(self):
@@ -109,17 +324,122 @@ class SQLiteQueueMixin:
         deadline = time.monotonic() + self._RELAY_IMMEDIATE_ACQUISITION_SECONDS
         gate = self._relay_writer_lock
         if not gate.acquire(timeout=max(0, deadline - time.monotonic())):
-            raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage="local_gate")
+            error = ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage="local_gate")
+            try:
+                observed = getattr(self, "_relay_writer_diagnostic", None)
+                if type(observed) is dict:
+                    phase = observed.get("phase")
+                    now = _relay_writer_monotonic_ns()
+                    started = observed.get("started_ns")
+                    valid_clock = type(now) is int and type(started) is int and 0 <= started <= now
+                    if valid_clock and observed.get("active") is True:
+                        # Best effort: publish before the final active check; release can still race.
+                        observed["busy_observed"] = True
+                    if valid_clock and observed.get("active") is True:
+                        def age(since):
+                            milliseconds = (now - since) // 1_000_000
+                            return milliseconds if milliseconds <= 604_800_000 else "over_limit"
+                        phase_name, phase_age = "unknown", "unknown"
+                        if (type(phase) is tuple and len(phase) == 2
+                                and type(phase[1]) is int and started <= phase[1] <= now
+                                and observed.get("phase") is phase):
+                            phase_name, phase_age = phase[0], age(phase[1])
+                        error.observed_relay_writer = {
+                            "owner_id": observed.get("owner_id"), "operation": observed.get("operation"),
+                            "phase": phase_name, "held_ms_lower_bound": age(started),
+                            "phase_ms_lower_bound": phase_age,
+                        }
+                        if "turn_body" in observed:
+                            error.observed_relay_writer["turn_body"] = _relay_turn_body_view(observed["turn_body"], now)
+                        if observed.get("operation") == "opencode_wake":
+                            error.observed_relay_writer.update(
+                                opencode_verb=_relay_opencode_verb(observed.get("opencode_verb")),
+                                opencode_body=_relay_turn_body_view(observed.get("opencode_body"), now, allowed_sites=_RELAY_OPENCODE_SITES),
+                            )
+                        if observed.get("operation") in {"turn", "opencode_wake"}:
+                            error.observed_relay_writer["detail"] = _relay_owner_detail_view(observed, now)
+            except BaseException:
+                pass
+            raise error
         owns_gate = True
+        gate_released = False
+        owner = None
+        outcome = "incomplete"
+        failure = None
+        request_view = "unknown"
+
+        def observe_phase(name):
+            if owner is None:
+                return
+            try:
+                now = _relay_writer_monotonic_ns()
+                value = (name, now) if type(now) is int and now >= owner["started_ns"] else None
+            except BaseException:
+                value = None
+            try:
+                owner["phase"] = value
+                if name == "settlement":
+                    owner["settlement"] = (dict(state="inflight", started_ns=value[1])
+                                           if value is not None else None)
+            except BaseException:
+                try:
+                    owner["active"] = False
+                except BaseException:
+                    pass
 
         def release_gate():
-            nonlocal owns_gate
+            nonlocal owns_gate, gate_released
             if owns_gate:
+                try:
+                    if owner is not None:
+                        owner["active"] = False
+                    if getattr(self, "_relay_writer_diagnostic", None) is owner:
+                        self._relay_writer_diagnostic = None
+                except BaseException:
+                    pass
                 # Cleanup must never release a successor's gate, even if release raises.
                 owns_gate = False
                 gate.release()
+                gate_released = True
+
+        def observe_body(site):
+            if type(owner) is dict and "opencode_body" in owner:
+                try:
+                    self._observe_relay_turn_site(owner, site, opencode=True)
+                except BaseException:
+                    owner["opencode_body"] = None
+            else:
+                self._observe_relay_turn_site(owner, site)
+
+        def settle_and_release():
+            nonlocal request_view
+            try:
+                if type(owner) is dict:
+                    now = _relay_writer_monotonic_ns()
+                    span = owner.get("settlement")
+                    if (type(span) is dict and type(now) is int
+                            and type(span.get("started_ns")) is int and now >= span["started_ns"]):
+                        owner["settlement"] = {**span, "state": "settled", "ended_ns": now}
+                    else:
+                        owner["settlement"] = None
+                    request_view = _relay_request_writer_view(owner, now)
+            except BaseException:
+                request_view = "unknown"
+            finally:
+                release_gate()
 
         try:
+            try:
+                started = _relay_writer_monotonic_ns()
+                number = next(_relay_writer_ids)
+                if type(started) is int and started >= 0 and type(number) is int and 1 <= number <= 2**53 - 1:
+                    owner = {"owner_id": number, "started_ns": started,
+                             "operation": _relay_writer_operation_name(),
+                             "phase": ("acquisition", started), "active": True,
+                             "body_hook_state": "not_reached"}
+                    self._relay_writer_diagnostic = owner
+            except BaseException:
+                pass
             # Charge local contention and native retries to the same allowance.
             with self._begin_immediate_for(
                 self._relay_session_factory,
@@ -127,11 +447,55 @@ class SQLiteQueueMixin:
                 busy_timeout_ms=self._RELAY_IMMEDIATE_BUSY_TIMEOUT_MS,
                 busy_backoff_seconds=0,
                 acquisition_deadline=deadline,
-                on_settled=release_gate,
+                on_settled=settle_and_release,
+                _relay_diagnostic_owner=owner if type(owner) is dict and owner.get("operation") == "turn" else None,
             ) as session:
-                yield session
+                observe_phase("transaction")
+                try:
+                    yield session
+                except BaseException:
+                    observe_body("exception")
+                    raise
+                else:
+                    observe_body("complete")
+                finally:
+                    observe_phase("settlement")
+            outcome = "returned"
+        except BaseException as exc:
+            outcome = "exception"
+            failure = exc
+            raise
         finally:
+            if owns_gate:
+                try:
+                    if type(owner) is dict:
+                        # The fallback cannot confirm COMMIT or ROLLBACK.
+                        owner["settlement"] = None
+                        request_view = _relay_request_writer_view(owner, _relay_writer_monotonic_ns())
+                except BaseException:
+                    request_view = "unknown"
             release_gate()
+            if gate_released and failure is not None and type(request_view) is dict:
+                try:
+                    failure.request_relay_writer = request_view
+                except BaseException:
+                    pass
+            # Only actual contention earns a completion record, after release and cleanup.
+            try:
+                body_key = "opencode_body" if type(owner) is dict and "opencode_body" in owner else "turn_body"
+                if (gate_released and type(owner) is dict and body_key in owner
+                        and owner.get("busy_observed") is True and owner.get("completion_emitted") is not True):
+                    owner["completion_emitted"] = True
+                    view = _relay_turn_body_view(owner[body_key], _relay_writer_monotonic_ns(),
+                        allowed_sites=_RELAY_OPENCODE_SITES if body_key == "opencode_body" else _RELAY_TURN_SITES)
+                    if body_key == "opencode_body":
+                        logger.warning("relay_writer_contention_completed owner_id=%s operation=%s transaction_outcome=%s opencode_verb=%s opencode_body=%s request_owner=%s",
+                            owner["owner_id"], owner["operation"], outcome, _relay_opencode_verb(owner.get("opencode_verb")), view, request_view)
+                    else:
+                        logger.warning("relay_writer_contention_completed owner_id=%s operation=%s transaction_outcome=%s turn_body=%s request_owner=%s",
+                            owner["owner_id"], owner["operation"], outcome, view, request_view)
+            except BaseException:
+                pass
 
     @contextmanager
     def _begin_low_priority_relay_write(self):
@@ -139,7 +503,14 @@ class SQLiteQueueMixin:
         if self._relay_writer_lock.locked():
             raise ImmediateTransactionBusyError("correctness writer is active")
         session = self._relay_session_factory()
-        conn = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+        try:
+            conn = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+        except BaseException:
+            try:
+                session.close()
+            except BaseException:
+                pass
+            raise
         try:
             conn.execute(text("PRAGMA busy_timeout=25"))
             conn.execute(text("BEGIN DEFERRED"))
@@ -170,6 +541,7 @@ class SQLiteQueueMixin:
         busy_backoff_seconds: float | None = None,
         acquisition_deadline: float | None = None,
         on_settled=None,
+        _relay_diagnostic_owner=None,
     ):
         """Start a transaction with BEGIN IMMEDIATE for exclusive claim operations.
 
@@ -264,6 +636,19 @@ class SQLiteQueueMixin:
                         raise busy_error(first_deadline_stage or "backoff_no_fit") from exc
                     time.sleep(pause)
         assert session is not None and conn is not None
+        binding = None
+        try:
+            if (type(_relay_diagnostic_owner) is dict and _relay_diagnostic_owner.get("active") is True
+                    and _RELAY_DIAGNOSTIC_BINDING not in session.info):
+                binding = {"owner": _relay_diagnostic_owner, "connection": conn, "active": True}
+                session.info[_RELAY_DIAGNOSTIC_BINDING] = binding
+            elif _relay_diagnostic_owner is not None:
+                _relay_diagnostic_owner["body_hook_state"] = "invalid"
+        except BaseException:
+            try:
+                _relay_diagnostic_owner["body_hook_state"] = "invalid"
+            except BaseException:
+                pass
         settled = False
         try:
             yield session
@@ -280,6 +665,17 @@ class SQLiteQueueMixin:
             raise
         finally:
             try:
+                try:
+                    if binding is not None:
+                        binding["active"] = False
+                        if session.info.get(_RELAY_DIAGNOSTIC_BINDING) is binding:
+                            del session.info[_RELAY_DIAGNOSTIC_BINDING]
+                except BaseException:
+                    try:
+                        _relay_diagnostic_owner["body_hook_state"] = "invalid"
+                        _relay_diagnostic_owner["expiry_detail"] = None
+                    except BaseException:
+                        pass
                 if settled and on_settled is not None:
                     on_settled()
             finally:
@@ -337,7 +733,7 @@ class SQLiteQueueMixin:
             RETURNING id
             """
         )
-        with self._begin_immediate() as session:
+        with self._begin_immediate(operation="claim_next_source_item") as session:
             row = session.execute(
                 statement,
                 {
@@ -382,7 +778,7 @@ class SQLiteQueueMixin:
     ) -> bool:
         finished_at = utc_now()
 
-        with self._begin_immediate() as session:
+        with self._begin_immediate(operation="fail_source_item_processing") as session:
             record = session.get(SourceItemRecord, source_item_id)
             if record is None:
                 raise KeyError(source_item_id)
@@ -478,7 +874,7 @@ class SQLiteQueueMixin:
     ) -> list[tuple[str, str]] | None:
         finished_at = completed_at or utc_now()
 
-        with self._begin_immediate() as session:
+        with self._begin_immediate(operation="commit_processed_source_item") as session:
             record = session.get(SourceItemRecord, source_item_id)
             if record is None:
                 raise KeyError(source_item_id)
@@ -581,7 +977,7 @@ class SQLiteQueueMixin:
             record.updated_at = finished_at
             return pending_after
 
-        with self._begin_immediate() as session:
+        with self._begin_immediate(operation="commit_process_result_and_complete_scope") as session:
             return _do(session)
 
     def claim_thread_processing_scope(
@@ -607,7 +1003,7 @@ class SQLiteQueueMixin:
             RETURNING scope_key
             """
         )
-        with self._begin_immediate() as session:
+        with self._begin_immediate(operation="claim_thread_processing_scope") as session:
             row = session.execute(
                 statement,
                 {
@@ -651,7 +1047,7 @@ class SQLiteQueueMixin:
             RETURNING scope_key
             """
         )
-        with self._begin_immediate() as session:
+        with self._begin_immediate(operation="claim_next_thread_processing_scope") as session:
             row = session.execute(
                 statement,
                 {
@@ -696,7 +1092,7 @@ class SQLiteQueueMixin:
             record.updated_at = finished_at
             return pending_after
 
-        with self._begin_immediate() as session:
+        with self._begin_immediate(operation="complete_thread_processing_scope") as session:
             return _do(session)
 
     def get_thread_processing_lease(self, scope_key: str) -> ThreadProcessingLease | None:
@@ -1675,7 +2071,7 @@ class SQLiteQueueMixin:
             RETURNING id, source_item_id, package_name
             """
         )
-        with self._begin_immediate() as session:
+        with self._begin_immediate(operation="claim_next_package_task") as session:
             self._finalize_expired_package_leases_at_attempt_limit(
                 session,
                 now=claimed_at,
@@ -1746,7 +2142,7 @@ class SQLiteQueueMixin:
             RETURNING package_name
             """
         )
-        with self._begin_immediate() as session:
+        with self._begin_immediate(operation="claim_next_package_task_for_item") as session:
             self._finalize_expired_package_leases_at_attempt_limit(
                 session,
                 now=claimed_at,
@@ -1828,7 +2224,7 @@ class SQLiteQueueMixin:
                 self._sync_source_item_if_all_packages_terminal(session, source_item_id, finished_at)
             return True
 
-        with self._begin_immediate() as session:
+        with self._begin_immediate(operation="fail_package_task") as session:
             return _do(session)
     def _sync_source_item_if_all_packages_terminal(
         self,
@@ -1955,7 +2351,7 @@ class SQLiteQueueMixin:
                 "rebuild_scopes": len(scopes),
             }
 
-        with self._begin_immediate() as session:
+        with self._begin_immediate(operation="cancel_disabled_package_work") as session:
             return _do(session)
     def commit_package_process_result(
         self,
@@ -2014,5 +2410,5 @@ class SQLiteQueueMixin:
                 self._sync_source_item_if_all_packages_terminal(session, source_item_id, finished_at)
             return supersession_pairs
 
-        with self._begin_immediate() as session:
+        with self._begin_immediate(operation="commit_package_process_result") as session:
             return _do(session)
