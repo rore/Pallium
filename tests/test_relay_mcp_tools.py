@@ -10,6 +10,7 @@ Tests the FastMCP tool wrapper behaviors that HTTP-layer tests cannot reach:
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -300,8 +301,10 @@ _MISSING_SCOPE_ERROR = (
 
 
 @pytest.fixture()
-def relay_app(test_db_url: str, monkeypatch: pytest.MonkeyPatch):
+def relay_app(test_db_url: str, monkeypatch: pytest.MonkeyPatch, request):
     from storage.vector_index import VectorIndexConfig
+    # Direct app construction must ignore a stale child-factory handoff.
+    monkeypatch.setenv("_PALLIUM_API_BIND_HOST", "127.0.0.1")
     # MCP contracts do not exercise native wake workers or their trace writes.
     monkeypatch.setattr("app.dependencies.schedule_claude_relay_wake", lambda *_args, **_kwargs: None)
     app = create_app(
@@ -311,7 +314,8 @@ def relay_app(test_db_url: str, monkeypatch: pytest.MonkeyPatch):
             default_use_case="demo_agent_memory",
             semantic_packages=DEMO_SEMANTIC_PACKAGES,
             vector_index=VectorIndexConfig(enabled=False),
-        )
+        ),
+        **getattr(request, "param", {}),
     )
     app.state._lifespan_complete = True
     service = app.state.pallium_service
@@ -360,6 +364,142 @@ def bind_global_discovery(monkeypatch: pytest.MonkeyPatch, asgi_get, *, url="htt
 
     monkeypatch.setattr(PalliumMcpClient, "_get_or_error", _get)
     return requests
+
+
+async def _mounted_rpc(http, method, params):
+    response = await http.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+    response.raise_for_status()
+    if response.headers["content-type"].startswith("application/json"):
+        payload = response.json()
+    else:
+        payload = json.loads(next(line[5:].strip() for line in response.text.splitlines() if line.startswith("data:")))
+    assert "error" not in payload, payload
+    return payload["result"]
+
+
+@asynccontextmanager
+async def _mounted_mcp(relay_app):
+    # Enter the real MCP mount's lifespan, not native wake/model workers.
+    mounted = next(route.app for route in relay_app.routes if getattr(route, "path", None) == "")
+    async with mounted.router.lifespan_context(mounted):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=relay_app), base_url="http://127.0.0.1",
+            headers={"Accept": "application/json, text/event-stream"},
+        ) as http:
+            await _mounted_rpc(http, "initialize", {
+                "protocolVersion": "2025-03-26", "capabilities": {},
+                "clientInfo": {"name": "isolated-mcp-test", "version": "1"},
+            })
+            initialized = await http.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+            assert initialized.status_code == 202
+            yield http
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("relay_app,url", [
+    ({"bind_host": "127.0.0.1"}, "http://127.0.0.1:19836"),
+    ({"bind_host": "localhost"}, "http://localhost:19836"),
+    ({"bind_host": "::1"}, "http://[::1]:19836"),
+], indirect=["relay_app"])
+async def test_mounted_local_global_tools_preserve_scoped_reads_and_message_state(
+    monkeypatch, relay_app, asgi_post, asgi_get, url,
+):
+    bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
+    requests = bind_global_discovery(monkeypatch, asgi_get, url=url)
+    async with _mounted_mcp(relay_app) as http:
+        async def call(tool, **arguments):
+            result = await _mounted_rpc(http, "tools/call", {"name": tool, "arguments": arguments})
+            assert not result.get("isError"), result
+            return json.loads(result["content"][0]["text"])
+
+        assert (await call("pallium_relay_discover_recipients"))["recipients"] == []
+        other = {"container_ref": "git:example.test/other"}
+        for scope in (_SCOPE, other):
+            await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "会話-α", "title": "מפתח", **scope})
+        matches = await call("pallium_relay_discover_recipients", runtime="codex", session_ref="会話-α")
+        assert matches["match_status"] == "ambiguous"
+        assert {row["container_ref"] for row in matches["recipients"]} == {_SCOPE["container_ref"], other["container_ref"]}
+        scoped = await call("pallium_relay_recipients", runtime="codex")
+        assert len(scoped["recipients"]) == 1
+
+        target = next(row["exact_selector"] for row in matches["recipients"] if row["container_ref"] == other["container_ref"])
+        sent = await asgi_post("/relay/messages", {
+            "sender_runtime": "codex", "sender_session_ref": "会話-α", "recipient": target,
+            "payload": "read-only trace", "message_id": "mounted-message", **_SCOPE,
+        })
+        before = await asgi_get("/relay/messages/mounted-message", _SCOPE)
+        monkeypatch.delenv("PALLIUM_CONTAINER_REF")
+        for identifier in (sent["message_id"], sent["deliveries"][0]["delivery_id"]):
+            trace = await call("pallium_relay_trace", message_id=identifier)
+            assert trace["message_id"] == "mounted-message"
+        assert await asgi_get("/relay/messages/mounted-message", _SCOPE) == before
+        assert all("container_ref" not in params for path, params in requests if path == "/dashboard/api/relay/sessions")
+        for scope in (_SCOPE, other):
+            await asgi_post("/relay/sessions/close", {"runtime": "codex", "session_ref": "会話-α", **scope})
+        closed = await call("pallium_relay_discover_recipients", runtime="codex", session_ref="会話-α")
+        assert all(row["lifecycle"] == "closed" for row in closed["recipients"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("relay_app,url", [
+    ({}, "http://127.0.0.1:19836"),
+    ({"bind_host": None}, "http://127.0.0.1:19836"),
+    ({"bind_host": ""}, "http://127.0.0.1:19836"),
+    ({"bind_host": "0.0.0.0"}, "http://127.0.0.1:19836"),
+    ({"bind_host": "::"}, "http://127.0.0.1:19836"),
+    ({"bind_host": "192.0.2.1"}, "http://127.0.0.1:19836"),
+    ({"bind_host": "127.0.0.1"}, "https://remote.example.test"),
+    ({"bind_host": "127.0.0.1"}, "http://user:pass@127.0.0.1:19836"),
+    ({"bind_host": "127.0.0.1"}, "ftp://127.0.0.1:19836"),
+], indirect=["relay_app"])
+async def test_mounted_global_tools_refuse_unsafe_bind_or_existing_url_cases_before_backend(
+    monkeypatch, relay_app, url,
+):
+    monkeypatch.setenv("PALLIUM_BASE_URL", url)
+    monkeypatch.setenv("_PALLIUM_API_BIND_HOST", "127.0.0.1")
+    monkeypatch.setenv("PALLIUM_MCP_TRANSPORT", "stdio")
+    monkeypatch.delenv("PALLIUM_CONTAINER_REF")
+    backend = AsyncMock(side_effect=AssertionError("denied caller reached backend"))
+    monkeypatch.setattr(PalliumMcpClient, "_get_or_error", backend)
+    async with _mounted_mcp(relay_app) as http:
+        http.headers["X-Forwarded-Host"] = "localhost"
+        for tool, arguments in (
+            ("pallium_relay_discover_recipients", {}),
+            ("pallium_relay_trace", {"message_id": "mounted-message"}),
+        ):
+            result = await _mounted_rpc(http, "tools/call", {
+                "name": tool, "arguments": arguments, "_meta": {"ai.opencode/sessionID": "local-session"},
+            })
+            assert result["isError"] is True
+            assert "trusted local service and MCP bind" in result["content"][0]["text"]
+    backend.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_standalone_default_is_distinct_from_explicit_unknown_mount(monkeypatch):
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://127.0.0.1:19836")
+    request = AsyncMock(return_value={"sessions": [], "total": 0, "offset": 0, "as_of": "now"})
+    monkeypatch.setattr(PalliumMcpClient, "relay_discover_recipients", request)
+    await create_server().call_tool("pallium_relay_discover_recipients", {})
+    request.assert_awaited_once()
+    request.reset_mock()
+    await assert_tool_error(create_server(relay_bind_host=""), "pallium_relay_discover_recipients", {})
+    request.assert_not_awaited()
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("http://127.0.0.1:0", True),
+    ("http://127.0.0.1:65536", True),
+    ("http://127.0.0.1:\t19836", True),
+    ("https://[::1]:19836/prefix", True),
+    ("http://user:pass@127.0.0.1:19836", False),
+    ("http://remote.example.test", False),
+])
+def test_global_url_predicate_preserves_existing_acceptance(url, expected):
+    from app.mcp.server import _relay_global_discovery_local
+
+    # Predicate acceptance does not promise that an HTTP client accepts this URL.
+    assert _relay_global_discovery_local(url, "127.0.0.1") is expected
 
 
 @pytest.mark.asyncio

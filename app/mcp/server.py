@@ -1165,7 +1165,8 @@ def _codex_bridge_caller_pair(request) -> dict[str, str] | None:
 
 def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
                   codex_shadow: bool = False, codex_inventory: bool = False,
-                  codex_retained: bool = False, tool_adapter=None) -> FastMCP:
+                  codex_retained: bool = False, tool_adapter=None,
+                  relay_bind_host: str | None = None) -> FastMCP:
     """Create a FastMCP server with Pallium tools registered."""
     from mcp.server.fastmcp import Context, FastMCP
     try:
@@ -1178,6 +1179,9 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
     # holding a session id from before the restart get -32600 "Session not
     # found" and have to reinitialize.
     server = FastMCP("pallium", host=host, port=port, stateless_http=True, lifespan=lifespan)
+    # Mounted callers supply the owning listener's host (empty means unknown).
+    # Standalone callers keep their existing FastMCP bind as the gate input.
+    global_relay_host = host if relay_bind_host is None else relay_bind_host
 
     def register_tool(tool):
         """Register through FastMCP, optionally adapting or excluding a public tool."""
@@ -1935,7 +1939,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         ctx = resolve_context()
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
-        if not _relay_global_discovery_local(ctx.base_url, host):
+        if not _relay_global_discovery_local(ctx.base_url, global_relay_host):
             return _relay_error_text({"error": "service-global Relay discovery requires a trusted local service and MCP bind"})
         result = await PalliumMcpClient(ctx).relay_discover_recipients(
             runtime=runtime, session_ref=session_ref,
@@ -2213,7 +2217,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
                 return scope_error
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
-        if unscoped and not _relay_global_discovery_local(ctx.base_url, host):
+        if unscoped and not _relay_global_discovery_local(ctx.base_url, global_relay_host):
             return _relay_error_text(
                 {"error": "service-global Relay trace requires a trusted local service and MCP bind"}
             )
