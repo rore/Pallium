@@ -119,34 +119,49 @@ export default {
       const idle = messages.slice(index + 1, end).find((m) => m?.type === "idle" && validInput(m.id));
       return idle?.id || null;
     };
+    const coalescedTerminalAfter = (messages, wake) => {
+      const index = messages.findIndex((m) => m?.type === "user" && m.id === wake.native_input_id &&
+        m.text === WAKE_TEXT && m.metadata?.pallium_relay_wake === true &&
+        m.metadata.generation === wake.generation && m.metadata.delivery_id === wake.delivery_id);
+      if (index < 0) return null;
+      // Native idle covers the entire busy period, including steered inputs.
+      const idle = messages.slice(index + 1).find((m) => m?.type === "idle");
+      return validInput(idle?.id) && idle.id !== wake.native_input_id &&
+        ["succeeded", "failed", "interrupted"].includes(idle.outcome) ? idle.id : null;
+    };
     const runWake = async (id, item, wake) => {
       const signal = item?.abort.signal;
       if (!live(id, item, signal) || item.wakeBusy || !validInput(wake?.native_input_id) || !validDelivery(wake?.delivery_id) || !Number.isInteger(wake?.generation)) return;
+      const fields = { generation: wake.generation, delivery_id: wake.delivery_id, native_input_id: wake.native_input_id };
+      const endpointId = item.endpointId, scopeGeneration = item.scopeGeneration, container = scope(id), nativeLocation = wake.native_location;
+      const current = () => live(id, item, signal) && item.endpointId === endpointId && item.scopeGeneration === scopeGeneration &&
+        scope(id) === container && item.wake?.generation === fields.generation && item.wake?.delivery_id === fields.delivery_id &&
+        item.wake?.native_input_id === fields.native_input_id && item.wake?.scope_generation === scopeGeneration &&
+        sameLocation(item.wake?.native_location, nativeLocation) && sameLocation(nativeLocation, cwd);
       item.wakeBusy = true;
       try {
-        if (!await owned(id, item, signal)) return;
-        const fields = { generation: wake.generation, delivery_id: wake.delivery_id, native_input_id: wake.native_input_id };
+        if (!await owned(id, item, signal) || !current()) return;
         const history = rows(await ctx.session.context({ sessionID: id }));
-        if (!await owned(id, item, signal)) return;
-        const observed = (messages) => messages.some((m) => m?.type === "user" && m.id === wake.native_input_id &&
+        if (!await owned(id, item, signal) || !current()) return;
+        const observed = (messages) => messages.some((m) => m?.type === "user" && m.id === fields.native_input_id &&
           m.text === WAKE_TEXT && m.metadata?.pallium_relay_wake === true &&
-          m.metadata.generation === wake.generation && m.metadata.delivery_id === wake.delivery_id);
+          m.metadata.generation === fields.generation && m.metadata.delivery_id === fields.delivery_id);
         if (!observed(history)) {
           if (wake.admitted) return; // A compacted or missing input cannot prove a new admission.
           // The stable native ID makes a lost prompt response safe to retry.
-          await ctx.session.prompt({ sessionID: id, id: wake.native_input_id, text: WAKE_TEXT, delivery: "queue",
-            metadata: { pallium_relay_wake: true, generation: wake.generation, delivery_id: wake.delivery_id } });
+          await ctx.session.prompt({ sessionID: id, id: fields.native_input_id, text: WAKE_TEXT, delivery: "queue",
+            metadata: { pallium_relay_wake: true, generation: fields.generation, delivery_id: fields.delivery_id } });
         }
-        if (!await owned(id, item, signal)) return;
+        if (!await owned(id, item, signal) || !current()) return;
         if (!observed(rows(await ctx.session.context({ sessionID: id })))) return;
-        if (!await owned(id, item, signal)) return;
+        if (!await owned(id, item, signal) || !current()) return;
         await wakeRequest(id, item, "admitted", fields);
-        if (!live(id, item, signal)) return;
+        if (!await owned(id, item, signal) || !current()) return;
         await ctx.session.wait({ sessionID: id });
-        if (!await owned(id, item, signal)) return;
+        if (!await owned(id, item, signal) || !current()) return;
         const after = rows(await ctx.session.context({ sessionID: id }));
-        if (!await owned(id, item, signal)) return;
-        const terminalId = terminalAfter(after, wake.native_input_id);
+        if (!await owned(id, item, signal) || !current()) return;
+        const terminalId = terminalAfter(after, fields.native_input_id) || coalescedTerminalAfter(after, fields);
         if (terminalId) await wakeRequest(id, item, "terminal", { ...fields, terminal_message_id: terminalId });
       } catch (error) { log(`V2 wake deferred: ${String(error)}`); }
       finally { if (live(id, item, signal)) item.wakeBusy = false; }

@@ -168,6 +168,29 @@ and a separate ACK for each attached message. If the claim response is lost,
 continuation restores only the trigger. Unobserved siblings keep their original
 leases and can be collected by an existing turn or wake once eligible.
 
+### Coalesced wake settlement (qualification pending)
+
+V2 preserves its ordinary same-input terminal correlation. An additional path
+uses the released 2.2.7 contract: native idle covers the whole busy period,
+including ordinary inputs steered in before idle. After the native wait, fresh
+context must still contain the exact wake user ID, text, marker, generation and
+delivery. The first later idle must have a distinct valid ID and outcome exactly
+`succeeded`, `failed` or `interrupted`. The plugin rechecks its current session,
+location, endpoint, container and generations before the existing terminal
+request. The backend still checks the current owner and exact wake binding.
+
+This settles activation, not the requested business task. Failed or interrupted
+work is not reported as successful. ACK, wait alone, elapsed time, an unknown or
+outcomeless idle, and a missing wake input do not authorize this extra path.
+No transcript or proof is stored. If compaction removed the input before that
+fresh read, automatic activation can remain blocked through plugin reload.
+A later normal turn can collect eligible backlog without repairing that anchor.
+The plugin never prompts again merely to reconstruct missing proof.
+
+The new path is not yet runtime-qualified. Earlier 2.2.7 discovery-only evidence
+does not qualify coalesced settlement or recovery after compaction. Full wake-anchor
+recovery remains open in the [reliability feature](../../roadmap/features/fix-opencode-plugin-reliability.md).
+
 V2 owns a short server lease and renews it while polling. Disposal retires local
 hooks and the event stream, cancels ordinary integration requests, and fences
 late native callbacks. Best-effort owner detach uses one 500 ms remote cleanup

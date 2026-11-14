@@ -134,6 +134,91 @@ def test_idle_then_pending_backlog_is_drained_one_at_a_time(client, relay_admiss
     assert _wake(client, base, "poll").json()["wake"] is None
 
 
+@pytest.mark.parametrize("original_state", ["delivered", "pending", "claimed", "expired"])
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_activation_settlement_preserves_original_authority_before_backlog(
+    client, monkeypatch, relay_admission_clock, original_state,
+):
+    """HTTP contract after plugin-proven settlement; HTTP does not prove native correlation."""
+    import storage.sqlite_relay as sqlite_relay
+
+    real_now = sqlite_relay._now
+    clock = [real_now()]
+    monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: real_now(value) if value is not None else clock[0])
+    base = _setup(client, relay_admission_clock=relay_admission_clock)
+    original = _send(client, base, "original_שלום", expires_in_seconds=60 if original_state == "expired" else 86400,
+                     relay_admission_clock=relay_admission_clock).json()
+    wake = _wake(client, base, "poll").json()["wake"]
+    snap = _snapshot(base, wake)
+    assert _wake(client, base, "admitted", **snap).status_code == 200
+
+    def status(message):
+        response = client.get("/relay/messages/" + message["message_id"], params=SCOPE)
+        assert response.status_code == 200, response.text
+        return response.json()["deliveries"][0]
+
+    def attach_and_ack(binding):
+        response = _wake(client, base, "context", **binding)
+        assert response.status_code == 200, response.text
+        delivery, = response.json()["deliveries"]
+        ack = client.post("/relay/deliveries/ack", json={**SCOPE,
+            "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"]})
+        assert ack.status_code == 200, ack.text
+        return delivery
+
+    if original_state == "delivered":
+        attach_and_ack(snap)
+    elif original_state == "claimed":
+        assert _wake(client, base, "context", **snap).status_code == 200
+    backlog = []
+    for index in range(4):
+        clock[0] += timedelta(seconds=1)
+        backlog.append(_send(client, base, f"backlog_{index}_界", relay_admission_clock=relay_admission_clock).json())
+    # Admission, ACK, live/expired claims and time alone never retire the anchor.
+    for _ in range(5):
+        clock[0] += timedelta(seconds=12)
+        held = _wake(client, base, "poll")
+        assert held.status_code == 200, held.text
+        assert held.json()["wake"] == {**wake, "admitted": True}
+        if original_state != "expired":
+            break
+    terminal = _wake(client, base, "terminal", **snap, terminal_message_id="msg_coalesced_outcome")
+    assert terminal.status_code == 200, terminal.text
+    assert terminal.json()["wake"]["terminal"] is True
+    # A committed response loss reconciles idempotently at the existing operation.
+    repeated = _wake(client, base, "terminal", **snap, terminal_message_id="msg_coalesced_outcome")
+    assert repeated.status_code == 200 and repeated.json()["wake"] == terminal.json()["wake"]
+    if original_state in ("pending", "claimed"):
+        if original_state == "claimed":
+            assert _wake(client, base, "poll").json()["wake"] == terminal.json()["wake"]
+            assert status(original)["state"] == "claimed"
+            for _ in range(4):
+                clock[0] += timedelta(seconds=12)
+                assert _wake(client, base, "poll").status_code == 200
+        clock[0] += timedelta(seconds=3)
+        retried = _wake(client, base, "poll").json()["wake"]
+        assert retried["delivery_id"] == wake["delivery_id"]
+        assert retried["generation"] == wake["generation"] + 1
+        assert retried["native_input_id"] != wake["native_input_id"]
+        snap = _snapshot(base, retried)
+        recovered = attach_and_ack(snap)
+        assert recovered["attempts"] == (2 if original_state == "claimed" else 1)
+        assert _wake(client, base, "terminal", **snap, terminal_message_id="msg_original_retry_done").status_code == 200
+    assert status(original)["state"] == ("expired" if original_state == "expired" else "delivered")
+    assert status(original)["attempts"] == (0 if original_state == "expired" else 2 if original_state == "claimed" else 1)
+    native_ids = {wake["native_input_id"], snap["native_input_id"]}
+    for index, message in enumerate(backlog):
+        selected = _wake(client, base, "poll").json()["wake"]
+        assert selected["delivery_id"] == message["deliveries"][0]["delivery_id"]
+        assert selected["native_input_id"] not in native_ids
+        native_ids.add(selected["native_input_id"])
+        binding = _snapshot(base, selected)
+        assert attach_and_ack(binding)["message_id"] == message["message_id"]
+        assert _wake(client, base, "terminal", **binding, terminal_message_id=f"msg_backlog_done_{index}").status_code == 200
+        assert status(message)["state"] == "delivered" and status(message)["attempts"] == 1
+    assert _wake(client, base, "poll").json()["wake"] is None
+
+
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_admit_terminal_retains_anchor_until_poll_then_retries(client, monkeypatch, relay_admission_clock):
     import storage.sqlite_relay as sqlite_relay
@@ -325,11 +410,21 @@ def test_owner_lease_expiry_allows_rebind_without_losing_anchor(client, monkeypa
     ({"owner_id": "opencode-owner-ffffffffffffffffffffffffffffffff"}, 409),
     ({"container_ref": "git:example.test/other/repo", "scope_generation": 99}, 404),
 ])
+@pytest.mark.parametrize("operation", ["poll", "admitted", "terminal"])
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
-def test_stale_or_wrong_binding_is_rejected(client, overrides, status_code, relay_admission_clock):
+def test_stale_or_wrong_binding_is_rejected(client, overrides, status_code, operation, relay_admission_clock):
     base = _setup(client, relay_admission_clock=relay_admission_clock)
-    response = _wake(client, {**base, **overrides}, "poll")
+    extra = {}
+    if operation != "poll":
+        _send(client, base, relay_admission_clock=relay_admission_clock)
+        wake = _wake(client, base, "poll").json()["wake"]
+        extra = {key: wake[key] for key in ("generation", "delivery_id", "native_input_id")}
+        if operation == "terminal":
+            extra["terminal_message_id"] = "msg_rejected_terminal"
+    response = _wake(client, {**base, **overrides}, operation, **extra)
     assert response.status_code == status_code, response.text
+    if operation != "poll":
+        assert _wake(client, base, "poll").json()["wake"] == wake
 
 
 @pytest.mark.parametrize("body", [

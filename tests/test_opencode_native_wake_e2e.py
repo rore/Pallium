@@ -186,16 +186,24 @@ def test_released_native_empty_discovery_recovers_without_natural_prompt(client,
     _released_native_journey(client, tmp_path, test_db_url, monkeypatch, bootstrap=True)
 
 
-def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, bootstrap=False):
+def test_released_native_coalesced_settlement_and_automatic_backlog(client, tmp_path, test_db_url, monkeypatch):
+    _released_native_journey(client, tmp_path, test_db_url, monkeypatch, coalesced=True)
+
+
+def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, bootstrap=False, coalesced=False):
     import hashlib
 
     binary = os.environ.get("PALLIUM_OPENCODE_V2_BINARY")
     if not binary or not Path(binary).is_file():
-        pytest.skip("set PALLIUM_OPENCODE_V2_BINARY to the released 2.0.22 executable")
+        pytest.skip("set PALLIUM_OPENCODE_V2_BINARY to the intended released executable (2.2.7 for coalesced qualification)")
     bootstrap_summary = {"host_version_verified": False, "startup_empty_settled": False, "restore_empty_settled": False,
                          "attached_before_ack": False, "provider_payload": False,
                          "exact_native_input": False, "native_settled": False,
-                         "public_delivered_once": False, "owned_drain": False}
+                          "public_delivered_once": False, "owned_drain": False}
+    coalesced_summary = dict.fromkeys(("host_version_verified", "ordered_coalesced_outcome", "attached_before_ack",
+        "lost_terminal_reply_reconciled", "automatic_backlog_over_two", "unique_native_admissions",
+        "provider_payloads", "terminal_reload_safe", "missing_proof_compaction_hold", "missing_proof_reload_hold",
+        "no_interrupt", "owned_drain"), False)
     root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -230,6 +238,17 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
     retirement_resumed = threading.Event()
     retirement_acks = []
     capture_evidence = {}
+    wake_responses = []
+    terminal_reply_lost = threading.Event()
+    if coalesced:
+        terminal_reply_lost.set()
+    lost_terminals = []
+    proof_hold = threading.Event()
+    proof_held = threading.Event()
+    proof_release = threading.Event()
+    terminal_reload_hold = threading.Event()
+    terminal_reload_ready = threading.Event()
+    terminal_reload_release = threading.Event()
 
     class RelayHTTP(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -237,11 +256,25 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
 
         def forward(self):
             raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            if coalesced and self.path == "/fixture/wake-wait":
+                # Only the plugin's outside-hook wait is gated. Native context,
+                # compaction and all settlement evidence still come from the host.
+                if proof_hold.is_set():
+                    proof_hold.clear()
+                    proof_held.set()
+                    assert proof_release.wait(30), "after-wait compaction gate not released"
+                self.send_response(200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"{}")
+                return
             if service_unavailable.is_set():
                 self.send_error(503, "isolated test outage")
                 return
             if self.path == "/relay/opencode/wake" and raw:
                 body = json.loads(raw)
+                if coalesced and body["operation"] == "poll" and terminal_reload_hold.is_set() and terminal_reload_ready.is_set():
+                    assert terminal_reload_release.wait(30), "already-terminal reload gate not released"
                 if body["operation"] == "context" and fail_context.is_set():
                     fail_context.clear()
                     failed_contexts.append(body)
@@ -251,6 +284,16 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
                 retirement_acks.append(json.loads(raw))
             response = relay_client[0].request(self.command, self.path, content=raw or None,
                                       headers={"Content-Type": "application/json"})
+            if coalesced and self.path == "/relay/opencode/wake":
+                body = json.loads(raw)
+                wake_responses.append({"request": body, "status": response.status_code, "response": response.json()})
+                if body["operation"] == "terminal" and response.is_success and terminal_reload_hold.is_set():
+                    terminal_reload_ready.set()
+                if body["operation"] == "terminal" and response.is_success and terminal_reply_lost.is_set():
+                    terminal_reply_lost.clear()
+                    lost_terminals.append(body)
+                    self.close_connection = True
+                    return
             if self.path in ("/items", "/item-and-query") and response.is_success:
                 body = json.loads(raw)
                 result = response.json()
@@ -369,16 +412,18 @@ export default {...production,setup:async ctx=>{
   const instance=randomUUID(),directory=ctx.location.directory;
   const log=(kind,detail={})=>appendFileSync(process.env.PALLIUM_NATIVE_LIFECYCLE,JSON.stringify({kind,time:Date.now(),instance,directory,...detail})+'\\n');
   log('setup');
-  const bootstrap=process.env.PALLIUM_NATIVE_BOOTSTRAP==='1',emptyReads=new Set();
+   const bootstrap=process.env.PALLIUM_NATIVE_BOOTSTRAP==='1',coalesced=process.env.PALLIUM_NATIVE_COALESCED==='1',emptyReads=new Set();
   let activeContext;
   const originalFetch=globalThis.fetch;
   const observedFetch=async(input,init)=>{
    const url=new URL(input?.url??input);
    if(url.port!==process.env.PALLIUM_PORT)return originalFetch(input,init);
-   if(url.pathname==='/relay/deliveries/ack'){
-    const body=JSON.parse(init.body),text=JSON.stringify(activeContext?.messages||[]);
-    log('bootstrap.ack',{attached:text.includes('BOOTSTRAP_PAYLOAD_שלום')&&
-     text.includes('Lower-authority context')&&text.includes(body.delivery_id)});
+    if(url.pathname==='/relay/deliveries/ack'){
+     const body=JSON.parse(init.body),text=JSON.stringify(activeContext?.messages||[]);
+     log('bootstrap.ack',{attached:text.includes('BOOTSTRAP_PAYLOAD_שלום')&&
+      text.includes('Lower-authority context')&&text.includes(body.delivery_id)});
+     if(coalesced)log('wake.ack',{deliveryID:body.delivery_id,
+      attached:text.includes('Lower-authority context')&&text.includes(body.delivery_id)});
    }
    const response=await originalFetch(input,init);
    if(url.pathname==='/relay/sessions'&&response.ok){
@@ -395,13 +440,23 @@ export default {...production,setup:async ctx=>{
    }
    return response;
   };
-  if(bootstrap)globalThis.fetch=observedFetch;
-  const session={...ctx.session,context:async args=>{
+   if(bootstrap||coalesced)globalThis.fetch=observedFetch;
+   const session={...ctx.session,context:async args=>{
   const result=await ctx.session.context(args);
   const messages=Array.isArray(result)?result:result.data;
   const turn=extractV2AssistantTurn(messages);
-  log('capture.context',{sessionID:args.sessionID,messages,turn,workTrace:turn?buildWorkTraceMetadata(turn):null});
-  return result;
+   log('capture.context',{sessionID:args.sessionID,messages,turn,workTrace:turn?buildWorkTraceMetadata(turn):null});
+   return result;
+   },prompt:async args=>{
+    if(coalesced)log('wake.prompt',{sessionID:args.sessionID,inputID:args.id,metadata:args.metadata});
+    return ctx.session.prompt(args);
+   },wait:async args=>{
+    const result=await ctx.session.wait(args);
+    if(coalesced)await originalFetch('http://localhost:'+process.env.PALLIUM_PORT+'/fixture/wake-wait');
+    return result;
+   },interrupt:async args=>{
+    if(coalesced)log('wake.interrupt',{sessionID:args.sessionID});
+    return ctx.session.interrupt(args);
   },get:async args=>{
    const result=await ctx.session.get(args);
    if(bootstrap&&emptyReads.delete(args.sessionID)&&result?.location?.directory===directory)
@@ -412,15 +467,15 @@ export default {...production,setup:async ctx=>{
   },hook:(name,callback)=>ctx.session.hook(name,async event=>{
   const identity={sessionID:event?.sessionID,inputID:event?.messageID??event?.messages?.findLast(message=>message?.role==='user')?.id};
   log(name+'.enter',identity);
-   if(bootstrap&&name==='context')activeContext=event;
+    if((bootstrap||coalesced)&&name==='context')activeContext=event;
    try{return await callback(event)}finally{
-    if(bootstrap&&name==='context')activeContext=undefined;
+     if((bootstrap||coalesced)&&name==='context')activeContext=undefined;
     log(name+'.done',identity)
    }
  })};
  const cleanup=await production.setup({...ctx,session});
   return async()=>{log('cleanup.enter');await cleanup();
-   if(bootstrap&&globalThis.fetch===observedFetch)globalThis.fetch=originalFetch;
+    if((bootstrap||coalesced)&&globalThis.fetch===observedFetch)globalThis.fetch=originalFetch;
    log('cleanup.done')};
 }};
 """, encoding="utf-8")
@@ -445,6 +500,8 @@ export default {...production,setup:async ctx=>{
             ("CONFIG", "config"), ("DATA", "data"), ("CACHE", "cache"), ("STATE", "state"))}})
     if bootstrap:
         env["PALLIUM_NATIVE_BOOTSTRAP"] = "1"
+    if coalesced:
+        env["PALLIUM_NATIVE_COALESCED"] = "1"
     processes = []
     logs = []
 
@@ -522,10 +579,11 @@ export default {...production,setup:async ctx=>{
 
     try:
         process, url = start()
-        if bootstrap:
+        if bootstrap or coalesced:
             assert api("GET", "/api/info")["version"] == "2.2.7", "released host version mismatch"
             bootstrap_summary["host_version_verified"] = True
-        for directory in ([workspace] if bootstrap else [workspace, *locations, foreign]):
+            coalesced_summary["host_version_verified"] = True
+        for directory in ([workspace] if bootstrap or coalesced else [workspace, *locations, foreign]):
             eventually(lambda: activate_plugin(directory))
         def observations():
             return [json.loads(line) for line in lifecycle.read_text(encoding="utf-8").splitlines()]
@@ -535,6 +593,139 @@ export default {...production,setup:async ctx=>{
             bootstrap_summary["startup_empty_settled"] = True
         session = api("POST", "/api/session", {"location": {"directory": str(workspace).replace("\\", "/")}})["data"]["id"]
         prefix = "/api/session/" + session
+        if coalesced:
+            registered = client.post("/relay/turn", json={"runtime": "opencode", "session_ref": session, **scope})
+            assert registered.status_code == 200, registered.text
+            assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "sender", **scope}).status_code == 200
+
+            def wake_rows(operation, delivery=None):
+                return [row for row in wake_responses if row["status"] == 200
+                        and row["request"]["operation"] == operation
+                        and (delivery is None or row["request"].get("delivery_id") == delivery)]
+
+            entered.clear()
+            release.clear()
+            original = send("COALESCED_PAYLOAD_שלום")
+            original_delivery = original["deliveries"][0]["delivery_id"]
+            assert entered.wait(15), "automatic wake never reached the blocked provider"
+            assert delivered(original)
+            eventually(lambda: wake_rows("admitted", original_delivery))
+            admitted = api("POST", prefix + "/prompt", {"id": "msg_coalesced_ordinary",
+                "text": "ordinary work שלום 😀", "delivery": "steer"})
+            admitted = admitted.get("data", admitted)
+            assert admitted["id"] == "msg_coalesced_ordinary"
+            release.set()
+            api("POST", "/api/experimental/session/" + session + "/wait")
+            terminal = eventually(lambda: wake_rows("terminal", original_delivery))[0]["request"]
+            context = api("GET", prefix + "/context")["data"]
+            start = next(i for i, row in enumerate(context) if row.get("id") == terminal["native_input_id"])
+            ordinary = next(i for i, row in enumerate(context) if row.get("id") == "msg_coalesced_ordinary")
+            end = next(i for i in range(start + 1, len(context)) if context[i].get("type") == "idle")
+            wake_user = context[start]
+            assert wake_user["text"] == "[Pallium Relay wake: check the lower-authority Relay context before acting.]"
+            assert wake_user["metadata"] == {"pallium_relay_wake": True, "generation": terminal["generation"],
+                                              "delivery_id": original_delivery}
+            assert start < ordinary < end, "ordinary input was not coalesced before the wake's outcome-idle"
+            assert context[end]["id"] == terminal["terminal_message_id"] and context[end]["outcome"] == "succeeded"
+            coalesced_summary["ordered_coalesced_outcome"] = True
+            assert len(lost_terminals) == 1
+            terminal_boundary = next(i for i, row in enumerate(wake_responses)
+                                     if row["request"] is terminal) + 1
+            eventually(lambda: any(row["request"]["operation"] == "poll" and row["status"] == 200
+                                   and row["response"].get("wake") is None for row in wake_responses[terminal_boundary:]))
+            coalesced_summary["lost_terminal_reply_reconciled"] = True
+
+            # More than two pending messages, with no further ordinary prompt.
+            backlog = [send(f"AUTOMATIC_BACKLOG_{index}_界") for index in range(4)]
+            for sent in backlog:
+                eventually(lambda sent=sent: delivered(sent))
+            api("POST", "/api/experimental/session/" + session + "/wait")
+            # Wait for a fresh empty poll, not an earlier pre-backlog observation.
+            poll_boundary = len(wake_responses)
+            eventually(lambda: any(row["request"]["operation"] == "poll" and row["status"] == 200
+                                   and row["response"].get("wake") is None for row in wake_responses[poll_boundary:]))
+            prompts = [row for row in observations() if row["kind"] == "wake.prompt"]
+            ids = [row["inputID"] for row in prompts]
+            assert len(ids) == len(set(ids)) >= 3, "automatic chain must span more than two native wakes"
+            assert len(wake_rows("admitted", original_delivery)) == len(wake_rows("terminal", original_delivery)) == 1
+            coalesced_summary["automatic_backlog_over_two"] = True
+            coalesced_summary["unique_native_admissions"] = True
+            for sent in [original, *backlog]:
+                delivery_id = sent["deliveries"][0]["delivery_id"]
+                acks = [row for row in observations() if row["kind"] == "wake.ack" and row["deliveryID"] == delivery_id]
+                assert len(acks) == 1 and acks[0]["attached"] is True
+                state = client.get("/relay/messages/" + sent["message_id"], params=scope).json()["deliveries"][0]
+                assert state["state"] == "delivered" and state["attempts"] == 1
+            assert all(any(marker in json.dumps(body, ensure_ascii=False) for body in requests)
+                       for marker in ["COALESCED_PAYLOAD_שלום", *[f"AUTOMATIC_BACKLOG_{i}_界" for i in range(4)]])
+            coalesced_summary["attached_before_ack"] = coalesced_summary["provider_payloads"] = True
+
+            def reload_plugin():
+                before = observations()
+                instance = [row for row in before if row["kind"] == "setup"][-1]["instance"]
+                with wrapper.open("a", encoding="utf-8") as stream:
+                    stream.write("\n// isolated settlement lifecycle reload\n")
+                eventually(lambda: any(row["kind"] == "cleanup.done" and row["instance"] == instance for row in observations()))
+                eventually(lambda: any(row["kind"] == "setup" and row["instance"] != instance for row in observations()[len(before):]))
+
+            # Hold retirement polls, not proof: the new owner must read the same
+            # already-terminal anchor through normal enrollment after reload.
+            terminal_reload_hold.set()
+            reload_anchor = send("TERMINAL_RELOAD_ANCHOR_é")
+            anchor_delivery = reload_anchor["deliveries"][0]["delivery_id"]
+            anchor_terminal = eventually(lambda: wake_rows("terminal", anchor_delivery))[-1]["request"]
+            enroll_boundary = len(wake_responses)
+            reload_plugin()
+            restored = eventually(lambda: [row for row in wake_responses[enroll_boundary:]
+                if row["status"] == 200 and row["request"]["operation"] == "enroll"
+                and row["request"]["owner_id"] != anchor_terminal["owner_id"]])[-1]["response"]["wake"]
+            assert restored["terminal"] is True and restored["native_input_id"] == anchor_terminal["native_input_id"]
+            terminal_reload_hold.clear()
+            terminal_reload_release.set()
+            reloaded = send("AFTER_TERMINAL_RELOAD_é")
+            eventually(lambda: delivered(reloaded))
+            eventually(lambda: wake_rows("terminal", reloaded["deliveries"][0]["delivery_id"]))
+            assert [row["inputID"] for row in observations() if row["kind"] == "wake.prompt"][:len(ids)] == ids
+            coalesced_summary["terminal_reload_safe"] = True
+
+            # Hold only the plugin's outside-hook wait continuation while a real
+            # native compaction removes its exact input. Never substitute context.
+            proof_hold.set()
+            missing = send("MISSING_PROOF_PAYLOAD_שלום")
+            assert proof_held.wait(15), "outside-hook native wait did not reach the compaction gate"
+            missing_delivery = missing["deliveries"][0]["delivery_id"]
+            missing_wake = eventually(lambda: wake_rows("admitted", missing_delivery))[-1]["request"]
+            assert delivered(missing)
+            assert any("MISSING_PROOF_PAYLOAD_שלום" in json.dumps(body, ensure_ascii=False) for body in requests)
+            api("POST", prefix + "/compact", {"id": "msg_missing_proof_compaction", "delivery": "queue"})
+            api("POST", "/api/experimental/session/" + session + "/wait")
+            compacted = api("GET", prefix + "/context")["data"]
+            assert any(row.get("id") == "msg_missing_proof_compaction" and row.get("status") == "completed" for row in compacted)
+            assert not any(row.get("id") == missing_wake["native_input_id"] for row in compacted)
+            held_backlog = send("HELD_BACKLOG_界")
+            proof_release.set()
+
+            def held_polls_since(boundary):
+                polls = [row for row in wake_responses[boundary:] if row["status"] == 200 and row["request"]["operation"] == "poll"]
+                return len(polls) >= 2 and all((row["response"].get("wake") or {}).get("native_input_id") == missing_wake["native_input_id"]
+                    and row["response"]["wake"]["admitted"] is True and row["response"]["wake"]["terminal"] is False for row in polls)
+
+            boundary = len(wake_responses)
+            eventually(lambda: held_polls_since(boundary))
+            assert not wake_rows("terminal", missing_delivery) and not delivered(held_backlog)
+            coalesced_summary["missing_proof_compaction_hold"] = True
+            reload_plugin()
+            boundary = len(wake_responses)
+            eventually(lambda: held_polls_since(boundary))
+            assert not wake_rows("terminal", missing_delivery) and not delivered(held_backlog)
+            all_ids = [row["inputID"] for row in observations() if row["kind"] == "wake.prompt"]
+            assert len(all_ids) == len(set(all_ids)) and all_ids.count(missing_wake["native_input_id"]) == 1
+            assert not any(row["kind"] == "wake.interrupt" for row in observations())
+            coalesced_summary["missing_proof_reload_hold"] = coalesced_summary["no_interrupt"] = True
+            api("DELETE", prefix)
+            eventually(lambda: client.get("/relay/sessions", params={"runtime": "opencode", **scope,
+                "include_inactive": True}).json()[0]["state"] == "closed")
+            return
         if bootstrap:
             eventually(lambda: any(row["kind"] == "bootstrap.restore.empty.settled" and row.get("sessionID") == session
                                    for row in observations()))
@@ -775,6 +966,8 @@ export default {...production,setup:async ctx=>{
         eventually(lambda: client.get("/relay/sessions", params={"runtime": "opencode", **scope, "include_inactive": True}).json()[0]["state"] == "closed")
     finally:
         release.set()
+        proof_release.set()
+        terminal_reload_release.set()
         retirement_release.set()
         (tmp_path / "native.log").write_text("".join(logs), encoding="utf-8")
         (tmp_path / "capture-evidence.json").write_text(json.dumps(capture_evidence, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -791,6 +984,13 @@ export default {...production,setup:async ctx=>{
             if summary:
                 Path(summary).write_text(json.dumps(bootstrap_summary), encoding="utf-8")
             assert bootstrap_summary["owned_drain"], "owned native host did not drain"
+        if coalesced:
+            coalesced_summary["owned_drain"] = all(process.poll() is not None for process in processes)
+            (tmp_path / "settlement-evidence.json").write_text(json.dumps(wake_responses, ensure_ascii=False, indent=2), encoding="utf-8")
+            summary = os.environ.get("PALLIUM_OPENCODE_COALESCED_SUMMARY")
+            if summary:
+                Path(summary).write_text(json.dumps(coalesced_summary), encoding="utf-8")
+            assert coalesced_summary["owned_drain"], "owned native host did not drain"
 
 
 def test_capture_callbacks_retry_through_real_http_and_history(client, tmp_path):

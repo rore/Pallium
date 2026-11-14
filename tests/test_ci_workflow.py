@@ -262,6 +262,61 @@ def test_explicit_ci_test_paths_exist() -> None:
     for relative in re.findall(r"(?m)^\s+(tests/\S+)$", WORKFLOW):
         assert (root / relative).exists(), relative
 
+
+def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_native_selection() -> None:
+    import yaml
+
+    root = Path(__file__).parents[1]
+    workflow = yaml.safe_load((root / ".github/workflows/opencode-native-qualification.yml").read_text(encoding="utf-8"))
+    job = workflow["jobs"]["qualify"]
+    assert job["runs-on"] == "windows-latest" and job["timeout-minutes"] == 15
+    assert "github.run_attempt == 1" in job["if"]
+    assert "github.event.pull_request.head.repo.full_name == github.repository" in job["if"]
+    assert workflow["concurrency"]["cancel-in-progress"] is False
+    assert workflow["permissions"] == {"contents": "read"}
+    assert job["env"]["BASELINE"] == "93f497bf0eed29659630c277626d821d24964524"
+    steps = {step["id"]: step for step in job["steps"] if "id" in step}
+    focused = "coalesced native wake settles from exact outcome-bearing idle: succeeded"
+    for phase in ("baseline", "focused"):
+        assert f"--test-name-pattern='^{focused}$'" in steps[phase]["run"]
+        assert "startup empty discovery" not in steps[phase]["run"]
+    assert "coalesced exact wake must settle activation without replay" in steps["baseline"]["run"]
+    assert "$exit -ne 1 -or $failed.Count -ne 1" in steps["baseline"]["run"]
+    assert "$selected.Count -ne 1" in steps["focused"]["run"]
+    assert "test_activation_settlement_preserves_original_authority_before_backlog*" in steps["backend"]["run"]
+    assert "$states.Count -ne 4" in steps["backend"]["run"]
+    native = steps["native"]["run"]
+    assert "test_released_native_coalesced_settlement_and_automatic_backlog -m slow -q -n 0" in native
+    assert "$cases.Count -ne 1 -or $cases[0].skipped" in native
+    assert "PALLIUM_OPENCODE_COALESCED_SUMMARY" in native and ".Count -ne 12" in native
+    assert steps["native"]["timeout-minutes"] == 2
+    evidence = next(step["run"] for step in job["steps"] if step.get("name") == "Verify owned drain and produce public-safe evidence")
+    for key in ("ordered_coalesced_outcome", "lost_terminal_reply_reconciled", "automatic_backlog_over_two",
+                "terminal_reload_safe", "missing_proof_compaction_hold", "missing_proof_reload_hold"):
+        assert key in evidence
+    uploads = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")]
+    assert len(uploads) == 1 and uploads[0]["with"]["path"].endswith("/public/summary.json")
+
+
+def test_opencode_settlement_qualification_inventories_every_new_case_and_preserved_negative() -> None:
+    import yaml
+
+    root = Path(__file__).parents[1]
+    workflow = yaml.safe_load((root / ".github/workflows/opencode-native-qualification.yml").read_text(encoding="utf-8"))
+    cases = workflow["jobs"]["qualify"]["env"]["NEW_CASES"].splitlines()
+    expected = {"missing admitted input and unrelated idle cannot settle or issue a new native ID",
+                "coalesced native wake waits for settlement and successor work"}
+    expected.update(f"coalesced native wake settles from exact outcome-bearing idle: {outcome}"
+                    for outcome in ("succeeded", "failed", "interrupted"))
+    expected.update(f"coalesced native wake rejects unproven after-wait evidence: {fault}" for fault in (
+        "missing-id", "invalid-id", "same-id", "outcomeless", "unknown-outcome", "nonstring-outcome", "before-input",
+        "compacted", "wrong-input", "wrong-text", "wrong-marker", "wrong-generation", "wrong-delivery", "uncertain-first-idle"))
+    expected.update(f"coalesced native wake fences changed binding after wait: {change}" for change in (
+        "dispose", "location", "endpoint", "scope", "wake-generation", "wake-delivery", "wake-input", "wake-location"))
+    expected.update(f"coalesced native wake keeps uncertainty without replay: {failure}" for failure in (
+        "wait", "context", "terminal-rejected", "terminal-reply-lost"))
+    assert len(cases) == len(set(cases)) == 31 and set(cases) == expected
+
 def _gate(jobs: dict, event: str) -> subprocess.CompletedProcess:
     block = _job("result")
     assert "if: always()" in block
