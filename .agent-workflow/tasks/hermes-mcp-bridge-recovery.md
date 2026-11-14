@@ -4,7 +4,7 @@ Canonical identity: `agent-workflow:hermes-mcp-bridge-recovery`.
 Current branch: `feat/hermes-mcp-bridge-recovery`; continuation base: `93f497bf0eed29659630c277626d821d24964524`.
 Historical source branch: `fix/hermes-mcp-bridge-recovery`; preparation base: `d7ecc2b2b89624ef8444934e0332f930b9894f84`. The historical checkout and branch remain untouched.
 
-Current phase: actual first-regression RED independently accepted by the manager on published `bb96a4354e075165f3acb2bd2e6ba47c594242e5`. Continue the same accepted minimal bridge lifecycle implementation and required caller coverage. Standing-architect technical PLAN GO remains confirmed for the original record SHA256 e6f28a98c4b07cd82d5a2f5f4e77dd6d883efc0a2f2c9242d297660863c46a6d; Elevated/Moderate is unchanged. No new human source approval or repeat plan review is required.
+Current phase: accepted-RED bridge implementation and caller coverage authored on `4e2c10e5ec62787ffa1f01c8d2df367b17d326d5`; fresh hosted verification and independent product/result assessment pending. The manager independently accepted actual first-regression RED on `bb96a4354e075165f3acb2bd2e6ba47c594242e5`. Standing-architect technical PLAN GO remains confirmed for the original record SHA256 e6f28a98c4b07cd82d5a2f5f4e77dd6d883efc0a2f2c9242d297660863c46a6d; Elevated/Moderate is unchanged. No new human source approval or repeat plan review is required.
 
 <!-- agent-workflow:start -->
 **Outcome:**
@@ -73,7 +73,7 @@ The original Elevated/Moderate plan remains accepted. The task owner now explici
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Initial preparation checkpoint — historical
@@ -215,3 +215,15 @@ Extended the existing fixture only for explicit send-loss opt-out, public `anyio
 Local evidence remains source-only: AST/in-memory compilation and comparison preserve every prior test body and the accepted first regression. No tests, collection, application imports or bridge probes ran locally. The next meaningful push will include this coherent product/test delta and the already-local RED evidence record, then use ordinary hosted CI once. The prior test-only BLUE artifact is not current product governance; obtain the fresh run's actual verdict and inspect all changed-case JUnit evidence. SDK2 remains conditional on its existing supplied interpreter and must not be claimed qualified from skipped cases. Independent product/result assessment and final evidence review remain required before merge.
 
 Current source checks passed: syntax/in-memory compilation, all prior test bodies and first-regression AST unchanged, immutable Requirement baseline, private-detail scan and whitespace. The two saved historical source hashes remain exact. Whole-change selection is full for precisely the record, bridge and MCP-test paths. The current Redline reporter correctly refused to emit a product verdict without its configured genuine boundary report. Do not opt out, manufacture that report or reuse the old BLUE artifact for this product delta. The already-authorized ordinary PR governance run must supply current boundary/versioned evidence. No local application execution is used to bypass that boundary.
+
+### Product publication and pending verification
+
+Published the coherent product/test delta as `4e2c10e5ec62787ffa1f01c8d2df367b17d326d5` on the same draft PR. The PR body now distinguishes accepted historical RED from unverified current product source. A single bounded native completion watch observes the ordinary CI round; the current architect has the frozen three-path snapshot for the existing required product/result assessment. First-regression plan/source review is not repeated. Source-derived inventory names all 29 bridge cases without collecting tests; compare actual hosted JUnit coverage against it, including skips and setup/teardown failures. Do not push this record-only checkpoint while that round is running. Result review, fresh genuine governance and runtime evidence are still pending; no GREEN or merge readiness is claimed.
+
+### First product round — concrete fixture correction
+
+Ordinary CI reached the accepted first regression and 24 additional bridge cases successfully in Linux 3.13, including real owned-stdin EOF, scheduling/cancellation/timeouts, repeated recovery, partial startup, catalogue checks, concurrent mutation/private-reply snapshots and late-generation fencing. The unresolved-cleanup test failed before its oracle: it patched `ClientSession.__aexit__` after `AsyncExitStack` had already captured the bound exit callback during construction. The gate was therefore never entered; its finalizer then masked the assertion with a closed-loop scheduling error. Three later bridge cases are absent after fail-fast. Linux 3.12 reached no bridge cases after separate hook-duration and Relay acquisition failures. These incomplete profiles and aggregate failure are not GREEN.
+
+Correct only that test seam by installing the same exit wrapper before construction, and release its gate only if the owned loop remains open. Preserve every cleanup/no-overlap/readback assertion and the product source. The new product governance round passed with real boundary/versioned evidence; do not treat it as runtime acceptance or evidence for missing cases. State is Blocked on corrected caller coverage and independent result/evidence review, not new human approval or a plan restart. Publish one meaningful correction and inspect its ordinary hosted evidence; no unchanged rerun or new runner.
+
+The [first-product evidence receipt](https://github.com/rore/Pallium/pull/408#issuecomment-6884972377) preserves actual outcomes and version-specific coverage gaps. Source correction is limited to that one test function; AST comparison confirms all its assertions and every other test body remain unchanged, and the product blob remains `048698bdfb45ebf38b30dacaa98c80f4132bff1e`. Syntax, privacy and whitespace passed without imports/execution. Actual first-product governance evidence is reusable for this unchanged product/import graph and same-path test seam correction; the local checker has no blocking predicate and only the existing ordering advisory. The next automatic round still supplies its own current evidence. Keep lifecycle fault wrappers installed before context acquisition when the owner captures exit callbacks; later class patching does not change an already-captured cleanup callback.

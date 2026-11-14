@@ -1071,19 +1071,20 @@ def test_bridge_unresolved_cleanup_fences_replacement_until_owned_exit_e2e(
     client, joined_bridge_recovery_context, monkeypatch,
 ):
     joined = joined_bridge_recovery_context
-    bridge, scope, identities, endpoints = _bridge_lifecycle_case(client, joined)
-    old = bridge._connection
     original_exit = ClientSession.__aexit__
+    old = None
     entered = threading.Event()
     gate = asyncio.Event()
 
     async def delayed_exit(session, *failure):
-        if session is old.session:
+        if old is not None and session is old.session:
             entered.set()
             await gate.wait()
         return await original_exit(session, *failure)
 
     monkeypatch.setattr(ClientSession, "__aexit__", delayed_exit)
+    bridge, scope, identities, endpoints = _bridge_lifecycle_case(client, joined)
+    old = bridge._connection
     bridge._retire(old)
     try:
         assert entered.wait(3)
@@ -1095,7 +1096,8 @@ def test_bridge_unresolved_cleanup_fences_replacement_until_owned_exit_e2e(
         assert bridge._connection is old and len(joined.stdio_contexts) == 1
         assert not old.finished.is_set() and not joined.sdk_calls
     finally:
-        old.loop.call_soon_threadsafe(gate.set)
+        if not old.loop.is_closed():
+            old.loop.call_soon_threadsafe(gate.set)
         old.thread.join(timeout=3)
     assert old.finished.is_set() and not old.cleanup_failed
     assert _bridge_address(bridge, identities[1])["exact_selector"] == endpoints[identities[1]]
