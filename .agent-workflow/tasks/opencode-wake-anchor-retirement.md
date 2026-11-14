@@ -35,7 +35,7 @@
 
 **Approvals:** The task owner assigned OC-1 as the top functional priority and permits a narrow visible-input contribution without falsely closing OC-1 or dropping full recovery acceptance. The existing architect's concrete no-storage PLAN/authority GO now releases this bounded source/test authoring under that task authority. Standing full-list authority covers routine reviewed publication/hosted CI/normal merge after gates, not arbitrary live changes or unbudgeted execution. No provisional High human gate is manufactured for the actually selected Elevated scope; future persistence/backend expansion requires its own applicable review.
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Pickup and preserved work
@@ -138,3 +138,11 @@ Static Python AST parsing passed for the three changed Python test files. A sour
 Additional static checks passed: Node `--check` for the plugin and V2 test source; syntax-only parsing of all three embedded JavaScript callers, the hosted evidence Python and YAML metadata; 31 unique required package cases. The whole-change selector, run as isolated stdlib-only metadata analysis with `--base origin/main`, selects full validation and `python -m pytest tests/ -x -q` across all eight changed paths. That command was not run locally. Current Relay identity is reverified unnamed; the exact existing Minimap explicit association matches the authoritative item-reference CLI output and is reused, with no name or association mutation.
 
 Next: finish static selection/syntax checks, commit the bounded source checkpoint, and submit its exact identity and runner delta to the existing assigned architect for source/runner-safety review. Request the concrete remaining hosted execution budget through the manager, not a new reviewer or approval loop. Do not publish/label/launch qualification until its required gates and budget are established. State remains Ready to implement, not Ready for review; actual package/backend/full/native validation and result review are outstanding.
+
+### Source checkpoint and review handoff
+
+Source preparation is committed as `b6f56d844ce0d698560154b8ab29870a256e9895` on `fix/opencode-wake-anchor-retirement`. That candidate is clean and includes the approved plugin, existing HTTP/native/workflow test changes, qualification selection and pending-qualification README. All eight task paths are accounted for by the whole-change selector; no backend, helper, schema, storage, skill or protected behavior-contract file changed.
+
+The exact source and reused-runner safety/feasibility request was saved once to the freshly verified existing assigned architect. The substantive manager checkpoint was also saved, with source identity, static-only evidence, full-scope limits and the request to establish the actual remaining execution budget. Delivery is pending, not acceptance or review GO. The authorized one-off stable-ID queued native manager pointer was admitted exactly once; returned message/session/delivery matched, and before/after readback confirms the agent, model and effort unchanged. No interrupt, resend, installed mutation or wait/status loop occurred. Private transport/admission/settings evidence remains ignored.
+
+State is now Blocked only on the existing source/runner gate and explicit supported hosted execution budget. PLAN GO and privacy GO are resolved and must not be reopened. No tests, application imports, local runtime probes, hosted execution or publication ran. Next action: consume the assigned source review, address concrete findings, confirm the manager's execution budget, then perform the authorized hosted RED/GREEN/package/backend/full/native validation and existing result review. Full OC-1 recovery and the current compacted incident remain open. Manager-owned roadmap reconciliation remains pending acceptance; the worker's exact feature tuple is already stored under Relationships. Retain this checkout and its ignored evidence for the review and continuation.
