@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 
 import uvicorn
@@ -13,6 +14,14 @@ from app.runtime_logging import build_uvicorn_log_config
 from app.supervisor import run_supervisor
 
 logger = logging.getLogger(__name__)
+_API_BIND_HOST_ENV = "_PALLIUM_API_BIND_HOST"
+
+
+def _child_app():
+    """Importable factory for Uvicorn's reload/worker children only."""
+    from app.main import app
+
+    return app(bind_host=os.environ.get(_API_BIND_HOST_ENV))
 
 
 def _serve(*, host: str, port: int, reload: bool) -> None:
@@ -20,7 +29,15 @@ def _serve(*, host: str, port: int, reload: bool) -> None:
                    log_config=build_uvicorn_log_config(component="api"))
     config = uvicorn.Config("app.main:app", **options)
     if reload or config.workers > 1:
-        uvicorn.run("app.main:app", **options)
+        previous_host = os.environ.get(_API_BIND_HOST_ENV)
+        os.environ[_API_BIND_HOST_ENV] = host
+        try:
+            uvicorn.run("app.run:_child_app", **options)
+        finally:
+            if previous_host is None:
+                os.environ.pop(_API_BIND_HOST_ENV, None)
+            else:
+                os.environ[_API_BIND_HOST_ENV] = previous_host
         return
 
     class OwnedServer(uvicorn.Server):
@@ -51,7 +68,7 @@ def _serve(*, host: str, port: int, reload: bool) -> None:
         def request_exit() -> None:
             loop.call_soon_threadsafe(server.request_exit)
 
-        return app(on_retained_terminal=request_exit)
+        return app(bind_host=host, on_retained_terminal=request_exit)
 
     config.app = owned_factory
     try:

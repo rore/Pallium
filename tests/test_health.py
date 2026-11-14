@@ -84,9 +84,9 @@ async def test_production_codex_shutdown_settles_pretracking_and_worker_tail(
         servers.append(server)
         return real_run(server)
 
-    def owned_app(*, on_retained_terminal):
+    def owned_app(*, on_retained_terminal, bind_host):
         callbacks.append(on_retained_terminal)
-        return real_app(on_retained_terminal=on_retained_terminal)
+        return real_app(on_retained_terminal=on_retained_terminal, bind_host=bind_host)
 
     async def wait_for_tasks(server):
         draining.set()

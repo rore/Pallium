@@ -103,8 +103,117 @@ def test_serve_preserves_unowned_reload_and_multiworker_driver(monkeypatch, relo
     monkeypatch.setattr(app_run.uvicorn, "run", lambda *a, **kw: calls.append((a, kw)))
     monkeypatch.setattr(app_run.uvicorn.Server, "run", lambda _: pytest.fail("unowned server driver"))
     app_run._serve(host="127.0.0.1", port=0, reload=reload)
-    assert len(calls) == 1 and calls[0][0] == ("app.main:app",)
+    assert len(calls) == 1 and calls[0][0] == ("app.run:_child_app",)
     assert calls[0][1]["factory"] is True and calls[0][1]["reload"] is reload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1", "0.0.0.0", "::", "192.0.2.1"])
+async def test_owned_factory_passes_actual_bind_without_private_handoff(monkeypatch, host):
+    from app import main
+
+    monkeypatch.setenv("_PALLIUM_API_BIND_HOST", "stale-host")
+    calls = []
+    monkeypatch.setattr(main, "app", lambda **kwargs: calls.append(kwargs))
+
+    def run(server):
+        assert server.config.host == host
+        server.config.app()
+        server.started = True
+
+    monkeypatch.setattr(app_run.uvicorn.Server, "run", run)
+    app_run._serve(host=host, port=0, reload=False)
+    assert calls[0]["bind_host"] == host
+    assert callable(calls[0]["on_retained_terminal"])
+    assert os.environ["_PALLIUM_API_BIND_HOST"] == "stale-host"
+
+
+@pytest.mark.parametrize("reload,workers", [(True, "1"), (False, "2")])
+@pytest.mark.parametrize("prior", [None, "stale-host"])
+@pytest.mark.parametrize("failure", [None, RuntimeError, KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1", "0.0.0.0"])
+def test_child_factory_bind_handoff_is_overwritten_and_restored(monkeypatch, reload, workers, prior, failure, host):
+    from app import main
+
+    monkeypatch.setenv("WEB_CONCURRENCY", workers)
+    if prior is None:
+        monkeypatch.delenv("_PALLIUM_API_BIND_HOST", raising=False)
+    else:
+        monkeypatch.setenv("_PALLIUM_API_BIND_HOST", prior)
+    calls = []
+    monkeypatch.setattr(main, "app", lambda **kwargs: calls.append(kwargs))
+
+    def run(factory, **options):
+        from uvicorn.importer import import_from_string
+
+        assert factory == "app.run:_child_app"
+        assert options["host"] == os.environ["_PALLIUM_API_BIND_HOST"] == host
+        import_from_string(factory)()
+        if failure is not None:
+            raise failure("driver failed")
+
+    monkeypatch.setattr(app_run.uvicorn, "run", run)
+    if failure is not None:
+        with pytest.raises(failure, match="driver failed"):
+            app_run._serve(host=host, port=0, reload=reload)
+    else:
+        app_run._serve(host=host, port=0, reload=reload)
+    assert calls == [{"bind_host": host}]
+    assert os.environ.get("_PALLIUM_API_BIND_HOST") == prior
+
+
+def test_child_factory_missing_handoff_passes_unknown_bind(monkeypatch):
+    from app import main
+
+    monkeypatch.delenv("_PALLIUM_API_BIND_HOST", raising=False)
+    calls = []
+    monkeypatch.setattr(main, "app", lambda **kwargs: calls.append(kwargs))
+    app_run._child_app()
+    assert calls == [{"bind_host": None}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bind_host", [None, "127.0.0.1", "::1", "0.0.0.0"])
+@pytest.mark.parametrize("managed_expiry", [False, True])
+async def test_production_initializer_propagates_bind_and_ignores_private_environment(
+    monkeypatch, bind_host, managed_expiry,
+):
+    import asyncio
+    from contextlib import asynccontextmanager
+    from fastapi import FastAPI
+    from app import main
+
+    ready = asyncio.Event()
+    calls = []
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        ready.set()
+        yield
+
+    inner = FastAPI(lifespan=lifespan)
+    monkeypatch.setenv("_PALLIUM_API_BIND_HOST", "127.0.0.1")
+    monkeypatch.setattr(main, "_write_launch_token", lambda: None)
+    if managed_expiry:
+        monkeypatch.setenv("PALLIUM_API_RELAY_EXPIRY_DATABASE_URL", "sqlite:///isolated-relay.db")
+        monkeypatch.setenv("PALLIUM_API_LAUNCH_TOKEN", "isolated-launch")
+    else:
+        monkeypatch.delenv("PALLIUM_API_RELAY_EXPIRY_DATABASE_URL", raising=False)
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return inner
+
+    monkeypatch.setattr(main, "create_app", create)
+    application = main.app() if bind_host is None else main.app(bind_host=bind_host)
+    async with application.router.lifespan_context(application):
+        await asyncio.wait_for(ready.wait(), timeout=5)
+        assert application.state._initialized_app is inner
+        expected = {} if bind_host is None else {"bind_host": bind_host}
+        if managed_expiry:
+            expected["_relay_expiry_database_url"] = "sqlite:///isolated-relay.db"
+        assert calls == [expected]
+    assert application.state._initialized_app is None
 
 
 @pytest.mark.parametrize("interrupt", [False, True])
@@ -179,9 +288,10 @@ async def test_owned_server_terminal_exit_runs_actual_lifespan_cleanup(
         loop_entries.append(True)
         await original_loop(server)
 
-    def factory(*, on_retained_terminal):
+    def factory(*, on_retained_terminal, bind_host):
+        assert bind_host == "127.0.0.1"
         callbacks.append(on_retained_terminal)
-        application = original_factory(on_retained_terminal=on_retained_terminal)
+        application = original_factory(on_retained_terminal=on_retained_terminal, bind_host=bind_host)
         lifespan = application.router.lifespan_context
         @contextlib.asynccontextmanager
         async def early_lifespan(app):

@@ -183,7 +183,8 @@ def _recover_interrupted_swap(index_path: Path) -> None:
 
 
 def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverrides | None = None,
-               *, _relay_expiry_database_url: str | None = None) -> FastAPI:
+               *, _relay_expiry_database_url: str | None = None,
+               bind_host: str | None = None) -> FastAPI:
     # Check MCP availability
     mcp_available = False
     mcp_app = None
@@ -191,7 +192,8 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     try:
         from app.mcp.server import create_server as create_mcp_server
         mcp_available = True
-        mcp_server = create_mcp_server(host="0.0.0.0")
+        # The ASGI listener owns the bind; FastMCP's mount settings do not.
+        mcp_server = create_mcp_server(host="0.0.0.0", relay_bind_host=bind_host or "")
         mcp_app = mcp_server.streamable_http_app()
         session_manager = mcp_server._session_manager
     except ImportError:
@@ -868,7 +870,8 @@ class _StartupGate:
         await self.app(scope, receive, send)
 
 
-def app(*, on_retained_terminal: Callable[[], None] | None = None) -> FastAPI:
+def app(*, on_retained_terminal: Callable[[], None] | None = None,
+        bind_host: str | None = None) -> FastAPI:
     """Production ASGI factory: bind before non-abandoning initialization."""
     expiry_database = os.environ.get("PALLIUM_API_RELAY_EXPIRY_DATABASE_URL")
     if expiry_database is not None and (not expiry_database or not os.environ.get("PALLIUM_API_LAUNCH_TOKEN")):
@@ -882,8 +885,9 @@ def app(*, on_retained_terminal: Callable[[], None] | None = None) -> FastAPI:
 
         async def initialize():
             try:
-                factory = create_app if expiry_database is None else partial(
-                    create_app, _relay_expiry_database_url=expiry_database)
+                factory = create_app if bind_host is None else partial(create_app, bind_host=bind_host)
+                if expiry_database is not None:
+                    factory = partial(factory, _relay_expiry_database_url=expiry_database)
                 built = await anyio.to_thread.run_sync(factory, abandon_on_cancel=False)
                 built.state._production_bootstrap = True
                 built.state._on_retained_terminal = on_retained_terminal

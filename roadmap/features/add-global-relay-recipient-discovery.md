@@ -49,3 +49,15 @@ separately observed delayed native wake attempts remain a distinct investigation
 HTTP and MCP caller tests cover cross-container duplicate native references,
 runtime filtering, lifecycle states, bounded continuation, Unicode, malformed
 inputs, local-only access, secret-free output, and no send side effects.
+
+## Mounted MCP bind correction (2026-11-14)
+
+The follow-up carries the actual listener bind through startup to mounted MCP's
+global discovery and unscoped trace gate, separately from FastMCP mount settings.
+Remote, wildcard and unknown binds remain refused. URL-predicate, scoped,
+identity and standalone behavior are unchanged.
+
+The original feature remains done. See the
+[Work Record](../../.agent-workflow/tasks/mounted-mcp-global-discovery.md)
+for separate source-review, CI and installed-delivery evidence. Source assessment
+is accepted; CI validation and installed recovery are not yet claimed.

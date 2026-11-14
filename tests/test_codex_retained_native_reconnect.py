@@ -246,9 +246,9 @@ def start(*, on_terminal):
     return service
 bridge.start_retained_service = start
 factory, callbacks = main.app, []
-def owned_factory(*, on_retained_terminal):
+def owned_factory(*, on_retained_terminal, bind_host):
     callbacks.append(on_retained_terminal)
-    return factory(on_retained_terminal=on_retained_terminal)
+    return factory(on_retained_terminal=on_retained_terminal, bind_host=bind_host)
 main.app = owned_factory
 def commands():
     for command in sys.stdin:
