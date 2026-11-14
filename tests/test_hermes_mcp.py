@@ -8,6 +8,7 @@ import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -24,6 +25,17 @@ from app.mcp.context import (
 from app.mcp.client import PalliumMcpClient
 from app.mcp.hermes import HERMES_MEMORY_TOOLS, HERMES_TOOLS, _read_identity, create_hermes_server, make_tool_adapter
 from app.mcp.server import create_server
+from integrations.hermes.mcp_bridge import RelayMcpBridge
+from tests.test_hermes_relay_plugin import (
+    SCOPE,
+    _admit_plugin_wake,
+    _mcp_tool,
+    _persisted_wake,
+    _plugin_wake,
+    _request_stage,
+    plugin_context as plugin_context,
+    status as _plugin_message_status,
+)
 
 
 class _RelayHandler(BaseHTTPRequestHandler):
@@ -295,6 +307,295 @@ def test_dedicated_hermes_stdio_binds_identity_and_reuses_relay_tools(client) ->
     })
     assert peer_inbox.status_code == 200, peer_inbox.text
     assert any(item["payload"] == "réponse" for item in peer_inbox.json()["deliveries"])
+
+
+@pytest.fixture
+def joined_mcp_reply_context(client, plugin_context, monkeypatch):
+    """Join existing host callbacks to real bridge/stdio/HTTP, without live config."""
+    module, create, config = plugin_context
+    contexts, bridges, pollers, requests, reply_calls, errors = [], [], [], [], [], []
+    resource_lock = threading.Lock()
+    server = listener = None
+    startup_error = None
+
+    def attempt(callback, *args):
+        try:
+            callback(*args)
+        except BaseException as error:
+            errors.append(error)
+
+    def join_owned(thread):
+        if thread.ident is not None:
+            thread.join(timeout=2)
+        assert not thread.is_alive(), f"Owned thread did not exit: {thread.name}"
+
+    class Handler(_RelayHandler):
+        pass
+
+    Handler.client, Handler.calls, Handler.lock = client, [], threading.Lock()
+
+    class Proxy(ThreadingHTTPServer):
+        def process_request(self, request, client_address):
+            # Keep exact handles before start; do not enumerate unrelated threads.
+            worker = threading.Thread(
+                target=self.process_request_thread, args=(request, client_address),
+                name="hermes-reply-test-http-request", daemon=True,
+            )
+            with resource_lock:
+                requests.append(worker)
+            try:
+                worker.start()
+            except BaseException as error:
+                with resource_lock:
+                    errors.append(error)
+                attempt(self.shutdown_request, request)
+                raise
+
+        def handle_error(self, request, client_address):
+            with resource_lock:
+                errors.append(os.sys.exception() or RuntimeError("Proxy request failed"))
+
+    class Bridge(RelayMcpBridge):
+        def __init__(self, **kwargs):
+            bridges.append(self)  # Retain partial construction for failure cleanup.
+            super().__init__(**kwargs)
+
+        def call(self, name, arguments, identity, reply=None):
+            if name == "pallium_relay_reply":
+                reply_calls.append(tuple(identity))
+            return super().call(name, arguments, identity, reply)
+
+    def owned_poller(*args, **kwargs):
+        thread = threading.Thread(*args, **kwargs)
+        pollers.append(thread)
+        return thread
+
+    register = module.register
+
+    def owned_register(ctx):
+        contexts.append(ctx)  # Existing create() only retains successful register().
+        return register(ctx)
+
+    def check_bridge(bridge):
+        assert bridge._finished.is_set(), "Owned MCP stdio context did not finish"
+        assert not bridge._failed, "Owned MCP serve/cleanup reported failure"
+
+    def serve():
+        try:
+            assert server is not None
+            server.serve_forever(poll_interval=.01)
+        except BaseException as error:
+            with resource_lock:
+                errors.append(error)
+
+    try:
+        server = Proxy(("127.0.0.1", 0), Handler)
+        listener = threading.Thread(
+            target=serve,
+            name="hermes-reply-test-http", daemon=True,
+        )
+        listener.start()
+        settings = config["plugins"]["entries"]["pallium-hermes-relay"]["settings"]
+        settings.update(
+            service_url=f"http://127.0.0.1:{server.server_port}", **SCOPE,
+            mcp_python=os.sys.executable, mcp_repo=str(Path(__file__).resolve().parents[1]),
+            actor_ref="hermes-test", visibility="private", memory_enabled=False,
+        )
+        bridge_module = ModuleType(module.__name__ + ".mcp_bridge")
+        bridge_module.RelayMcpBridge = Bridge
+        monkeypatch.setitem(os.sys.modules, bridge_module.__name__, bridge_module)
+        monkeypatch.setattr(module, "register", owned_register)
+        # Only the test-loaded plugin's namespace changes, not global threading.
+        monkeypatch.setattr(module, "threading", SimpleNamespace(
+            RLock=threading.RLock, Event=threading.Event,
+            Thread=owned_poller, current_thread=threading.current_thread,
+        ))
+        yield SimpleNamespace(
+            create=create, bridges=bridges, reply_calls=reply_calls, http_calls=Handler.calls,
+            session="ses_שלום", turn="wake",
+        )
+    except BaseException as error:
+        startup_error = error
+        raise
+    finally:
+        # Retire every callback before attempting any: an early failure must not
+        # leave callbacks for plugin_context to run after proxy/client teardown.
+        callbacks = []
+        for ctx in reversed(contexts):
+            callbacks.extend(ctx.cleanups)
+            ctx.cleanups.clear()
+        for callback in callbacks:
+            attempt(callback)
+        for bridge in bridges:
+            thread = getattr(bridge, "_thread", None)
+            if thread is not None:
+                if thread.ident is not None and not bridge._finished.is_set():
+                    attempt(bridge.close)
+                attempt(join_owned, thread)
+                attempt(check_bridge, bridge)
+        for poller in pollers:
+            attempt(join_owned, poller)
+        if server is not None:
+            if listener is not None and listener.is_alive():
+                attempt(server.shutdown)
+            attempt(server.server_close)
+        if listener is not None:
+            attempt(join_owned, listener)
+        # Listener is quiescent, so no more request handles can be acquired.
+        with resource_lock:
+            workers = list(requests)
+        for worker in workers:
+            attempt(join_owned, worker)
+        if errors:
+            failures = ([startup_error] if startup_error is not None else []) + errors
+            # Pytest separately retains a test-body failure and this teardown
+            # failure; construction failures also remain explicit group members.
+            raise BaseExceptionGroup("Joined MCP fixture cleanup failed", failures) from None
+
+
+def _admitted_joined_reply(client, joined):
+    ctx, marker, incoming = _plugin_wake(client, joined.create)
+    admission_request = _admit_plugin_wake(
+        ctx, marker, turn=joined.turn, session=joined.session,
+    )
+    assert len(joined.bridges) == 1
+    bridge = joined.bridges[0]
+    assert isinstance(bridge, RelayMcpBridge)
+    assert bridge.config[1] == SCOPE["container_ref"]
+    reply = next(tool for tool in bridge.catalog if tool["name"] == "pallium_relay_reply")
+    assert "message" in reply["parameters"]["properties"]
+    assert "payload" not in reply["parameters"]["properties"]
+    # Prove the joined transport and exact admitted identity BEFORE the subject
+    # assertion; a setup/stdio failure must not masquerade as a contract RED.
+    address = json.loads(_mcp_tool(
+        ctx, "pallium_relay_address", {}, session=joined.session, turn=joined.turn,
+    ))
+    assert "error" not in address, address
+    assert address["runtime"] == "hermes"
+    assert address["session_ref"] == joined.session
+    # A healthy address call is NOT admission proof. These existing read paths
+    # must establish the exact hook-owned ACK and still-current session/turn
+    # before any subject reply. Failure here is fixture/admission failure, NOT
+    # message-limit RED; no receipt is seeded/read and no reply is consumed.
+    admission_failure = "Fixture/admission precondition failed (not message-limit RED)"
+    delivery_id = incoming["deliveries"][0]["delivery_id"]
+    deliveries = [
+        row for row in _plugin_message_status(client, incoming)["deliveries"]
+        if row["delivery_id"] == delivery_id
+    ]
+    assert len(deliveries) == 1, admission_failure + ": exact delivery missing"
+    delivery = deliveries[0]
+    assert delivery["state"] == "delivered", admission_failure + ": hook ACK missing"
+    assert delivery["delivered_at"] is not None, admission_failure + ": ACK not persisted"
+    assert delivery["recipient_session_ref"] == joined.session, admission_failure + ": session"
+    assert delivery["recipient_container_ref"] == SCOPE["container_ref"], admission_failure + ": scope"
+    try:
+        wake = _persisted_wake(ctx, session=joined.session)
+    except StopIteration as error:
+        raise AssertionError(admission_failure + ": no current admitted wake") from error
+    expected = {
+        "state": "admitted", "delivery_id": delivery_id,
+        "session_ref": joined.session, "turn_id": joined.turn,
+        "container_ref": SCOPE["container_ref"], "profile": ctx.profile_name,
+        "endpoint_id": delivery["recipient_endpoint_id"],
+    }
+    assert {key: wake.get(key) for key in expected} == expected, admission_failure + ": wake binding"
+    # This existing request-stage helper is read-only: recheck current in-memory
+    # scope/turn/profile/end fences without invoking admission or another ACK.
+    observed = _request_stage(
+        ctx, admission_request, session=joined.session, turn=joined.turn,
+        api_request_id="api-" + joined.turn,
+    )
+    assert observed is not admission_request, admission_failure + ": current context unavailable"
+    assert incoming["payload"] in observed["messages"][0]["content"], admission_failure + ": context"
+    assert not joined.reply_calls
+    return ctx, incoming
+
+
+def _assert_joined_peer_reply(client, joined, incoming, result, message):
+    assert "error" not in result, result
+    assert joined.reply_calls == [(joined.session, joined.turn)]
+    received = client.post("/relay/turn", json={
+        # No render clipping: one known reply, bounded by the 16000 contract.
+        "runtime": "claude-code", "session_ref": "sender", "max_chars": 0,
+        "max_messages": 1, **SCOPE,
+    })
+    assert received.status_code == 200, received.text
+    deliveries = received.json()["deliveries"]
+    assert len(deliveries) == 1
+    delivery = deliveries[0]
+    assert delivery["message_id"] == result["message_id"]
+    assert delivery["payload"] == message
+    assert not delivery["content_truncated"] and delivery["next_offset"] is None
+    assert delivery["sender_runtime"] == "hermes"
+    assert delivery["sender_session_ref"] == joined.session
+    assert delivery["recipient_container_ref"] == SCOPE["container_ref"]
+    assert delivery["in_reply_to"] == incoming["message_id"]
+    status = client.get(f"/relay/messages/{result['message_id']}", params={
+        **SCOPE, "offset": 0, "page_size": len(message),
+    })
+    assert status.status_code == 200, status.text
+    view = status.json()
+    assert view["payload"] == message and view["payload_total_chars"] == len(message)
+    assert view["payload_offset"] == 0 and view["next_offset"] is None
+    assert not view["content_truncated"]
+    assert view["deliveries"][0]["recipient_container_ref"] == SCOPE["container_ref"]
+    replies = [body for path, body in joined.http_calls if path == "/relay/replies"]
+    assert len(replies) == 1
+    assert replies[0]["container_ref"] == SCOPE["container_ref"]
+    assert replies[0]["payload"] == message
+
+
+@pytest.mark.parametrize("size", [
+    pytest.param(2401, id="mcp-2401"),
+    pytest.param(16000, id="mcp-16000"),
+])
+def test_hook_mcp_reply_message_contract_e2e(client, joined_mcp_reply_context, size):
+    joined = joined_mcp_reply_context
+    ctx, incoming = _admitted_joined_reply(client, joined)
+    message = "x" * size
+    assert len(message) == size
+    result = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply",
+        {"delivery_id": incoming["deliveries"][0]["delivery_id"], "message": message},
+        session=joined.session, turn=joined.turn,
+    ))
+    _assert_joined_peer_reply(client, joined, incoming, result, message)
+
+
+@pytest.mark.parametrize("invalid", [pytest.param("x" * 16001, id="over-16000")])
+def test_hook_mcp_reply_invalid_message_preserves_admission_e2e(
+    client, joined_mcp_reply_context, invalid,
+):
+    joined = joined_mcp_reply_context
+    ctx, incoming = _admitted_joined_reply(client, joined)
+    delivery_id = incoming["deliveries"][0]["delivery_id"]
+    result = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", {"delivery_id": delivery_id, "message": invalid},
+        session=joined.session, turn=joined.turn,
+    ))
+    assert result == {"error": (
+        "Invalid reply message: expected a nonblank string of at most 16000 Unicode code points."
+    )}
+    assert not joined.reply_calls
+    assert not any(path == "/relay/replies" for path, _body in joined.http_calls)
+    empty = client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "sender", "max_chars": 2400, **SCOPE,
+    })
+    assert empty.status_code == 200, empty.text
+    assert empty.json()["deliveries"] == []
+    message = "same admission survives שלום"
+    args = {"delivery_id": delivery_id, "message": message}
+    accepted = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", args, session=joined.session, turn=joined.turn,
+    ))
+    _assert_joined_peer_reply(client, joined, incoming, accepted, message)
+    replay = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", args, session=joined.session, turn=joined.turn,
+    ))
+    assert replay == {"error": "No delivery is admitted for this host session and turn"}
+    assert joined.reply_calls == [(joined.session, joined.turn)]
+    assert len([path for path, _body in joined.http_calls if path == "/relay/replies"]) == 1
 
 
 def test_default_server_registration_is_unchanged() -> None:
