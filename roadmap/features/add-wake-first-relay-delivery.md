@@ -1311,8 +1311,18 @@ pending operational evidence. Relay reliability remains first: qualify the curre
    sweeps. The wrapper warns, kills every unique initial listener, verifies
    post-settle port quiescence, blocks a surviving listener before task start, and
    returns explicit success. Deterministic caller-surface coverage, green CI,
-   independent review, the installed orphan-respawn replay, and exact-main healthy
-   restart are complete.
+    independent review, the installed orphan-respawn replay, and exact-main healthy
+    restart are complete.
+
+    Dogfooding triage (2026-11-14): strict `-StopOnly` intentionally rejects a
+    nonzero native kill, as covered by
+    `test_stop_only_rejects_nonzero_taskkill`. The PR404 rollout encountered that
+    rejection. Independent readback then established that the target was absent,
+    no listener or managed process remained, and the task was Ready. The supported
+    restart subsequently passed. [The rollout receipt](https://github.com/rore/Pallium/pull/404#issuecomment-6882031037)
+    preserves the failure and recovery. This is not a new confirmed product defect
+    or authority to weaken strict stop; RW-018's normal-restart result stands.
+
 10. **S3 reply/remediation gate — complete 2026-09-08.** Live request
     `relay-msg-f07d6ebe0c054e4fa38872ef8a3393d7` produced a delivery-derived
     reply that resumed the idle sender solely through Relay. Remediation
