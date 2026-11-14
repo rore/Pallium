@@ -100,8 +100,8 @@ jobs:
             $versionExit = $LASTEXITCODE
             $versionExit | Set-Content "$env:QUALIFICATION_ROOT/raw/version-exit.txt" -Encoding utf8
             $version = [IO.File]::ReadAllText("$env:QUALIFICATION_ROOT/raw/version-stdout.txt", [Text.Encoding]::UTF8).Trim()
-            if ($versionExit -or $version -cne '2.2.7') { throw 'Portable executable version mismatch' }
-            "PALLIUM_OPENCODE_BINARY_VERSION=$version" >> $env:GITHUB_ENV
+            if ($versionExit -or $version -cne 'opencode v2.2.7') { throw 'Portable executable version mismatch' }
+            "PALLIUM_OPENCODE_BINARY_VERSION=2.2.7" >> $env:GITHUB_ENV
             "PALLIUM_OPENCODE_NATIVE_PLUGIN_DIR=$env:GITHUB_WORKSPACE/integrations/opencode/.opencode/plugins" >> $env:GITHUB_ENV
             "PALLIUM_OPENCODE_BOOTSTRAP_SUMMARY=$env:QUALIFICATION_ROOT/raw/native-summary.json" >> $env:GITHUB_ENV
             "npm_config_cache=$env:QUALIFICATION_ROOT/npm-cache" >> $env:GITHUB_ENV

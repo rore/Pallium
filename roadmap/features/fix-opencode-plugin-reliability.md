@@ -68,6 +68,10 @@ failed at the setup version guard before any of the nine new cases or the new
 native witness ran (0/9). Returned version/exit were not retained. A source-reviewed
 bounded runner diagnostic correction awaits hosted evidence; failures remain in
 [PR404](https://github.com/rore/Pallium/pull/404#issuecomment-6880634885).
+The first added [run 43617560050](https://github.com/rore/Pallium/actions/runs/43617560050)
+captured `opencode v2.2.7` with exit 0 before the bare-version comparison rejected
+it; coverage remains 0/9 with no native witness. A source-reviewed exact
+CLI-output-contract correction awaits the remaining bounded attempt.
 The original historical cause and broader findings remain open.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
