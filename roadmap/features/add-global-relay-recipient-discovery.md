@@ -60,5 +60,6 @@ identity and standalone behavior are unchanged.
 The original feature remains done. See the
 [Work Record](../../.agent-workflow/tasks/mounted-mcp-global-discovery.md)
 and [PR #403](https://github.com/rore/Pallium/pull/403) for separate source-review,
-CI and installed-delivery evidence. Source assessment is accepted; CI validation
-and installed recovery are not yet claimed.
+CI and installed-delivery evidence. Source and critical-behavior evidence are
+accepted; the PR preserves unrelated CI failures and the disclosed version gap.
+Installed recovery is a separate delivery step and is not claimed here.
