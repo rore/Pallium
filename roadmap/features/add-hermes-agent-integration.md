@@ -37,7 +37,7 @@ application, tests, dependencies and workflows were identical at that checkpoint
 ### Current bridge recovery boundary (2026-11-14)
 
 The dedicated MCP bridge recovery plan is accepted and its first caller-surface
-regression is authored but unexecuted. It must prove that a transport failure
+regression now has an accepted hosted behavioral RED. It must prove that a transport failure
 after persistence does not replay the original call, while a later independent
 call recovers with its own immutable binding after the old owned resources close.
 The manager accepted an isolated current-main adoption at
@@ -46,12 +46,18 @@ checkout, branch and role ownership. The current architect inspected that exact
 source and gave source-only GO for the first regression. The existing developer
 resumed through native queued input because automatic Relay wake is stuck and
 published deliberate-RED draft [PR #408](https://github.com/rore/Pallium/pull/408)
-at `bb96a435`. The reviewed test is unchanged and ordinary hosted CI is running.
+at `bb96a435`. The reviewed test is unchanged. The manager independently inspected
+both Linux JUnit artifacts from
+[run 43641218592](https://github.com/rore/Pallium/actions/runs/43641218592): each
+reaches the intended later-caller assertion, with prerequisite mutation/readback
+checks satisfied and no subject skip or setup/teardown error. This is injected
+post-success stale-session RED, not genuine EOF or original-incident-cause proof.
 The old-checkout custody restriction remains; it does not block this independent
-adoption. Product implementation still requires an inspected, accepted actual
-behavioral RED with prerequisites and cleanup satisfied. Setup failures, skips,
-teardown failures or unrelated fail-fast are not RED. No recovery test has run
-locally, and no runtime RED/GREEN is claimed. This work remains separate from the
+adoption. The first-RED gate is cleared for the same accepted minimal bridge plan;
+required edge/lifecycle coverage, corrected GREEN and result review remain.
+Overall CI is still failed, including a separate Codex acquisition failure on
+Linux 3.13. Neither incomplete full profile is qualified. No recovery test ran
+locally, and no recovery GREEN is claimed. This work remains separate from the
 deliberate RED
 reply-contract [PR #400](https://github.com/rore/Pallium/pull/400), the qualified
 integration above and installed adoption. No bridge recovery is yet qualified.
