@@ -81,6 +81,55 @@ was not reloaded. [Rollout evidence](https://github.com/rore/Pallium/pull/404#is
 does not establish loaded-host recovery, historical cause or broader reliability.
 This item stays active.
 
+### Confirmed OC-1 incident (2026-11-14)
+
+Read-only scheduling and native-history evidence now confirms this failure class
+in two active OpenCode sessions. Both retain a delivered, admitted, nonterminal
+anchor while their polling ownership remains live. In one session, a newer
+ordinary input precedes the first successful idle after the wake. Compaction
+later removes the wake from active context. The plugin rejects the intervening
+input's idle, then returns when the admitted wake is missing. The backend keeps
+the old anchor and cannot select a new automatic wake.
+
+A later request was saved at 20:35 UTC and claimed only with a manual prompt at
+20:42 UTC. Native input history contains no automatic wake between those times.
+The manager session has the same stuck-fence state. Hermes monitor reports were
+saved and subsequently delivered; their receipt does not establish timely wake.
+This is not evidence of a short idle timeout, dead polling or message loss.
+
+OC-1 is the immediate functional priority. The existing architect completed the
+bounded source investigation against official OpenCode 2.2.7. Native idle covers
+coalesced inputs, so an outcome-bearing terminal can settle a visible exact wake
+despite intervening input. Bare `wait()` does not prove consumption or success.
+The plugin lacks the existing historical-message read API needed to prove an
+already-compacted anchor after reload. Do not invent that capability or clear
+the anchor without evidence. The existing developer published the no-storage
+visible-wake contribution in draft [PR #410](https://github.com/rore/Pallium/pull/410),
+owned by `.agent-workflow/tasks/opencode-wake-anchor-retirement.md`. Source and
+runner review passed. Full recovery and the already-compacted incident remain open.
+Preserve the OC-1 outcome and regression matrix below. Activation settlement is
+not downstream task completion.
+No live rows were cleared, messages replayed, or installed applications restarted
+to hide the incident. Private evidence remains local; no fix or recovery is yet
+qualified. PR404's discovery-only acceptance remains unchanged.
+
+The first qualification attempt on `b2acf606` is **failed, not qualified**.
+Exact baseline RED and focused GREEN passed, as did 205 package cases with zero
+failures and seven existing skips. All 31 required cases passed. The 60-second
+HTTP/workflow phase timed out without test-level progress; its cause is unknown.
+Native validation was skipped and all 12 native checks remain unobserved.
+Unchanged source/binary bookends and successful drain do not prove native coverage.
+Both ordinary Linux lanes stopped at a new fixture error: four backlog seconds
+plus a 12-second jump exceeded the unchanged 15-second owner lease before renewal.
+Windows smoke and governance passed, but full-suite coverage is incomplete.
+
+The existing architect supports a normal poll renewal before that jump and a
+25-case, directly affected HTTP selection in the bounded qualification job.
+Complete HTTP/workflow coverage remains in ordinary CI. One corrected-source
+attempt is authorized within the same caps, not an unchanged rerun or timeout
+extension. [First-attempt evidence](https://github.com/rore/Pallium/pull/410#issuecomment-6885286594)
+remains failed evidence. No merge, installed change or incident recovery is claimed.
+
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
 [39695623972](https://github.com/rore/Pallium/actions/runs/39695623972) and
