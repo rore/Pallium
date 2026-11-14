@@ -140,11 +140,15 @@ def test_activation_settlement_preserves_original_authority_before_backlog(
     client, monkeypatch, relay_admission_clock, original_state,
 ):
     """HTTP contract after plugin-proven settlement; HTTP does not prove native correlation."""
+    from types import SimpleNamespace
+
+    import core.relay as relay_module
     import storage.sqlite_relay as sqlite_relay
 
     real_now = sqlite_relay._now
     clock = [real_now()]
     monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: real_now(value) if value is not None else clock[0])
+    monkeypatch.setattr(relay_module, "datetime", SimpleNamespace(now=lambda _tz: clock[0]))
     base = _setup(client, relay_admission_clock=relay_admission_clock)
     original = _send(client, base, "original_שלום", expires_in_seconds=60 if original_state == "expired" else 86400,
                      relay_admission_clock=relay_admission_clock).json()
@@ -177,6 +181,8 @@ def test_activation_settlement_preserves_original_authority_before_backlog(
     renewed = _wake(client, base, "poll")
     assert renewed.status_code == 200, renewed.text
     assert renewed.json()["wake"] == {**wake, "admitted": True}
+    if original_state == "expired":
+        assert status(original)["state"] == "pending"
     # Admission, ACK, live/expired claims and time alone never retire the anchor.
     for _ in range(5):
         clock[0] += timedelta(seconds=12)

@@ -270,12 +270,17 @@ def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_na
     workflow = yaml.safe_load((root / ".github/workflows/opencode-native-qualification.yml").read_text(encoding="utf-8"))
     job = workflow["jobs"]["qualify"]
     assert job["runs-on"] == "windows-latest" and job["timeout-minutes"] == 15
+    assert "continue-on-error" not in job
     assert "github.run_attempt == 1" in job["if"]
     assert "github.event.pull_request.head.repo.full_name == github.repository" in job["if"]
     assert workflow["concurrency"]["cancel-in-progress"] is False
     assert workflow["permissions"] == {"contents": "read"}
     assert job["env"]["BASELINE"] == "93f497bf0eed29659630c277626d821d24964524"
     steps = {step["id"]: step for step in job["steps"] if "id" in step}
+    assert list(steps) == ["setup", "baseline", "focused", "package", "native", "backend"]
+    for phase in steps.values():
+        assert "if" not in phase and "continue-on-error" not in phase
+    assert steps["package"]["timeout-minutes"] == 2
     focused = "coalesced native wake settles from exact outcome-bearing idle: succeeded"
     for phase in ("baseline", "focused"):
         assert f"--test-name-pattern='^{focused}$'" in steps[phase]["run"]
@@ -294,12 +299,16 @@ def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_na
     assert "$env:HTTP_CASES" in backend and "$selected.Count -ne 1" in backend
     assert "//testcase[skipped or failure or error]" in backend
     assert steps["backend"]["timeout-minutes"] == 1
+    assert "-gt 660) { throw 'Insufficient HTTP/cleanup reserve' }" in backend
     native = steps["native"]["run"]
+    assert "-gt 540) { throw 'Insufficient native/HTTP/cleanup reserve' }" in native
     assert "test_released_native_coalesced_settlement_and_automatic_backlog -m slow -q -n 0" in native
     assert "$cases.Count -ne 1 -or $cases[0].skipped" in native
     assert "PALLIUM_OPENCODE_COALESCED_SUMMARY" in native and ".Count -ne 12" in native
     assert steps["native"]["timeout-minutes"] == 2
-    evidence = next(step["run"] for step in job["steps"] if step.get("name") == "Verify owned drain and produce public-safe evidence")
+    drain = next(step for step in job["steps"] if step.get("name") == "Verify owned drain and produce public-safe evidence")
+    assert drain["if"] == "always()" and drain["timeout-minutes"] == 1
+    evidence = drain["run"]
     for key in ("ordered_coalesced_outcome", "lost_terminal_reply_reconciled", "automatic_backlog_over_two",
                 "terminal_reload_safe", "missing_proof_compaction_hold", "missing_proof_reload_hold"):
         assert key in evidence
@@ -311,6 +320,7 @@ def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_na
     assert "os.environ['NEW_CASES' if name == 'package' else 'HTTP_CASES']" in evidence
     uploads = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")]
     assert len(uploads) == 1 and uploads[0]["with"]["path"].endswith("/public/summary.json")
+    assert uploads[0]["if"] == "always()" and uploads[0]["timeout-minutes"] == 1
 
 
 def test_opencode_settlement_qualification_inventories_every_new_case_and_preserved_negative() -> None:

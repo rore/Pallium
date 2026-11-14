@@ -214,13 +214,29 @@ jobs:
             if ($selected.Count -ne 1 -or $selected[0].skipped -or $selected[0].failure -or $selected[0].error) { throw "Required settlement case missing, skipped or failed: $name" }
           }
 
+      - name: Qualify released native coalescing and automatic backlog once
+        id: native
+        timeout-minutes: 2
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START -gt 540) { throw 'Insufficient native/HTTP/cleanup reserve' }
+          python -m pytest tests/test_opencode_native_wake_e2e.py::test_released_native_coalesced_settlement_and_automatic_backlog -m slow -q -n 0 --basetemp "$env:QUALIFICATION_ROOT/raw/native" --junitxml="$env:QUALIFICATION_ROOT/raw/native.xml" *> "$env:QUALIFICATION_ROOT/raw/native.log"
+          $exit = $LASTEXITCODE
+          "NATIVE_EXIT=$exit" >> $env:GITHUB_ENV
+          [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/native.xml" -Raw
+          $cases = @($xml.SelectNodes('//testcase'))
+          if ($exit -ne 0 -or $cases.Count -ne 1 -or $cases[0].skipped -or $cases[0].failure -or $cases[0].error) { throw 'Native witness failed or did not execute' }
+          $summary = Get-Content $env:PALLIUM_OPENCODE_COALESCED_SUMMARY -Raw | ConvertFrom-Json
+          if (@($summary.PSObject.Properties).Count -ne 12 -or @($summary.PSObject.Properties | Where-Object { $_.Value -cne $true }).Count) { throw 'Native settlement evidence or owned drain incomplete' }
+
       - name: Verify affected HTTP contracts once
         id: backend
         timeout-minutes: 1
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          if ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START -gt 600) { throw 'Insufficient HTTP/native/cleanup reserve' }
+          if ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START -gt 660) { throw 'Insufficient HTTP/cleanup reserve' }
           python -u -m pytest tests/test_opencode_relay_wake_e2e.py::test_activation_settlement_preserves_original_authority_before_backlog tests/test_opencode_relay_wake_e2e.py::test_stale_or_wrong_binding_is_rejected -vv -n 0 --junitxml="$env:QUALIFICATION_ROOT/raw/backend.xml" *> "$env:QUALIFICATION_ROOT/raw/backend.log"
           $exit = $LASTEXITCODE
           "BACKEND_EXIT=$exit" >> $env:GITHUB_ENV
@@ -233,22 +249,6 @@ jobs:
             $selected = @($cases | Where-Object { $_.name -ceq $name })
             if ($selected.Count -ne 1) { throw "Required HTTP case missing or duplicated: $name" }
           }
-
-      - name: Qualify released native coalescing and automatic backlog once
-        id: native
-        timeout-minutes: 2
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START -gt 660) { throw 'Insufficient native and cleanup reserve' }
-          python -m pytest tests/test_opencode_native_wake_e2e.py::test_released_native_coalesced_settlement_and_automatic_backlog -m slow -q -n 0 --basetemp "$env:QUALIFICATION_ROOT/raw/native" --junitxml="$env:QUALIFICATION_ROOT/raw/native.xml" *> "$env:QUALIFICATION_ROOT/raw/native.log"
-          $exit = $LASTEXITCODE
-          "NATIVE_EXIT=$exit" >> $env:GITHUB_ENV
-          [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/native.xml" -Raw
-          $cases = @($xml.SelectNodes('//testcase'))
-          if ($exit -ne 0 -or $cases.Count -ne 1 -or $cases[0].skipped -or $cases[0].failure -or $cases[0].error) { throw 'Native witness failed or did not execute' }
-          $summary = Get-Content $env:PALLIUM_OPENCODE_COALESCED_SUMMARY -Raw | ConvertFrom-Json
-          if (@($summary.PSObject.Properties).Count -ne 12 -or @($summary.PSObject.Properties | Where-Object { $_.Value -cne $true }).Count) { throw 'Native settlement evidence or owned drain incomplete' }
 
       - name: Verify owned drain and produce public-safe evidence
         if: always()
