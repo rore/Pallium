@@ -1255,6 +1255,20 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         hook, "record_codex_wake_event", lambda **event: wake_events.append(event),
     )
 
+    claim_span = {"stage": "outer_relay_turn", "calls": 0}
+    stages.append(claim_span)
+    original_relay_turn = hook.relay_turn
+
+    def measured_relay_turn(*args, **kwargs):
+        claim_span["calls"] += 1
+        claim_span["entered"] = time.monotonic()
+        try:
+            return original_relay_turn(*args, **kwargs)
+        finally:
+            claim_span["returned"] = time.monotonic()
+
+    monkeypatch.setattr(hook, "relay_turn", measured_relay_turn)
+
     try:
         hook_started = time.monotonic()
         hook._HOOK_STARTED_AT = hook_started
@@ -1306,6 +1320,9 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
     )
     assert request_event["delivery_id"] == delivery_id
     assert request_event["outcome"] == ("response" if should_emit else "unavailable")
+    assert claim_span["calls"] == 1 and "returned" in claim_span, claim_span
+    outer_ms = (claim_span["returned"] - claim_span["entered"]) * 1000
+    assert 0 <= request_event["elapsed_ms"] <= outer_ms, (request_event, claim_span)
     captured = capsys.readouterr()
     if should_emit:
         if response_delay:
@@ -1336,7 +1353,7 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
                 error.add_note("Pallium bounded HTTP diagnostics: " + json.dumps(diagnostics))
                 raise
     else:
-        assert 1800 <= request_event["elapsed_ms"] < 2400
+        assert 1800 <= outer_ms < 2400, claim_span
         assert not any(event["stage"] == "payload_emitted" for event in wake_events)
         assert any(event.get("reason") == "relay_unavailable" for event in wake_events)
         assert json.loads(captured.out)["decision"] == "block"

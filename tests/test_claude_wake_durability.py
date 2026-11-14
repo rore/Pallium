@@ -608,9 +608,10 @@ def test_accepted_inflight_rehydrates_without_elapsed_time_release(tmp_path: Pat
 
 
 @pytest.mark.parametrize("native_outcome", ["accepted", "uncertain"])
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_restricted_resume_fences_inflight_until_normal_turn_ack(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, native_outcome: str,
-    request: pytest.FixtureRequest, tmp_path: Path,
+    request: pytest.FixtureRequest, tmp_path: Path, relay_admission_clock,
 ) -> None:
     from itertools import count
     from threading import get_ident
@@ -636,8 +637,12 @@ def test_restricted_resume_fences_inflight_until_normal_turn_ack(
     monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=open_wake))
     scope = {"container_ref": "git:example/repo"}
     session_ref = "restricted-inflight"
-    assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "sender", **scope}).status_code == 200
-    assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": session_ref, **scope}).status_code == 200
+    storage = client.app.state.pallium_service._storage
+    setup_time, setup_begin = sqlite_queue.time, storage._begin_relay_immediate
+    with relay_admission_clock(storage, expected_admissions=2):
+        assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "sender", **scope}).status_code == 200
+        assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": session_ref, **scope}).status_code == 200
+    assert sqlite_queue.time is setup_time and storage._begin_relay_immediate is setup_begin
     sent = client.post("/relay/messages", json={
         "sender_runtime": "codex", "sender_session_ref": "sender",
         "recipient": "claude-code:" + session_ref, "payload": "Pending in-flight work.", **scope,
@@ -646,7 +651,6 @@ def test_restricted_resume_fences_inflight_until_normal_turn_ack(
     delivery = sent.json()["deliveries"][0]
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "socket")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token")
-    storage = client.app.state.pallium_service._storage
     native_mark_active, native_queue_time = storage.relay_mark_active, sqlite_queue.time
     native_monotonic = time.monotonic
 

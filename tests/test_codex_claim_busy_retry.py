@@ -293,7 +293,20 @@ def test_exact_claim_real_http_recovers_only_known_busy_and_emits_acks_once(tmp_
         result = hook.relay_turn("codex", "target-session", scope["container_ref"], wake_delivery_id=delivery,
                                  timeout=2, deadline=hook.HookDeadline(started+2))
         elapsed = time.monotonic()-started
-        assert result is not None and elapsed < 2
+        assert result is not None and elapsed < 2, (
+            json.dumps({
+                "statuses": statuses[:2], "status_count": len(statuses),
+                "wire_count": len(wire),
+                "preclaim": [{
+                    "state": str(row.get("state"))[:32], "attempts": row.get("attempts"),
+                    "claim_token_is_none": row.get("claim_token") is None,
+                    "lease_is_none": row.get("lease_expires_at") is None,
+                } for row in preclaim[:2]],
+                "preclaim_count": len(preclaim),
+                "admitted_ids": [value[:80] for value in admitted[:2]],
+                "admitted_count": len(admitted), "elapsed": elapsed,
+            })[:1900] + " [bounded context; prefixes may be truncated]"
+        )
         assert statuses == ([503, 200] if mode == "busy-recovery" else [200])
         if mode == "busy-recovery":
             assert wire[0] == wire[1]

@@ -176,8 +176,16 @@ def test_structural_refresh_is_replace_only_and_failure_does_not_block_turn(clie
 
 
 
-def test_participants_include_dormant_but_closed_is_opt_in(client):
-    turn = _turn(client, session="lifecycle", structural_work_refs=[FEATURE])
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_participants_include_dormant_but_closed_is_opt_in(client, relay_admission_clock):
+    from storage import sqlite_queue
+
+    storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
+    with relay_admission_clock(storage, expected_admissions=2):
+        turn = _turn(client, session="lifecycle", structural_work_refs=[FEATURE])
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
     endpoint_id = turn["session"]["endpoint_id"]
     duplicate = _turn(
         client, session="duplicate", structural_work_refs=[FEATURE, FEATURE]
