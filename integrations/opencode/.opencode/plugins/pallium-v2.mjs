@@ -456,7 +456,7 @@ export default {
           runtime: "opencode", container_ref: pallium.deriveContainerRef(cwd), include_inactive: false,
         }, pallium.HTTP_TIMEOUT_MS, abort.signal);
         if (disposed || started !== retirement || !Array.isArray(listed)) return;
-        discoveryNeeded = false;
+        discoveryNeeded = listed.length === 0;
         for (const session of listed) {
           if (disposed || started !== retirement) { discoveryNeeded = true; return; }
           if (!session?.session_ref) continue;
