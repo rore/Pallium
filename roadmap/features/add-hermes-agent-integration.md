@@ -40,9 +40,19 @@ The dedicated MCP bridge recovery plan is accepted and its first caller-surface
 regression is authored but unexecuted. It must prove that a transport failure
 after persistence does not replay the original call, while a later independent
 call recovers with its own immutable binding after the old owned resources close.
-Continuation is held on the implementation owner's source-custody handoff.
-The manager owns resolving that blocker; an unread request or inactive session
-does not transfer ownership. This work remains separate from the deliberate RED
+The manager accepted an isolated current-main adoption at
+`86be6218482c2d6b209b50162c239e7a9f979a9b`, preserving the original source,
+checkout, branch and role ownership. The current architect inspected that exact
+source and gave source-only GO for the first regression. The existing developer
+resumed through native queued input because automatic Relay wake is stuck and
+published deliberate-RED draft [PR #408](https://github.com/rore/Pallium/pull/408)
+at `bb96a435`. The reviewed test is unchanged and ordinary hosted CI is running.
+The old-checkout custody restriction remains; it does not block this independent
+adoption. Product implementation still requires an inspected, accepted actual
+behavioral RED with prerequisites and cleanup satisfied. Setup failures, skips,
+teardown failures or unrelated fail-fast are not RED. No recovery test has run
+locally, and no runtime RED/GREEN is claimed. This work remains separate from the
+deliberate RED
 reply-contract [PR #400](https://github.com/rore/Pallium/pull/400), the qualified
 integration above and installed adoption. No bridge recovery is yet qualified.
 

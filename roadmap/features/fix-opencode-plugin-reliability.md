@@ -81,6 +81,31 @@ was not reloaded. [Rollout evidence](https://github.com/rore/Pallium/pull/404#is
 does not establish loaded-host recovery, historical cause or broader reliability.
 This item stays active.
 
+### Confirmed OC-1 incident (2026-11-14)
+
+Read-only scheduling and native-history evidence now confirms this failure class
+in two active OpenCode sessions. Both retain a delivered, admitted, nonterminal
+anchor while their polling ownership remains live. In one session, a newer
+ordinary input precedes the first successful idle after the wake. Compaction
+later removes the wake from active context. The plugin rejects the intervening
+input's idle, then returns when the admitted wake is missing. The backend keeps
+the old anchor and cannot select a new automatic wake.
+
+A later request was saved at 20:35 UTC and claimed only with a manual prompt at
+20:42 UTC. Native input history contains no automatic wake between those times.
+The manager session has the same stuck-fence state. Hermes monitor reports were
+saved and subsequently delivered; their receipt does not establish timely wake.
+This is not evidence of a short idle timeout, dead polling or message loss.
+
+OC-1 is the immediate functional priority. The existing architect has a bounded
+source-proof investigation offer, and the existing developer has an isolated
+continuation offer. Acceptance and implementation remain unconfirmed. Preserve
+the OC-1 outcome and regression matrix below. Reuse supported native lifecycle
+evidence to retire activation safely without claiming downstream completion.
+No live rows were cleared, messages replayed, or installed applications restarted
+to hide the incident. Private evidence remains local; no fix or recovery is yet
+qualified. PR404's discovery-only acceptance remains unchanged.
+
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
 [39695623972](https://github.com/rore/Pallium/actions/runs/39695623972) and
