@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 import json
 import os
@@ -306,16 +307,25 @@ def test_dedicated_hermes_stdio_binds_identity_and_reuses_relay_tools(client) ->
 def joined_bridge_recovery_context(client, monkeypatch):
     """Keep the real SDK/stdio/HTTP/storage path and exact owned cleanup handles."""
     import mcp.client.stdio as sdk_stdio
+    import anyio
 
     lock = threading.Lock()
     bridges, bridge_threads, sessions, stdio_contexts, events = [], [], [], [], []
     requests, sdk_calls, errors = [], [], []
-    state = SimpleNamespace(poisoned=None, committed=None, injections=0)
+    processes, expected_close_failures = [], set()
+    state = SimpleNamespace(poisoned=None, committed=None, injections=0, inject_send_loss=True)
     server = listener = None
     startup_error = None
     original_call = ClientSession.call_tool
     original_enter, original_exit = ClientSession.__aenter__, ClientSession.__aexit__
     original_stdio = sdk_stdio.stdio_client
+    original_process = anyio.open_process
+
+    async def owned_process(*args, **kwargs):
+        process = await original_process(*args, **kwargs)
+        with lock:
+            processes.append(process)
+        return process
 
     def event(kind, owner):
         with lock:
@@ -344,6 +354,7 @@ def joined_bridge_recovery_context(client, monkeypatch):
         with lock:
             stdio_contexts.append(entry)
         streams = await context.__aenter__()
+        entry.params = args[0]
         entry.entered = True
         event("stdio-enter", context)
         try:
@@ -371,7 +382,7 @@ def joined_bridge_recovery_context(client, monkeypatch):
         if poisoned:
             raise ClosedResourceError("controlled original-session transport failure")
         result = await original_call(session, name, arguments=arguments, **kwargs)
-        if name == "pallium_relay_send" and state.poisoned is None:
+        if name == "pallium_relay_send" and state.inject_send_loss and state.poisoned is None:
             wire = result.model_dump(mode="json", by_alias=True)
             if wire.get("isError") is False:
                 text = "\n".join(block["text"] for block in wire["content"])
@@ -433,6 +444,13 @@ def joined_bridge_recovery_context(client, monkeypatch):
         except BaseException as error:
             errors.append(error)
 
+    def close_bridge(bridge):
+        if bridge in expected_close_failures:
+            with pytest.raises(RuntimeError, match="cleanup"):
+                bridge.close()
+        else:
+            bridge.close()
+
     def join_owned(thread):
         if thread.ident is not None:
             thread.join(timeout=2)
@@ -448,12 +466,12 @@ def joined_bridge_recovery_context(client, monkeypatch):
             with lock:
                 errors.append(error)
 
-    def create(scope):
+    def create(scope, *, memory_enabled=False):
         return Bridge(
             python=os.sys.executable, repo=str(Path(__file__).resolve().parents[1]),
             base_url=f"http://127.0.0.1:{server.server_port}",
             container_ref=scope, actor_ref="bridge-test-actor", visibility="private",
-            memory_enabled=False,
+            memory_enabled=memory_enabled,
         )
 
     try:
@@ -464,6 +482,7 @@ def joined_bridge_recovery_context(client, monkeypatch):
         monkeypatch.setattr(ClientSession, "__aexit__", exit_session)
         monkeypatch.setattr(ClientSession, "call_tool", forward_then_poison_original)
         monkeypatch.setattr(sdk_stdio, "stdio_client", owned_stdio)
+        monkeypatch.setattr(anyio, "open_process", owned_process)
         server = Proxy(("127.0.0.1", 0), Handler)
         listener = threading.Thread(target=serve, name="hermes-bridge-recovery-http", daemon=True)
         listener.start()
@@ -471,6 +490,7 @@ def joined_bridge_recovery_context(client, monkeypatch):
             create=create, state=state, sdk_calls=sdk_calls, http_calls=Handler.calls,
             http_mutations=Handler.mutation_responses,
             sessions=sessions, stdio_contexts=stdio_contexts, events=events,
+            processes=processes, expected_close_failures=expected_close_failures,
         )
     except BaseException as error:
         startup_error = error
@@ -478,13 +498,16 @@ def joined_bridge_recovery_context(client, monkeypatch):
     finally:
         for bridge in reversed(bridges):
             if getattr(bridge, "_thread", None) is not None:
-                attempt(bridge.close)
+                attempt(close_bridge, bridge)
         with lock:
             owned = list(bridge_threads)
         for thread in owned:
             attempt(join_owned, thread)
         for entry in [*sessions, *stdio_contexts]:
             attempt(check_context, entry)
+        for process in processes:
+            if process.returncode is None:
+                errors.append(AssertionError("Owned SDK subprocess did not exit"))
         if server is not None:
             if listener is not None and listener.is_alive():
                 attempt(server.shutdown)
@@ -592,6 +615,588 @@ def test_bridge_transport_failure_after_commit_is_not_replayed_and_next_call_rec
     assert event_index("stdio-exit", joined.stdio_contexts[0].owner) < event_index(
         "stdio-enter", joined.stdio_contexts[1].owner,
     )
+
+
+def _bridge_lifecycle_case(client, joined, *, memory_enabled=False):
+    scope = {"container_ref": "git:example.test/bridge-lifecycle"}
+    identities = ("sender-שלום", "caller-调用")
+    endpoints = {}
+    for identity in identities:
+        response = client.post("/relay/turn", json={
+            "runtime": "hermes", "session_ref": identity, "max_messages": 0, **scope,
+        })
+        assert response.status_code == 200, response.text
+        endpoints[identity] = response.json()["session"]["endpoint_id"]
+    joined.state.inject_send_loss = False
+    bridge = joined.create(scope["container_ref"], memory_enabled=memory_enabled)
+    return bridge, scope, identities, endpoints
+
+
+def _bridge_address(bridge, identity, turn="turn-שלום"):
+    return json.loads(bridge.call("pallium_relay_address", {}, (identity, turn)))
+
+
+@pytest.mark.parametrize("fault", ["transport", "grouped-transport", "sdk-closed", "eof", "finished", "schedule", "timeout", "cancelled"])
+def test_bridge_unusable_transport_recovers_for_next_call_e2e(
+    client, joined_bridge_recovery_context, monkeypatch, fault,
+):
+    from mcp.shared.exceptions import McpError
+    from mcp.types import CONNECTION_CLOSED, ErrorData
+
+    joined = joined_bridge_recovery_context
+    bridge, scope, identities, endpoints = _bridge_lifecycle_case(client, joined)
+    sender, caller = identities
+    assert _bridge_address(bridge, sender)["exact_selector"] == endpoints[sender]
+    original = bridge._connection
+    forward = ClientSession.call_tool
+    pending = []
+
+    async def broken(session, name, arguments=None, **kwargs):
+        if session is original.session:
+            if fault == "grouped-transport":
+                raise BaseExceptionGroup("private receipt marker", [ClosedResourceError(), asyncio.CancelledError()])
+            if fault == "sdk-closed":
+                raise McpError(ErrorData(code=CONNECTION_CLOSED, message="private receipt marker"))
+            if fault == "cancelled":
+                raise asyncio.CancelledError()
+            if fault == "timeout":
+                await asyncio.Event().wait()
+            raise ClosedResourceError("private receipt marker")
+        return await forward(session, name, arguments=arguments, **kwargs)
+
+    if fault == "eof":
+        process = joined.processes[0]
+
+        async def end_input():
+            await process.stdin.aclose()
+            return await process.wait()
+
+        asyncio.run_coroutine_threadsafe(end_input(), original.loop).result(timeout=3)
+        assert process.returncode is not None
+    elif fault == "finished":
+        bridge._retire(original)
+        original.thread.join(timeout=3)
+        assert original.finished.is_set() and original.loop.is_closed()
+    elif fault == "schedule":
+        view = SimpleNamespace(**vars(asyncio))
+
+        def refuse(coroutine, loop):
+            if loop is original.loop:
+                pending.append(coroutine)
+                raise RuntimeError("closed scheduling loop")
+            return asyncio.run_coroutine_threadsafe(coroutine, loop)
+
+        view.run_coroutine_threadsafe = refuse
+        monkeypatch.setattr(bridge_module, "asyncio", view)
+    else:
+        monkeypatch.setattr(ClientSession, "call_tool", broken)
+    if fault == "timeout":
+        monkeypatch.setattr(bridge_module, "TIMEOUT_SECONDS", .1)
+    first = _bridge_address(bridge, caller, "failed-一")
+    first_succeeded = "error" not in first
+    if fault == "finished" or fault == "eof" and first_succeeded:
+        assert first["exact_selector"] == endpoints[caller]
+    else:
+        assert "error" in first and "private receipt marker" not in first["error"]
+        if fault == "schedule":
+            assert "before dispatch" in first["error"]
+            assert pending and all(item.cr_frame is None for item in pending)
+        else:
+            assert "may have committed" in first["error"]
+    monkeypatch.setattr(bridge_module, "TIMEOUT_SECONDS", 15)
+    recovered = _bridge_address(bridge, caller, "later-שני")
+    assert recovered["exact_selector"] == endpoints[caller]
+    assert bridge._connection is not original
+    assert not original.thread.is_alive() and not original.cleanup_failed
+    assert all(entry.exited for entry in joined.sessions if entry.owner is original.session)
+    assert len(joined.stdio_contexts) == 2
+    assert len([query for path, query in joined.http_calls if path == "/relay/sessions"
+                and query.get("session_ref") == [caller]]) == (2 if first_succeeded else 1)
+    bridge.close()
+    assert all(process.returncode is not None for process in joined.processes)
+
+
+@pytest.mark.parametrize("memory_enabled", [False, True])
+def test_bridge_repeated_recovery_preserves_construction_and_catalog_e2e(
+    client, joined_bridge_recovery_context, monkeypatch, memory_enabled,
+):
+    joined = joined_bridge_recovery_context
+    bridge, scope, identities, endpoints = _bridge_lifecycle_case(client, joined, memory_enabled=memory_enabled)
+    original_catalog = json.loads(json.dumps(bridge.catalog))
+    first_params = joined.stdio_contexts[0].params.model_dump()
+    forward = ClientSession.call_tool
+    failed = set()
+
+    async def fail_once(session, name, arguments=None, **kwargs):
+        if session in failed:
+            raise ClosedResourceError("dead generation")
+        return await forward(session, name, arguments=arguments, **kwargs)
+
+    monkeypatch.setattr(ClientSession, "call_tool", fail_once)
+    for cycle in range(3):
+        old = bridge._connection
+        failed.add(old.session)
+        assert "may have committed" in _bridge_address(bridge, identities[0])["error"]
+        # Reconnection must use immutable construction, not these public aliases.
+        bridge.python, bridge.repo = "not-an-interpreter", "not-a-checkout"
+        bridge.config = ("http://127.0.0.1:1", "git:example.test/foreign", "other", "global", not memory_enabled)
+        recovered = _bridge_address(bridge, identities[1], f"cycle-{cycle}-调用")
+        assert recovered["exact_selector"] == endpoints[identities[1]]
+        assert bridge.catalog == original_catalog
+        assert joined.stdio_contexts[-1].params.model_dump() == first_params
+        assert old.finished.is_set() and not old.thread.is_alive()
+    assert len(joined.stdio_contexts) == 4
+    bridge.close()
+    bridge.close()
+    assert "error" in _bridge_address(bridge, identities[1])
+    assert all(entry.exited for entry in [*joined.sessions, *joined.stdio_contexts])
+
+
+def test_bridge_healthy_refusals_and_invalid_bindings_do_not_reconnect_e2e(
+    client, joined_bridge_recovery_context,
+):
+    joined = joined_bridge_recovery_context
+    bridge, scope, identities, endpoints = _bridge_lifecycle_case(client, joined)
+    original = bridge._connection
+    for identity in (None, (), ("", "turn"), ("caller", " "), (1, "turn")):
+        assert "trusted session and turn" in json.loads(bridge.call("pallium_relay_address", {}, identity))["error"]
+    for values in ([], {"bad": set()}):
+        assert "unsupported" in json.loads(bridge.call("pallium_relay_address", values, (identities[0], "turn")))["error"]
+    assert "error" in json.loads(bridge.call("not-a-tool", {}, (identities[0], "turn")))
+    assert not joined.sdk_calls
+    for values in ({}, {"message": ""}, {"message": "hello", "recipient": 42}):
+        refused = json.loads(bridge.call("pallium_relay_send", values, (identities[0], "turn")))
+        assert "refused" in refused["error"]
+    for identity in ("unregistered", "x" * 256):
+        assert "error" in _bridge_address(bridge, identity)
+    missing = json.loads(bridge.call("pallium_relay_status", {"message_id": "missing"}, (identities[0], "missing-turn")))
+    assert "error" in missing
+    maximum = "调用" * 127 + "é"
+    assert len(maximum) == 255
+    registered = client.post("/relay/turn", json={"runtime": "hermes", "session_ref": maximum, "max_messages": 0, **scope})
+    assert registered.status_code == 200
+    for identity in (maximum, identities[0], identities[1]):
+        assert _bridge_address(bridge, identity)["session_ref"] == identity
+    assert bridge._connection is original and len(joined.stdio_contexts) == 1
+    assert not any(path == "/relay/messages" for path, _ in joined.http_calls)
+
+
+@pytest.mark.parametrize("fault", ["before-initialize", "after-initialize", "initialize-timeout", "list-tools", "session-construction"])
+def test_bridge_partial_reconnect_startup_disposes_and_later_call_recovers_e2e(
+    client, joined_bridge_recovery_context, monkeypatch, fault,
+):
+    joined = joined_bridge_recovery_context
+    bridge, scope, identities, endpoints = _bridge_lifecycle_case(client, joined)
+    old = bridge._connection
+    bridge._retire(old)
+    original_init, original_initialize = ClientSession.__init__, ClientSession.initialize
+    original_list = ClientSession.list_tools
+    injected = []
+
+    def construct(session, *args, **kwargs):
+        if fault == "session-construction" and not injected:
+            injected.append(session)
+            raise ValueError("controlled partial session construction")
+        original_init(session, *args, **kwargs)
+
+    async def initialize(session, *args, **kwargs):
+        if fault in {"before-initialize", "after-initialize", "initialize-timeout"} and not injected:
+            injected.append(session)
+            if fault == "initialize-timeout":
+                await asyncio.Event().wait()
+            if fault == "after-initialize":
+                await original_initialize(session, *args, **kwargs)
+            raise ClosedResourceError("controlled startup failure")
+        return await original_initialize(session, *args, **kwargs)
+
+    async def list_tools(session, *args, **kwargs):
+        if fault == "list-tools" and not injected:
+            injected.append(session)
+            raise ClosedResourceError("controlled list failure")
+        return await original_list(session, *args, **kwargs)
+
+    monkeypatch.setattr(ClientSession, "__init__", construct)
+    monkeypatch.setattr(ClientSession, "initialize", initialize)
+    monkeypatch.setattr(ClientSession, "list_tools", list_tools)
+    if fault == "initialize-timeout":
+        monkeypatch.setattr(bridge_module, "TIMEOUT_SECONDS", 1)
+    assert "error" in _bridge_address(bridge, identities[0])
+    monkeypatch.setattr(bridge_module, "TIMEOUT_SECONDS", 15)
+    failed = bridge._connection
+    assert failed is not old and failed.finished.is_set() and not failed.cleanup_failed
+    assert not joined.sdk_calls
+    assert _bridge_address(bridge, identities[1])["exact_selector"] == endpoints[identities[1]]
+    assert len(injected) == 1 and len(joined.stdio_contexts) == 3
+    assert all(entry.exited for entry in joined.stdio_contexts[:-1])
+
+
+@pytest.mark.parametrize("change", ["order", "schema", "missing-tool"])
+def test_bridge_reconnect_catalog_is_normalized_or_fails_closed_e2e(
+    client, joined_bridge_recovery_context, monkeypatch, change,
+):
+    joined = joined_bridge_recovery_context
+    bridge, scope, identities, endpoints = _bridge_lifecycle_case(client, joined)
+    before = json.loads(json.dumps(bridge.catalog))
+    original_list = ClientSession.list_tools
+
+    async def changed(session, *args, **kwargs):
+        result = await original_list(session, *args, **kwargs)
+        if change == "order":
+            result.tools.reverse()
+        elif change == "schema":
+            result.tools[0].inputSchema["properties"]["unexpected"] = {"type": "string"}
+        else:
+            result.tools.pop()
+        return result
+
+    monkeypatch.setattr(ClientSession, "list_tools", changed)
+    bridge._retire(bridge._connection)
+    result = _bridge_address(bridge, identities[0])
+    if change == "order":
+        assert result["exact_selector"] == endpoints[identities[0]]
+        assert len(joined.sdk_calls) == 1
+    else:
+        assert "error" in result and bridge._connection.catalog_failed
+        assert "error" in _bridge_address(bridge, identities[1])
+        assert not joined.sdk_calls
+        assert all(entry.exited for entry in joined.stdio_contexts)
+    assert len(joined.stdio_contexts) == 2 and bridge.catalog == before
+
+
+def test_bridge_initial_startup_failure_disposes_partial_owners_e2e(
+    joined_bridge_recovery_context, monkeypatch,
+):
+    joined = joined_bridge_recovery_context
+    initialize = ClientSession.initialize
+
+    async def fail_after_initialization(session, *args, **kwargs):
+        await initialize(session, *args, **kwargs)
+        raise ClosedResourceError("partial initial startup")
+
+    monkeypatch.setattr(ClientSession, "initialize", fail_after_initialization)
+    with pytest.raises(ValueError, match="could not initialize"):
+        joined.create("git:example.test/bridge-startup")
+    assert len(joined.stdio_contexts) == len(joined.sessions) == 1
+    assert all(entry.exited for entry in [*joined.sessions, *joined.stdio_contexts])
+    assert all(process.returncode is not None for process in joined.processes)
+    assert not joined.sdk_calls
+
+
+def test_bridge_concurrent_recovery_keeps_each_call_snapshot_e2e(
+    client, joined_bridge_recovery_context, monkeypatch,
+):
+    joined = joined_bridge_recovery_context
+    bridge, scope, identities, endpoints = _bridge_lifecycle_case(client, joined)
+    old = bridge._connection
+    bridge._retire(old)
+    original_get = bridge._get_connection
+    captured = threading.Barrier(3)
+    release = threading.Event()
+
+    def wait_after_snapshot():
+        captured.wait(timeout=3)
+        assert release.wait(3)
+        return original_get()
+
+    monkeypatch.setattr(bridge, "_get_connection", wait_after_snapshot)
+    payloads = ["任务" * 8000, "שלום concurrent mutation"]
+    arguments = [{"recipient": endpoints[identities[1 - index]], "message": text}
+                 for index, text in enumerate(payloads)]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(bridge.call, "pallium_relay_send", arguments[index],
+                               (identity, f"turn-{index}-调用")) for index, identity in enumerate(identities)]
+        try:
+            captured.wait(timeout=3)
+            for values in arguments:
+                values.update(message="changed after snapshot", recipient="invalid-after-snapshot")
+            release.set()
+            results = [json.loads(future.result(timeout=10)) for future in futures]
+        finally:
+            release.set()
+    assert all("message_id" in result for result in results), results
+    assert len(joined.stdio_contexts) == 2 and old.finished.is_set()
+    assert len(joined.sdk_calls) == len(joined.http_mutations) == 2
+    for index, result in enumerate(results):
+        stored = client.get(f"/relay/messages/{result['message_id']}", params=scope)
+        assert stored.status_code == 200 and stored.json()["payload"] == payloads[index]
+        observed = next(call for call in joined.sdk_calls
+                        if call["metadata"] == _identity(identities[index], f"turn-{index}-调用"))
+        assert observed["arguments"]["message"] == payloads[index]
+        assert observed["arguments"]["container_ref"] == scope["container_ref"]
+    page = client.get("/dashboard/api/relay/messages", params=scope).json()
+    assert page["total"] == len(page["messages"]) == 2 and not page["has_more"]
+    monkeypatch.setattr(bridge, "_get_connection", original_get)
+    current = bridge._connection
+    for text in ("", "x" * 16001):
+        refused = json.loads(bridge.call("pallium_relay_send", {
+            "recipient": endpoints[identities[1]], "message": text,
+        }, (identities[0], "boundary-turn")))
+        assert "error" in refused
+    assert bridge._connection is current and len(joined.stdio_contexts) == 2
+    assert client.get("/dashboard/api/relay/messages", params=scope).json()["total"] == 2
+
+
+def test_bridge_concurrent_failed_recovery_is_one_attempt_e2e(
+    client, joined_bridge_recovery_context, monkeypatch,
+):
+    joined = joined_bridge_recovery_context
+    bridge, scope, identities, endpoints = _bridge_lifecycle_case(client, joined)
+    bridge._retire(bridge._connection)
+    initializing, waiting = threading.Event(), threading.Event()
+    gate = asyncio.Event()
+    owner, attempts = [], []
+    original_init, usable = ClientSession.initialize, bridge._usable
+
+    async def initialize(session, *args, **kwargs):
+        attempts.append(session)
+        if len(attempts) == 1:
+            owner.append(asyncio.get_running_loop())
+            initializing.set()
+            await gate.wait()
+            raise ClosedResourceError("one failed recovery attempt")
+        return await original_init(session, *args, **kwargs)
+
+    def observe(connection):
+        if initializing.is_set() and connection is bridge._connection and not connection.ready.is_set():
+            waiting.set()
+        return usable(connection)
+
+    monkeypatch.setattr(ClientSession, "initialize", initialize)
+    monkeypatch.setattr(bridge, "_usable", observe)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(_bridge_address, bridge, identities[0])
+        try:
+            assert initializing.wait(3)
+            second = pool.submit(_bridge_address, bridge, identities[1])
+            assert waiting.wait(3)
+            owner[0].call_soon_threadsafe(gate.set)
+            assert "error" in first.result(timeout=5)
+            assert "error" in second.result(timeout=5)
+        finally:
+            if owner and not owner[0].is_closed():
+                owner[0].call_soon_threadsafe(gate.set)
+    assert len(attempts) == 1 and len(joined.stdio_contexts) == 2
+    assert not joined.sdk_calls
+    assert _bridge_address(bridge, identities[1])["exact_selector"] == endpoints[identities[1]]
+    assert len(attempts) == 2 and len(joined.stdio_contexts) == 3
+
+
+def test_bridge_recovery_snapshots_private_reply_before_waiting_e2e(
+    client, joined_bridge_recovery_context, monkeypatch,
+):
+    joined = joined_bridge_recovery_context
+    bridge, scope, identities, endpoints = _bridge_lifecycle_case(client, joined)
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": "hermes", "sender_session_ref": identities[0],
+        "recipient": endpoints[identities[1]], "payload": "question", **scope,
+    })
+    assert sent.status_code == 200
+    received = client.post("/relay/turn", json={
+        "runtime": "hermes", "session_ref": identities[1], "max_messages": 1, **scope,
+    })
+    assert received.status_code == 200 and len(received.json()["deliveries"]) == 1
+    delivery = received.json()["deliveries"][0]
+    arguments = {"delivery_id": delivery["delivery_id"], "message": "réponse 调用"}
+    private = {"delivery_id": delivery["delivery_id"], "receipt": delivery["receipt"]}
+    expected_private = dict(private)
+    bridge._retire(bridge._connection)
+    captured, release = threading.Event(), threading.Event()
+    original_get = bridge._get_connection
+
+    def wait_after_snapshot():
+        captured.set()
+        assert release.wait(3)
+        return original_get()
+
+    monkeypatch.setattr(bridge, "_get_connection", wait_after_snapshot)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(bridge.call, "pallium_relay_reply", arguments,
+                             (identities[1], "reply-שלום"), private)
+        try:
+            assert captured.wait(3)
+            arguments.update(delivery_id="wrong-delivery", message="wrong message")
+            private.update(delivery_id="wrong-private", receipt="wrong-receipt")
+            release.set()
+            result = json.loads(future.result(timeout=10))
+        finally:
+            release.set()
+    assert "message_id" in result, result
+    assert joined.sdk_calls[-1]["metadata"] == _identity(identities[1], "reply-שלום", reply=expected_private)
+    stored = client.get(f"/relay/messages/{result['message_id']}", params=scope)
+    assert stored.status_code == 200 and stored.json()["payload"] == "réponse 调用"
+    original = client.get(f"/relay/messages/{sent.json()['message_id']}", params=scope)
+    assert original.json()["deliveries"][0]["state"] == "delivered"
+    assert len([path for path, _ in joined.http_calls if path == "/relay/replies"]) == 1
+    assert len(joined.stdio_contexts) == 2
+
+
+def test_bridge_late_old_failure_cannot_retire_successor_e2e(
+    client, joined_bridge_recovery_context, monkeypatch,
+):
+    joined = joined_bridge_recovery_context
+    bridge, scope, identities, endpoints = _bridge_lifecycle_case(client, joined)
+    old = bridge._connection
+    forward, retire = ClientSession.call_tool, bridge._retire
+    entered, release = threading.Event(), threading.Event()
+
+    async def fail_old(session, name, arguments=None, **kwargs):
+        if session is old.session:
+            raise ClosedResourceError("old connection")
+        return await forward(session, name, arguments=arguments, **kwargs)
+
+    def delayed_retire(connection):
+        if connection is old and threading.current_thread().name.startswith("stale-caller"):
+            entered.set()
+            assert release.wait(5)
+        retire(connection)
+
+    monkeypatch.setattr(ClientSession, "call_tool", fail_old)
+    monkeypatch.setattr(bridge, "_retire", delayed_retire)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="stale-caller") as pool:
+        stale = pool.submit(_bridge_address, bridge, identities[0], "old-turn")
+        try:
+            assert entered.wait(3)
+            assert _bridge_address(bridge, identities[1], "new-turn")["exact_selector"] == endpoints[identities[1]]
+            successor = bridge._connection
+            release.set()
+            assert "may have committed" in stale.result(timeout=3)["error"]
+        finally:
+            release.set()
+    assert _bridge_address(bridge, identities[0], "still-new")["exact_selector"] == endpoints[identities[0]]
+    assert bridge._connection is successor and not successor.retired.is_set()
+    assert len(joined.stdio_contexts) == 2
+
+
+def test_bridge_unresolved_cleanup_fences_replacement_until_owned_exit_e2e(
+    client, joined_bridge_recovery_context, monkeypatch,
+):
+    joined = joined_bridge_recovery_context
+    bridge, scope, identities, endpoints = _bridge_lifecycle_case(client, joined)
+    old = bridge._connection
+    original_exit = ClientSession.__aexit__
+    entered = threading.Event()
+    gate = asyncio.Event()
+
+    async def delayed_exit(session, *failure):
+        if session is old.session:
+            entered.set()
+            await gate.wait()
+        return await original_exit(session, *failure)
+
+    monkeypatch.setattr(ClientSession, "__aexit__", delayed_exit)
+    bridge._retire(old)
+    try:
+        assert entered.wait(3)
+        # Simulate a bounded join expiring, without spending ten seconds per case.
+        with monkeypatch.context() as bounded:
+            bounded.setattr(old.thread, "join", lambda timeout: None)
+            result = _bridge_address(bridge, identities[0])
+        assert "owned cleanup" in result["error"]
+        assert bridge._connection is old and len(joined.stdio_contexts) == 1
+        assert not old.finished.is_set() and not joined.sdk_calls
+    finally:
+        old.loop.call_soon_threadsafe(gate.set)
+        old.thread.join(timeout=3)
+    assert old.finished.is_set() and not old.cleanup_failed
+    assert _bridge_address(bridge, identities[1])["exact_selector"] == endpoints[identities[1]]
+    assert len(joined.stdio_contexts) == 2
+
+
+def test_bridge_cleanup_failure_remains_fail_closed_and_retains_primary_e2e(
+    client, joined_bridge_recovery_context, monkeypatch,
+):
+    joined = joined_bridge_recovery_context
+    bridge, scope, identities, endpoints = _bridge_lifecycle_case(client, joined)
+    old = bridge._connection
+    original_init, original_exit = ClientSession.initialize, ClientSession.__aexit__
+
+    async def startup_failure(session, *args, **kwargs):
+        await original_init(session, *args, **kwargs)
+        raise ValueError("private primary startup detail")
+
+    async def cleanup_failure(session, *failure):
+        result = await original_exit(session, *failure)
+        if session is not old.session:
+            raise RuntimeError("private cleanup detail")
+        return result
+
+    monkeypatch.setattr(ClientSession, "initialize", startup_failure)
+    monkeypatch.setattr(ClientSession, "__aexit__", cleanup_failure)
+    bridge._retire(old)
+    result = _bridge_address(bridge, identities[0])
+    failed = bridge._connection
+    assert "error" in result and "private" not in result["error"]
+    assert failed.cleanup_failed and isinstance(failed.failure, BaseExceptionGroup)
+    assert len(failed.failure.exceptions) == 2
+    assert "error" in _bridge_address(bridge, identities[1])
+    assert bridge._connection is failed and len(joined.stdio_contexts) == 2
+    assert all(entry.exited for entry in [*joined.sessions, *joined.stdio_contexts])
+    assert not joined.sdk_calls
+    with pytest.raises(RuntimeError, match="cleanup"):
+        bridge.close()
+    joined.expected_close_failures.add(bridge)
+
+
+@pytest.mark.parametrize("phase", ["call", "recovery"])
+def test_bridge_close_during_work_is_terminal_and_disposes_owners_e2e(
+    client, joined_bridge_recovery_context, monkeypatch, phase,
+):
+    joined = joined_bridge_recovery_context
+    bridge, scope, identities, endpoints = _bridge_lifecycle_case(client, joined)
+    entered, closing = threading.Event(), threading.Event()
+    gate = asyncio.Event()
+    old = bridge._connection
+    original_init, original_call, original_retire = ClientSession.initialize, ClientSession.call_tool, bridge._retire
+    owner = []
+
+    async def initialize(session, *args, **kwargs):
+        result = await original_init(session, *args, **kwargs)
+        if phase == "recovery":
+            owner.append(asyncio.get_running_loop())
+            entered.set()
+            await gate.wait()
+        return result
+
+    async def call(session, name, arguments=None, **kwargs):
+        result = await original_call(session, name, arguments=arguments, **kwargs)
+        if phase == "call":
+            owner.append(asyncio.get_running_loop())
+            entered.set()
+            await gate.wait()
+        return result
+
+    def retire(connection):
+        original_retire(connection)
+        if bridge._closed:
+            closing.set()
+
+    monkeypatch.setattr(ClientSession, "initialize", initialize)
+    monkeypatch.setattr(ClientSession, "call_tool", call)
+    monkeypatch.setattr(bridge, "_retire", retire)
+    if phase == "recovery":
+        bridge._retire(old)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        invocation = pool.submit(_bridge_address, bridge, identities[0])
+        try:
+            assert entered.wait(3)
+            close = pool.submit(bridge.close)
+            assert closing.wait(3)
+            owner[0].call_soon_threadsafe(gate.set)
+            result = invocation.result(timeout=5)
+            close.result(timeout=5)
+        finally:
+            if owner and not owner[0].is_closed():
+                owner[0].call_soon_threadsafe(gate.set)
+    if phase == "recovery":
+        assert "error" in result and not joined.sdk_calls
+    else:
+        assert result.get("exact_selector") == endpoints[identities[0]] or "may have committed" in result["error"]
+    count = len(joined.stdio_contexts)
+    bridge.close()
+    assert "error" in _bridge_address(bridge, identities[1])
+    assert len(joined.stdio_contexts) == count
+    assert all(entry.exited for entry in [*joined.sessions, *joined.stdio_contexts])
+    assert all(process.returncode is not None for process in joined.processes)
 
 
 def test_default_server_registration_is_unchanged() -> None:
