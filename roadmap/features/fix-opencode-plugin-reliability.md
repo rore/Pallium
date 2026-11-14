@@ -97,11 +97,16 @@ The manager session has the same stuck-fence state. Hermes monitor reports were
 saved and subsequently delivered; their receipt does not establish timely wake.
 This is not evidence of a short idle timeout, dead polling or message loss.
 
-OC-1 is the immediate functional priority. The existing architect has a bounded
-source-proof investigation offer, and the existing developer has an isolated
-continuation offer. Acceptance and implementation remain unconfirmed. Preserve
-the OC-1 outcome and regression matrix below. Reuse supported native lifecycle
-evidence to retire activation safely without claiming downstream completion.
+OC-1 is the immediate functional priority. The existing architect completed the
+bounded source investigation against official OpenCode 2.2.7. Native idle covers
+coalesced inputs, so an outcome-bearing terminal can settle a visible exact wake
+despite intervening input. Bare `wait()` does not prove consumption or success.
+The plugin lacks the existing historical-message read API needed to prove an
+already-compacted anchor after reload. Do not invent that capability or clear
+the anchor without evidence. The existing developer has an isolated continuation
+offer to investigate the smallest supported fix and preserve that recovery gap.
+Preserve the OC-1 outcome and regression matrix below. Activation settlement is
+not downstream task completion.
 No live rows were cleared, messages replayed, or installed applications restarted
 to hide the incident. Private evidence remains local; no fix or recovery is yet
 qualified. PR404's discovery-only acceptance remains unchanged.
