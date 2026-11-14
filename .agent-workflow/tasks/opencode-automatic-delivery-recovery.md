@@ -47,7 +47,7 @@ Owner: the developer assigned by the task owner on 2026-11-14. The manager owns 
 
 **Exceptions:** None
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Source identities and boundaries
@@ -271,4 +271,24 @@ Actual job log contains no unexpected-baseline guard exception. The unchanged ga
 
 The same architect's narrow SOURCE GO is complete for workflow `d7c2afa6e4aa745c4eae05d63e7c9b65ae704cd7`, record `6a8c1c6160db693af095fd13456f98b2d802d6c1` and annotation `1c46ea08cc91271999942831952fbc7affc6c404`; diff SHA256 `94950db92bce60ccdd0a9439ae8c1ef581d7462b131de77aab7adf3d980e395a`. Reviewer inspected the actual expected-RED artifact, confirmed the gate/evidence remain intact and explicitly limited GO to source publication, not another execution or merge. No edits or execution. Exact-one-line preservation, YAML/inline-Python AST/compile-only, seven PowerShell parses and artifact/privacy checks passed. [Actual final-run result](https://github.com/rore/Pallium/pull/404#issuecomment-6881233370) preserves all failed/skipped phase status; summary SHA256 is `4447e3c126d7ea7f81dba1fecc4807197bfbacb7480f299ee1d4d9675d38efc5`. Subsequent record/annotation edits only record this actual verdict.
 
-Both added attempts are consumed: 2/2, 123 seconds total. The count limit is binding even though the 30-minute ceiling was not reached. No further qualification label activation, rerun, dispatch, local execution or merge is authorized. State remains Blocked for actual corrected-candidate/native evidence, required checks and manager combined acceptance. Manager received the precise run/head/coverage/budget blocker. Source correction/publication remain within standing authority; another runtime attempt needs an exact new budget decision. No watcher remains active. Retain the clean isolated checkout and failed artifacts; installed rollout and cleanup remain separate.
+Historical checkpoint before the renewed authority below: both added attempts had been consumed (2/2, 123 seconds), so execution stopped and the manager received the precise blocker. The later direct human instruction superseded that hold. The failed runs and artifacts remain evidence; their earlier budget hold and zero candidate coverage are not the current disposition.
+
+## Accepted qualification and finalization
+
+Current human authority: "we said you don't need extra approvals, you need to find the shortest way with minimal overhead and complications to get our list fixed and merged and aligned into local". The manager relayed this direct instruction as authority to resume the reviewed corrected head with the same bounded hosted job, without another source review or prerequisite commit. It superseded the exhausted-attempt hold, not the local/installed restrictions. After fresh exact-head/frozen-source checks, manually activated [run 43621847373](https://github.com/rore/Pallium/actions/runs/43621847373), attempt 1, job `132529055733`, on exact `3402450b8b2fa21ce129edb80160bc6b76ee5f0d`. It passed in 1m47s. The single completion watcher finished; no polling loop or ACK wait remains.
+
+| Critical evidence | Actual result |
+|---|---|
+| Baseline | Exactly one selected case, precise expected enrollment assertion, exit 1 retained; expected-RED gate passed. |
+| Corrected focused | One passed, zero failed/skipped, exit 0. |
+| Package | 175 cases, zero failed, seven existing skips; all nine new cases individually mapped passed. |
+| Released native | One passed, zero skipped; version, both empty-discovery settlement boundaries, attachment-before-ACK, provider payload, exact native input, native settlement, delivered-once readback and owned drain all true. |
+| Identity/cleanup | Source and binary bookends unchanged; owned drain normal and final true. Same pinned 2.2.7 archive/binary and isolated mock provider. |
+
+[Artifact 14124980459](https://github.com/rore/Pallium/actions/runs/43621847373/artifacts/14124980459) contains only the allowed 4685-byte `summary.json`; SHA256 `46395fe83d39dc6b82757d6a1951928818aa3b633189f93e33489ad2032a2a4e`. Inspected every field and mapped all nine cases/native checks. Bounded path/native-ID/token scan passed; no raw profiles/databases/provider bodies were uploaded. The manager independently downloaded and inspected the artifact, matched all four reviewed Git blobs, and returned ACCEPT for critical runtime evidence and the combined finalization disposition. Existing source reviews stand; no new reviewer or application rerun is needed for this metadata-only finalization.
+
+Normal [CI 43619981450](https://github.com/rore/Pallium/actions/runs/43619981450): full Python 3.12 passed with 9091 passed / 106 skipped / 2 xfailed; Windows and governance passed. Python 3.13 failed unchanged `tests/test_agent_relay_e2e.py::test_claim_expiry_optional_and_integer_boundaries[None-200]`, with `late_begin` acquisition 1737 ms and `relay_busy` HTTP 503 instead of 200. Actual result: one failed, 3163 passed, 29 skipped, one xfailed. The manager independently inspected and accepted its disposition as unrelated to this product delta. Preserve it, not a fabricated global-green claim or an extra merge gate. Inline comments/review threads are empty; main remains accepted `b80647da458cac165b47ebf06e30adcf7b94b656`.
+
+State advances to Ready for review. This finalization changes only this record's state/result and the delegated existing feature annotation. All four reviewed/tested source blobs stay identical to qualified `3402450b`; reuse that exact source/runtime evidence for the final metadata delta, without claiming another run. Normal static publication checks remain applicable. Return the final head, exact two-file diff and check results for the manager's immediate normal merge. Actual local source alignment, recoverable backup, guarded service rollout and health verification remain manager-owned and separate. No local tests/probes, qualification rerun, installed/client/global changes, new worker, handoff update or cleanup. Broader findings and historical incident cause remain open.
+
+The final metadata-only commit uses `[skip ci]` to honor the explicit no-application-rerun instruction. Current final-delta/full-change selection, genuine Redline/Workflow checks, source-identity checks, requirement integrity, attribution, privacy and whitespace still run. Existing full-suite and critical qualification evidence is reused only for unchanged code; no failing result is erased or reclassified as passed.

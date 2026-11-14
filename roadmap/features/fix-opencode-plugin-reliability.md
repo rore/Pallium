@@ -62,21 +62,19 @@ re-resolve them before implementing remaining work.
 
 ### Current qualification boundary (2026-10-22)
 
-PR404 contribution (2026-11-14): the discovery-only source is independently
-reviewed but unqualified. [Run 43615224581](https://github.com/rore/Pallium/actions/runs/43615224581)
-failed at the setup version guard before any of the nine new cases or the new
-native witness ran (0/9). Returned version/exit were not retained. A source-reviewed
-bounded runner diagnostic correction awaits hosted evidence; failures remain in
-[PR404](https://github.com/rore/Pallium/pull/404#issuecomment-6880634885).
-The first added [run 43617560050](https://github.com/rore/Pallium/actions/runs/43617560050)
-captured `opencode v2.2.7` with exit 0 before the bare-version comparison rejected
-it. The source-reviewed exact CLI-output-contract correction then passed setup.
-The final added [run 43619082058](https://github.com/rore/Pallium/actions/runs/43619082058)
-passed setup and observed the expected baseline RED, but propagated native exit 1
-as step failure. Candidate coverage remains 0/9 with no native witness. Both added
-attempts are consumed; a source-reviewed expected-RED shell-exit correction needs
-fresh execution authority before runtime verification.
-The original historical cause and broader findings remain open.
+PR404 contribution (2026-11-14): the discovery-only correction is independently
+source-reviewed and qualified on exact `3402450b8b2fa21ce129edb80160bc6b76ee5f0d`
+by [run 43621847373](https://github.com/rore/Pallium/actions/runs/43621847373).
+Expected baseline RED and corrected focused GREEN were observed. Package coverage
+is 175 cases / zero failures / seven existing skips, with all nine new cases
+individually passed. The released 2.2.7 native witness passed unskipped with all
+nine lifecycle checks true, unchanged source/binary bookends and normal/final drain.
+The manager independently accepted the actual artifact and combined disposition.
+Full Python 3.12, Windows and governance passed; the unrelated Python 3.13
+acquisition-deadline failure and all earlier failed attempts remain preserved in
+the [owning Work Record](../../.agent-workflow/tasks/opencode-automatic-delivery-recovery.md).
+Normal merge follows metadata finalization. Installed alignment is manager-owned;
+the original historical cause and broader findings remain open. This item stays active.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
