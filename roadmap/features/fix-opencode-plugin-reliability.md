@@ -103,8 +103,11 @@ coalesced inputs, so an outcome-bearing terminal can settle a visible exact wake
 despite intervening input. Bare `wait()` does not prove consumption or success.
 The plugin lacks the existing historical-message read API needed to prove an
 already-compacted anchor after reload. Do not invent that capability or clear
-the anchor without evidence. The existing developer has an isolated continuation
-offer to investigate the smallest supported fix and preserve that recovery gap.
+the anchor without evidence. The existing developer accepted the isolated
+continuation in `.agent-workflow/tasks/opencode-wake-anchor-retirement.md`
+to investigate the smallest supported fix and preserve that recovery gap. That
+record remains on the developer branch until publication; no implementation or
+qualification is claimed here.
 Preserve the OC-1 outcome and regression matrix below. Activation settlement is
 not downstream task completion.
 No live rows were cleared, messages replayed, or installed applications restarted
