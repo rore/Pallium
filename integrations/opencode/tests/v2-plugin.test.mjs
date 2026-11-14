@@ -503,6 +503,113 @@ test("failed startup session discovery retries and enrolls only a returned endpo
   } finally { await f.close(); }
 });
 
+for (const [name, list] of [
+  ["empty then eligible", [[], [relaySession]]],
+  ["error and repeated empty then eligible", [null, [], [], [relaySession]]],
+]) {
+  test(`startup empty discovery recovers without a recipient prompt: ${name}`, async () => {
+    const f = await callerFixture({ list });
+    try {
+      for (let index = 1; index < list.length; index++) {
+        assert.equal(f.listed(), index);
+        assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, 0);
+        await f.tick();
+      }
+      const [enrollment] = f.calls.filter((c) => c.body.operation === "enroll");
+      assert.ok(enrollment, "a later eligible endpoint must enroll without a recipient turn");
+      assert.equal(f.listed(), list.length);
+      assert.match(enrollment.body.owner_id, /^opencode-owner-[0-9a-f]{32}$/);
+      const binding = { session_ref: sessionID, container_ref: container, endpoint_id: endpointID,
+        scope_generation: 0, native_location: location, owner_id: enrollment.body.owner_id };
+      assert.deepEqual(enrollment.body, { operation: "enroll", ...binding });
+      await f.tick();
+      await f.tick();
+      assert.equal(f.listed(), list.length, "nonempty success stops startup discovery");
+      assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, 1);
+      const polls = f.calls.filter((c) => c.body.operation === "poll");
+      assert.equal(polls.length, 2);
+      for (const poll of polls) assert.deepEqual(poll.body, { operation: "poll", ...binding });
+      assert.ok(f.calls.every((c) => c.path === "/relay/sessions" ||
+        c.path === "/relay/opencode/wake" && ["enroll", "poll"].includes(c.body.operation)));
+      assert.deepEqual(f.native, { prompt: [], wait: 0, interrupt: 0 });
+      assert.deepEqual(f.history, []);
+    } finally { await f.close(); }
+  });
+}
+
+test("startup nonempty discovery enrolls once and only polls thereafter", async () => {
+  const f = await callerFixture();
+  try {
+    await f.tick();
+    await f.tick();
+    assert.equal(f.listed(), 1);
+    assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, 1);
+    assert.equal(f.calls.filter((c) => c.body.operation === "poll").length, 2);
+    assert.equal(f.calls.filter((c) => c.path === "/relay/turn" || c.path === "/relay/deliveries/ack" ||
+      ["context", "admitted", "terminal"].includes(c.body.operation)).length, 0);
+    assert.deepEqual(f.native, { prompt: [], wait: 0, interrupt: 0 });
+  } finally { await f.close(); }
+});
+
+for (const eligible of [false, true]) {
+  test(`startup empty discovery does not overlap an in-flight ${eligible ? "eligible" : "empty"} response`, async () => {
+    const gate = barrier();
+    let requests = 0;
+    const f = await callerFixture({ list: [[]], fetch: async (route) => {
+      if (route === "/relay/sessions" && ++requests === 2) return {
+        ok: true, text: async () => { await gate.wait(); return JSON.stringify(eligible ? [relaySession] : []); },
+      };
+    } });
+    try {
+      await f.tick();
+      await gate.entered;
+      await Promise.all([f.tick(), f.tick()]);
+      assert.equal(requests, 2, "timer callbacks cannot overlap the held discovery body");
+      assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, 0);
+      gate.release();
+      await f.tick(); // The existing tick settles the released response; no new sleep.
+      assert.equal(requests, 2);
+      assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, eligible ? 1 : 0);
+      await f.tick();
+      assert.equal(requests, eligible ? 2 : 3);
+      assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, 1);
+      assert.equal(f.calls.filter((c) => c.path === "/relay/turn" || c.path === "/relay/deliveries/ack" ||
+        c.body.operation === "context").length, 0);
+      assert.deepEqual(f.native, { prompt: [], wait: 0, interrupt: 0 });
+    } finally { gate.release(); await f.close(); }
+  });
+}
+
+for (const retire of ["dispose", "delete"]) for (const eligible of [false, true]) {
+  test(`startup empty discovery fences a retired ${eligible ? "eligible" : "empty"} response after ${retire}`, async () => {
+    const gate = barrier();
+    let requests = 0;
+    const f = await callerFixture({ list: [[]], fetch: async (route) => {
+      if (route === "/relay/sessions" && ++requests === 2) return {
+        ok: true, text: async () => { await gate.wait(); return JSON.stringify(eligible ? [relaySession] : []); },
+      };
+    } });
+    try {
+      await f.tick();
+      await gate.entered;
+      if (retire === "dispose") await f.dispose();
+      else await f.emit({ type: "session.deleted", location: { directory: location }, data: { sessionID } });
+      gate.release();
+      await f.tick();
+      assert.equal(requests, 2);
+      assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, 0,
+        "a retired discovery response cannot enroll late");
+      await f.tick();
+      assert.equal(requests, retire === "dispose" ? 2 : 3);
+      assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, retire === "dispose" ? 0 : 1,
+        "a new valid discovery after retirement is distinct from the stale response");
+      assert.equal(f.calls.filter((c) => c.path === "/relay/turn" || c.path === "/relay/deliveries/ack" ||
+        ["context", "admitted", "terminal"].includes(c.body.operation)).length, 0);
+      assert.deepEqual(f.native, { prompt: [], wait: 0, interrupt: 0 });
+    } finally { gate.release(); await f.close(); }
+  });
+}
+
 test("scope identity and Relay payload share the 2300-character model budget", async () => {
   const f = await callerFixture({ response: (path) => path === "/relay/turn"
     ? { session: relaySession, deliveries: [{ ...delivery, payload: "שלום ".repeat(240) }] } : undefined });

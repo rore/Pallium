@@ -12,6 +12,7 @@ import threading
 import time
 from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import pytest
@@ -178,11 +179,23 @@ try{
 
 
 def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, monkeypatch):
+    _released_native_journey(client, tmp_path, test_db_url, monkeypatch)
+
+
+def test_released_native_empty_discovery_recovers_without_natural_prompt(client, tmp_path, test_db_url, monkeypatch):
+    _released_native_journey(client, tmp_path, test_db_url, monkeypatch, bootstrap=True)
+
+
+def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, bootstrap=False):
     import hashlib
 
     binary = os.environ.get("PALLIUM_OPENCODE_V2_BINARY")
     if not binary or not Path(binary).is_file():
         pytest.skip("set PALLIUM_OPENCODE_V2_BINARY to the released 2.0.22 executable")
+    bootstrap_summary = {"host_version_verified": False, "startup_empty_settled": False, "restore_empty_settled": False,
+                         "attached_before_ack": False, "provider_payload": False,
+                         "exact_native_input": False, "native_settled": False,
+                         "public_delivered_once": False, "owned_drain": False}
     root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -353,22 +366,62 @@ import {appendFileSync} from 'node:fs';
 import {extractV2AssistantTurn,buildWorkTraceMetadata} from './pallium-common.mjs';
 import {randomUUID} from 'node:crypto';
 export default {...production,setup:async ctx=>{
- const instance=randomUUID(),directory=ctx.location.directory;
- const log=(kind,detail={})=>appendFileSync(process.env.PALLIUM_NATIVE_LIFECYCLE,JSON.stringify({kind,time:Date.now(),instance,directory,...detail})+'\\n');
- log('setup');
- const session={...ctx.session,context:async args=>{
+  const instance=randomUUID(),directory=ctx.location.directory;
+  const log=(kind,detail={})=>appendFileSync(process.env.PALLIUM_NATIVE_LIFECYCLE,JSON.stringify({kind,time:Date.now(),instance,directory,...detail})+'\\n');
+  log('setup');
+  const bootstrap=process.env.PALLIUM_NATIVE_BOOTSTRAP==='1',emptyReads=new Set();
+  let activeContext;
+  const originalFetch=globalThis.fetch;
+  const observedFetch=async(input,init)=>{
+   const url=new URL(input?.url??input);
+   if(url.port!==process.env.PALLIUM_PORT)return originalFetch(input,init);
+   if(url.pathname==='/relay/deliveries/ack'){
+    const body=JSON.parse(init.body),text=JSON.stringify(activeContext?.messages||[]);
+    log('bootstrap.ack',{attached:text.includes('BOOTSTRAP_PAYLOAD_שלום')&&
+     text.includes('Lower-authority context')&&text.includes(body.delivery_id)});
+   }
+   const response=await originalFetch(input,init);
+   if(url.pathname==='/relay/sessions'&&response.ok){
+    const read=response.text.bind(response);
+    response.text=async()=>{
+     const raw=await read();
+     if(JSON.stringify(JSON.parse(raw))==='[]'){
+      const id=url.searchParams.get('session_ref');
+      if(id)emptyReads.add(id);
+      else setImmediate(()=>log('bootstrap.startup.empty.settled'));
+     }
+     return raw;
+    };
+   }
+   return response;
+  };
+  if(bootstrap)globalThis.fetch=observedFetch;
+  const session={...ctx.session,context:async args=>{
   const result=await ctx.session.context(args);
   const messages=Array.isArray(result)?result:result.data;
   const turn=extractV2AssistantTurn(messages);
   log('capture.context',{sessionID:args.sessionID,messages,turn,workTrace:turn?buildWorkTraceMetadata(turn):null});
   return result;
- },hook:(name,callback)=>ctx.session.hook(name,async event=>{
+  },get:async args=>{
+   const result=await ctx.session.get(args);
+   if(bootstrap&&emptyReads.delete(args.sessionID)&&result?.location?.directory===directory)
+    // restore has no await after this post-response owned() check. The next
+    // event-loop task runs after that continuation and discovery's finally.
+    setImmediate(()=>log('bootstrap.restore.empty.settled',{sessionID:args.sessionID}));
+   return result;
+  },hook:(name,callback)=>ctx.session.hook(name,async event=>{
   const identity={sessionID:event?.sessionID,inputID:event?.messageID??event?.messages?.findLast(message=>message?.role==='user')?.id};
   log(name+'.enter',identity);
-  try{return await callback(event)}finally{log(name+'.done',identity)}
+   if(bootstrap&&name==='context')activeContext=event;
+   try{return await callback(event)}finally{
+    if(bootstrap&&name==='context')activeContext=undefined;
+    log(name+'.done',identity)
+   }
  })};
  const cleanup=await production.setup({...ctx,session});
- return async()=>{log('cleanup.enter');await cleanup();log('cleanup.done')};
+  return async()=>{log('cleanup.enter');await cleanup();
+   if(bootstrap&&globalThis.fetch===observedFetch)globalThis.fetch=originalFetch;
+   log('cleanup.done')};
 }};
 """, encoding="utf-8")
     (plugin / "package.json").write_text('{"type":"module","main":"index.js"}')
@@ -390,6 +443,8 @@ export default {...production,setup:async ctx=>{
         "TEMP": str(tmp_path / "temp"), "TMP": str(tmp_path / "temp"),
         **{"XDG_" + k + "_HOME": str(tmp_path / v) for k, v in (
             ("CONFIG", "config"), ("DATA", "data"), ("CACHE", "cache"), ("STATE", "state"))}})
+    if bootstrap:
+        env["PALLIUM_NATIVE_BOOTSTRAP"] = "1"
     processes = []
     logs = []
 
@@ -427,8 +482,11 @@ export default {...production,setup:async ctx=>{
                 return json.loads(raw) if raw else None
 
     def activate_plugin(directory):
-        plugins = api("GET", "/api/plugin", headers={"x-opencode-directory": str(directory).replace("\\", "/")})
-        return plugins if "pallium-v2" in json.dumps(plugins).lower() else None
+        directory = str(directory).replace("\\", "/")
+        plugins = api("GET", "/api/plugin?" + urlencode({"location[directory]": directory}))
+        assert Path(plugins["location"]["directory"]) == Path(directory), "plugin lookup resolved a different location"
+        return plugins if any(row.get("id") == "pallium-v2" and row.get("state", {}).get("status") == "active"
+                              and row.get("features", {}).get("server") for row in plugins["data"]) else None
 
     def eventually(check):
         deadline = time.monotonic() + 25
@@ -451,12 +509,62 @@ export default {...production,setup:async ctx=>{
                 process.kill()
                 process.wait(10)
 
+    def send(payload):
+        response = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender",
+            "recipient": "opencode:" + session, "payload": payload, **scope})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def delivered(sent):
+        status = client.get("/relay/messages/" + sent["message_id"], params=scope)
+        assert status.status_code == 200, status.text
+        return status.json()["deliveries"][0]["state"] == "delivered"
+
     try:
         process, url = start()
-        for directory in [workspace, *locations, foreign]:
+        if bootstrap:
+            assert api("GET", "/api/info")["version"] == "2.2.7", "released host version mismatch"
+            bootstrap_summary["host_version_verified"] = True
+        for directory in ([workspace] if bootstrap else [workspace, *locations, foreign]):
             eventually(lambda: activate_plugin(directory))
+        def observations():
+            return [json.loads(line) for line in lifecycle.read_text(encoding="utf-8").splitlines()]
+
+        if bootstrap:
+            eventually(lambda: any(row["kind"] == "bootstrap.startup.empty.settled" for row in observations()))
+            bootstrap_summary["startup_empty_settled"] = True
         session = api("POST", "/api/session", {"location": {"directory": str(workspace).replace("\\", "/")}})["data"]["id"]
         prefix = "/api/session/" + session
+        if bootstrap:
+            eventually(lambda: any(row["kind"] == "bootstrap.restore.empty.settled" and row.get("sessionID") == session
+                                   for row in observations()))
+            bootstrap_summary["restore_empty_settled"] = True
+            assert client.get("/relay/sessions", params={"runtime": "opencode", **scope}).json() == []
+            registered = client.post("/relay/turn", json={"runtime": "opencode", "session_ref": session, **scope})
+            assert registered.status_code == 200, registered.text
+            assert registered.json()["session"]["session_ref"] == session
+            assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "sender", **scope}).status_code == 200
+            sent = send("BOOTSTRAP_PAYLOAD_שלום")
+            eventually(lambda: delivered(sent))
+            eventually(lambda: any("BOOTSTRAP_PAYLOAD_שלום" in json.dumps(body, ensure_ascii=False) for body in requests))
+            bootstrap_summary["provider_payload"] = True
+            api("POST", "/api/experimental/session/" + session + "/wait")
+            context = api("GET", prefix + "/context")["data"]
+            users = [row for row in context if row.get("type") == "user"]
+            assert len(users) == 1 and users[0].get("metadata", {}).get("pallium_relay_wake") is True
+            assert users[0]["metadata"]["delivery_id"] == sent["deliveries"][0]["delivery_id"]
+            assert users[0]["id"].startswith("msg_pallium_")
+            bootstrap_summary["exact_native_input"] = True
+            index = next(i for i, row in enumerate(context) if row.get("id") == users[0]["id"])
+            assert any(row.get("type") == "idle" and row.get("outcome") == "succeeded" for row in context[index + 1:])
+            bootstrap_summary["native_settled"] = True
+            acks = [row for row in observations() if row["kind"] == "bootstrap.ack"]
+            assert len(acks) == 1 and acks[0]["attached"] is True, "context was not attached before ACK"
+            bootstrap_summary["attached_before_ack"] = True
+            status = client.get("/relay/messages/" + sent["message_id"], params=scope).json()["deliveries"][0]
+            assert status["state"] == "delivered" and status["attempts"] == 1
+            bootstrap_summary["public_delivered_once"] = True
+            return
         api("POST", prefix + "/prompt", {"id": "msg_natural_first", "text": "NATIVE_USER_שלום", "delivery": "queue"})
         api("POST", "/api/experimental/session/" + session + "/wait")
         eventually(lambda: lost_captures)
@@ -490,17 +598,6 @@ export default {...production,setup:async ctx=>{
         scope = {"container_ref": container}
         eventually(lambda: client.get("/relay/sessions", params={"runtime": "opencode", **scope}).json()[0]["activation"]["integration"] == "opencode_queue")
         assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "sender", **scope}).status_code == 200
-
-        def send(payload):
-            response = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender",
-                "recipient": "opencode:" + session, "payload": payload, **scope})
-            assert response.status_code == 200, response.text
-            return response.json()
-
-        def delivered(sent):
-            status = client.get("/relay/messages/" + sent["message_id"], params=scope)
-            assert status.status_code == 200, status.text
-            return status.json()["deliveries"][0]["state"] == "delivered"
 
         idle = send("IDLE_PAYLOAD_שלום")
         eventually(lambda: delivered(idle))
@@ -688,6 +785,12 @@ export default {...production,setup:async ctx=>{
             server.server_close()
         for restarted in restored_client:
             restarted.close()
+        if bootstrap:
+            bootstrap_summary["owned_drain"] = all(process.poll() is not None for process in processes)
+            summary = os.environ.get("PALLIUM_OPENCODE_BOOTSTRAP_SUMMARY")
+            if summary:
+                Path(summary).write_text(json.dumps(bootstrap_summary), encoding="utf-8")
+            assert bootstrap_summary["owned_drain"], "owned native host did not drain"
 
 
 def test_capture_callbacks_retry_through_real_http_and_history(client, tmp_path):
