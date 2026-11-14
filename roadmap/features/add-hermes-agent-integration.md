@@ -53,12 +53,22 @@ reaches the intended later-caller assertion, with prerequisite mutation/readback
 checks satisfied and no subject skip or setup/teardown error. This is injected
 post-success stale-session RED, not genuine EOF or original-incident-cause proof.
 The old-checkout custody restriction remains; it does not block this independent
-adoption. The first-RED gate is cleared for the same accepted minimal bridge plan;
-required edge/lifecycle coverage, corrected GREEN and result review remain.
-Overall CI is still failed, including a separate Codex acquisition failure on
-Linux 3.13. Neither incomplete full profile is qualified. No recovery test ran
-locally, and no recovery GREEN is claimed. This work remains separate from the
-deliberate RED
+adoption. The accepted minimal bridge plan is implemented in current PR head
+`7470898c`. The manager independently inspected both JUnit artifacts from
+[run 43647802699](https://github.com/rore/Pallium/actions/runs/43647802699): all
+29 source-derived bridge cases pass exactly once on each Linux version, with
+no subject skip, setup error or teardown error. Python 3.13 passes the full
+non-slow suite: 9,120 passed, 106 skipped and two xfails. Windows smoke and
+governance pass. Overall CI remains failed because Python 3.12 later fails an
+initial Relay registration with HTTP 503 before that case's delivery assertions.
+Its cause and availability impact remain unresolved. Earlier failed runs and
+fixture corrections remain recorded, not relabeled as passing.
+
+The existing architect's current product/result review and the manager's separate
+failure disposition remain pending. SDK1 wire checks pass with memory off/on;
+optional SDK2 checks skipped and do not qualify SDK2. No local recovery test,
+native-host campaign or installed rollout occurred. This work remains separate
+from the deliberate RED
 reply-contract [PR #400](https://github.com/rore/Pallium/pull/400), the qualified
 integration above and installed adoption. No bridge recovery is yet qualified.
 
