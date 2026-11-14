@@ -17,7 +17,7 @@ Source: manager-assigned narrow follow-up to [global Relay discovery](../../road
 {"source":"manager-assignment:mounted-mcp-global-discovery:2026-11-14","outcome":"Mounted MCP on a genuinely loopback-bound local Pallium service supports service-global Relay recipient discovery and global trace while unsafe binds and service URLs remain refused.","scope":"Existing MCP construction, startup and bind plumbing, narrowly affected caller-surface regressions, and this Work Record. Initial milestone is source discovery and a reviewed minimal plan only.","constraints":"Preserve refusal for remote/wildcard bindings and remote, credential-bearing or malformed service URLs. Preserve scoped recipients, identity, scope, visibility and receipts. No wildcard trust, false loopback claims, request metadata/header trust, HTTP bypass or auth framework. No product/test edits before technical review and required human approval. No local tests, collection, application imports, probes, qualification, hosted dispatch, commits, pushes, PRs, environment changes, cleanup, package-skill edits or extra workers. Shared roadmap is manager-owned.","completion_criteria":"Mounted local MCP callers can discover cross-container recipients and use global trace; remote/wildcard-bind and unsafe-URL callers are refused before querying. Scoped behavior and standalone/stdio behavior remain unchanged. The initial milestone records all-caller cause, exact proposed paths/risk, minimal plan, caller-surface E2E strategy and independent technical assessment or a named blocker."}
 
 **Relationships:**
-{"schema_version":1,"sources":[{"provider":"minimap","scope_ref":"roadmap:v1:git:github.com/rore/pallium#roadmap","local_ref":"item:v1:add-global-relay-recipient-discovery"}],"pull_requests":[]}
+{"schema_version":1,"sources":[{"provider":"minimap","scope_ref":"roadmap:v1:git:github.com/rore/pallium#roadmap","local_ref":"item:v1:add-global-relay-recipient-discovery"}],"pull_requests":["https://github.com/rore/Pallium/pull/403"]}
 
 **Behavior changes:**
 [
@@ -80,6 +80,8 @@ Approved by user 2026-11-14: "yes, let's get this fixed and merges and updated l
 - Publication preflight verified the intended personal account/repository and existing author/committer identity. Native Git hook directory contains samples only; no active commit/push hook or custom hooksPath is configured. No hook or guard is bypassed, and no local test/import is triggered by publication.
 
 ## Evidence
+
+Publication and hosted evidence surface: [PR #403](https://github.com/rore/Pallium/pull/403). Initial contribution commit `2990222` contains the reviewed source plus the delegated record/feature annotation. The returned PR link is captured here and in the owning feature before waiting on CI. Actual check results, logs, failure dispositions and review threads belong on that PR, not duplicated here. No hosted result or installed recovery is claimed by publication.
 
 - Initial `git status --short --branch`: detached HEAD, clean.
 - Minimap CLI independently returned the exact source tuple stored above. Captured in this record and read back against the CLI result; exact baseline and relationship JSON checks passed with PowerShell text/JSON parsing. This is not the full Workflow checker.
@@ -216,7 +218,7 @@ High-risk source-plan/result authority and publication/conditional-merge authori
 
 ## Recovery and next action
 
-Publish the explicit nine-path isolated contribution, create a draft PR, capture its returned URL in Relationships and the owning feature, then promptly push that bookkeeping. Inspect existing automatic CI and genuine review threads; preserve actual failures and apply the noncritical disposition below. Merge only after required platform evidence/reviews and manager combined acceptance. No local tests/imports/probes/qualification, manual/custom hosted runs, shared/installed checkout changes, service/app operations or cleanup are authorized. Do not infer runtime or installed recovery from source acceptance. Retain checkout/association for this active task; original feature status remains done. Incidental URL hardening/default IPv6 construction remain excluded.
+Draft PR #403 is published and its returned URL is captured in Relationships and the owning feature. Push this link bookkeeping promptly, then inspect existing automatic CI and genuine review threads; preserve actual failures and apply the noncritical disposition below. Merge only after required platform evidence/reviews and manager combined acceptance. No local tests/imports/probes/qualification, manual/custom hosted runs, shared/installed checkout changes, service/app operations or cleanup are authorized. Do not infer runtime or installed recovery from source acceptance. Retain checkout/association for this active task; original feature status remains done. Incidental URL hardening/default IPv6 construction remain excluded.
 
 ## Result review
 
