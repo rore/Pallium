@@ -444,6 +444,167 @@ test("missing admitted input and unrelated idle cannot settle or issue a new nat
   } finally { await overtaken.close(); }
 });
 
+for (const outcome of ["succeeded", "failed", "interrupted"]) {
+  test(`coalesced native wake settles from exact outcome-bearing idle: ${outcome}`, async () => {
+    const f = await callerFixture({ wake: snapshot(), wait: async (history) => {
+      history.push({ type: "user", id: "msg_ordinary_unicode", text: "ordinary work שלום 😀" },
+        { type: "user", id: "msg_later_ordinary", text: "more work" },
+        { type: "idle", id: "msg_coalesced_terminal", outcome });
+    } });
+    try {
+      await f.tick();
+      const terminal = f.calls.filter((c) => c.body.operation === "terminal");
+      assert.equal(terminal.length, 1, "coalesced exact wake must settle activation without replay");
+      assert.equal(terminal[0].body.terminal_message_id, "msg_coalesced_terminal");
+      assert.deepEqual([terminal[0].body.generation, terminal[0].body.delivery_id, terminal[0].body.native_input_id],
+        [1, deliveryID, nativeID]);
+      assert.deepEqual(f.native.prompt.map((p) => p.id), [nativeID]);
+      assert.equal(f.native.wait, 1);
+      assert.equal(f.calls.filter((c) => c.body.operation === "admitted").length, 1);
+      assert.equal(f.calls.filter((c) => c.path === "/relay/deliveries/ack").length, 0);
+      assert.equal(f.native.interrupt, 0);
+    } finally { await f.close(); }
+  });
+}
+
+for (const fault of ["missing-id", "invalid-id", "same-id", "outcomeless", "unknown-outcome", "nonstring-outcome",
+  "before-input", "compacted", "wrong-input", "wrong-text", "wrong-marker", "wrong-generation", "wrong-delivery",
+  "uncertain-first-idle"]) {
+  test(`coalesced native wake rejects unproven after-wait evidence: ${fault}`, async () => {
+    const f = await callerFixture({ wake: snapshot(), wait: async (history) => {
+      const input = history[0];
+      const idle = { type: "idle", id: "msg_coalesced_terminal", outcome: "succeeded" };
+      history.push({ type: "user", id: "msg_newer", text: "ordinary work" });
+      if (fault === "missing-id") delete idle.id;
+      if (fault === "invalid-id") idle.id = "not-a-native-id";
+      if (fault === "same-id") idle.id = nativeID;
+      if (fault === "outcomeless") delete idle.outcome;
+      if (fault === "unknown-outcome") idle.outcome = "completed";
+      if (fault === "nonstring-outcome") idle.outcome = true;
+      if (fault === "wrong-input") input.id = "msg_other_input";
+      if (fault === "wrong-text") input.text = "not the exact native wake";
+      if (fault === "wrong-marker") input.metadata.pallium_relay_wake = false;
+      if (fault === "wrong-generation") input.metadata.generation++;
+      if (fault === "wrong-delivery") input.metadata.delivery_id = "relay-delivery-" + "f".repeat(32);
+      if (fault === "compacted") history.splice(0, 1);
+      if (fault === "before-input") history.unshift(idle);
+      else if (fault === "uncertain-first-idle") history.push(
+        { type: "idle", id: "msg_unknown_terminal" }, idle);
+      else history.push(idle);
+    } });
+    try {
+      await f.tick();
+      assert.equal(f.calls.filter((c) => c.body.operation === "admitted").length, 1);
+      assert.equal(f.calls.filter((c) => c.body.operation === "terminal").length, 0);
+      assert.deepEqual(f.native.prompt.map((p) => p.id), [nativeID]);
+      assert.equal(f.native.wait, 1);
+    } finally { await f.close(); }
+  });
+}
+
+test("coalesced native wake waits for settlement and successor work", async () => {
+  const gate = barrier();
+  const f = await callerFixture({ wake: snapshot(), wait: async (history) => {
+    history.push({ type: "user", id: "msg_successor_work", text: "ordinary work" });
+    await gate.wait();
+    history.push({ type: "idle", id: "msg_successor_terminal", outcome: "succeeded" });
+  } });
+  try {
+    await f.tick();
+    await gate.entered;
+    await f.tick();
+    assert.equal(f.calls.filter((c) => c.body.operation === "terminal").length, 0);
+    assert.equal(f.native.wait, 1);
+    gate.release();
+    await pause();
+    assert.equal(f.calls.filter((c) => c.body.operation === "terminal").length, 1);
+    assert.deepEqual(f.native.prompt.map((p) => p.id), [nativeID]);
+  } finally { gate.release(); await f.close(); }
+});
+
+for (const change of ["dispose", "location", "endpoint", "scope", "wake-generation", "wake-delivery", "wake-input", "wake-location"]) {
+  test(`coalesced native wake fences changed binding after wait: ${change}`, async () => {
+    const gate = barrier();
+    let moved = false;
+    let polled = false;
+    const original = snapshot();
+    const changed = { ...original };
+    const f = await callerFixture({ wake: original,
+      get: async () => ({ location: { directory: moved ? location + "/other" : location } }),
+      response: async (route, body) => {
+        if (route !== "/relay/opencode/wake" || body.operation !== "poll") return;
+        if (!polled) { polled = true; return { session: relaySession, wake: original, deliveries: [] }; }
+        const session = { ...relaySession };
+        if (change === "endpoint") session.endpoint_id = "relay-session-" + "f".repeat(32);
+        if (change === "scope") session.scope_generation++;
+        return { session, wake: ["endpoint", "scope"].includes(change) ? null : changed, deliveries: [] };
+      },
+      wait: async (history) => {
+        history.push({ type: "user", id: "msg_coalesced_ordinary", text: "ordinary work" });
+        await gate.wait();
+        history.push({ type: "idle", id: "msg_coalesced_terminal", outcome: "succeeded" });
+      },
+    });
+    try {
+      await f.tick();
+      await gate.entered;
+      if (change === "dispose") await f.dispose();
+      else if (change === "location") moved = true;
+      else {
+        if (change === "wake-generation") changed.generation++;
+        if (change === "wake-delivery") changed.delivery_id = "relay-delivery-" + "f".repeat(32);
+        if (change === "wake-input") changed.native_input_id = "msg_other_generation";
+        if (change === "wake-location") changed.native_location = location + "/other";
+        await f.tick();
+      }
+      gate.release();
+      await pause();
+      assert.equal(f.calls.filter((c) => c.body.operation === "terminal").length, 0);
+      assert.deepEqual(f.native.prompt.map((p) => p.id), [nativeID]);
+      assert.equal(f.native.interrupt, 0);
+    } finally { gate.release(); await f.close(); }
+  });
+}
+
+for (const failure of ["wait", "context", "terminal-rejected", "terminal-reply-lost"]) {
+  test(`coalesced native wake keeps uncertainty without replay: ${failure}`, async () => {
+    let reads = 0;
+    let settled = false;
+    const wake = snapshot();
+    const f = await callerFixture({ wake,
+      context: async (_input, history) => {
+        if (++reads === 3 && failure === "context") throw new Error("readback unavailable");
+        return { data: history };
+      },
+      wait: async (history) => {
+        history.push({ type: "user", id: "msg_coalesced_ordinary", text: "ordinary work" });
+        if (failure === "wait") throw new Error("settlement unknown");
+        history.push({ type: "idle", id: "msg_coalesced_terminal", outcome: "succeeded" });
+      },
+      response: async (route, body) => {
+        if (route !== "/relay/opencode/wake") return;
+        if (body.operation === "poll" && settled) return { session: relaySession, wake: snapshot({ terminal: true }), deliveries: [] };
+        if (body.operation === "terminal") {
+          if (failure === "terminal-reply-lost") settled = true;
+          return null;
+        }
+      },
+    });
+    try {
+      await f.tick();
+      assert.equal(f.calls.filter((c) => c.body.operation === "terminal").length,
+        failure.startsWith("terminal") ? 1 : 0);
+      assert.equal(wake.terminal, false, "uncertain response cannot rotate local wake authority");
+      if (failure === "terminal-reply-lost") {
+        await f.tick();
+        assert.equal(f.calls.filter((c) => c.body.operation === "terminal").length, 1);
+      }
+      assert.deepEqual(f.native.prompt.map((p) => p.id), [nativeID]);
+      assert.equal(f.native.interrupt, 0);
+    } finally { await f.close(); }
+  });
+}
+
 test("committed empty wake fails visibly while newer natural work remains usable", async () => {
   const f = await callerFixture({ wake: snapshot() });
   try {
