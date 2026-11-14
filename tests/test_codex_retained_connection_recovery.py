@@ -717,3 +717,106 @@ def test_post_owner_failure_keeps_spent_delivery_fenced(http_wake, response, cap
         assert "category=native-tool-failed" in failure_log and "stage=owner-result" in failure_log
     assert http.get("/relay/messages/retained-journey", params={
         "container_ref": "git:example.test/retained-東京"}).json()["deliveries"][0]["state"] == "pending"
+
+
+@pytest.mark.parametrize("closure,spent", [("eof", False), ("stop", False), ("eof", True), ("stop", True)])
+def test_source_closure_after_preserved_desktop_failure_revokes_dispatch_authority(
+    client, http_wake, retained, monkeypatch, closure, spent,
+):
+    import time
+    from types import SimpleNamespace
+    from app import codex_bridge_pipe as bridge
+    from core.codex_wake import CodexWakeRegistry
+
+    http, relay, registry, service, first, send, _ = http_wake
+    _, _, natives = retained
+    monkeypatch.setattr(client.app.state.codex_wake_registry, "retained_service", service, raising=False)
+    paths = ("/status", "/dashboard/api/relay/summary")
+    for route in paths:
+        response = client.get(route)
+        assert response.status_code == 200
+        assert response.json()["relay_wake"]["native_enrollment"]["state"] == "registered"
+    if spent:
+        first.response = "lost"
+        send()
+    else:
+        # Reuse the existing recovery control's retained prepared generation.
+        with monkeypatch.context() as held:
+            held.setattr(registry, "release_generation", lambda reservation: False)
+            _defer_on_state_timeout(http_wake, retained, bridge)
+    fences = registry.reservations()
+    assert len(fences) == 1 and fences[0].outcome == ("uncertain" if spent else "prepared")
+    fence = fences[0]
+    assert first.closed and len(first.owners) == int(spent)
+    for route in paths:
+        response = client.get(route)
+        assert response.status_code == 200
+        enrollment = response.json()["relay_wake"]["native_enrollment"]
+        assert enrollment["state"] == "retained_disconnected" and enrollment["registration_remembered"]
+    initial = http.get("/relay/messages/retained-journey", params=SCOPE)
+    assert initial.status_code == 200
+    delivery, = initial.json()["deliveries"]
+    assert delivery["delivery_id"] == fence.delivery_id
+    assert (delivery["state"], delivery["attempts"]) == ("pending", 0)
+    native_before = (len(natives), sum(len(value.writes) for value in natives), sum(len(value.owners) for value in natives))
+
+    def lost_authority_denies_dispatch():
+        for route in paths:
+            response = client.get(route)
+            assert response.status_code == 200
+            enrollment = response.json()["relay_wake"]["native_enrollment"]
+            assert enrollment["state"] == "released"
+            assert not enrollment["registration_remembered"] and not enrollment["custody_present"]
+        result, current = service.dispatch(fence, registry)
+        assert current == fence and result.outcome == "deferred"
+        assert result.native_retry_safe is (not spent)
+        assert (len(natives), sum(len(value.writes) for value in natives), sum(len(value.owners) for value in natives)) == native_before
+        assert registry.reservations() == fences
+        assert CodexWakeRegistry(relay_service=relay).reservations() == fences
+        pending = http.get("/relay/messages/retained-journey", params=SCOPE)
+        assert pending.status_code == 200
+        observed, = pending.json()["deliveries"]
+        for field in ("delivery_id", "message_id", "recipient_endpoint_id", "state", "attempts"):
+            assert observed[field] == delivery[field]
+
+    if closure == "stop":
+        service.stop()
+        lost_authority_denies_dispatch()
+    else:
+        source, w = service.source, service.w
+        service.ready_deadline = time.monotonic() + bridge.GRANT_SECONDS
+        reads, checked, errors = [], [], []
+        def read_eof(deadline):
+            reads.append(True)
+            assert service.retained_registration is not None and not service.stop_event.is_set()
+            source.check()
+            raise bridge.ShadowUnavailable("transport-failed")
+        def disconnected(handle):
+            try:
+                assert not service.stop_event.is_set() and not source.gone and not source.closed
+                lost_authority_denies_dispatch()
+                checked.append(True)
+            except Exception as error:
+                errors.append(error)
+            finally:
+                # End the fake listener only after the EOF-only denial was observed.
+                service.stop_event.set()
+        for name, value in dict(PIPE_ACCESS_DUPLEX=1, PIPE_TYPE_MESSAGE=2, PIPE_READMODE_MESSAGE=4,
+                                PIPE_WAIT=8, PIPE_REJECT_REMOTE_CLIENTS=16).items():
+            monkeypatch.setattr(w.pipe, name, value, raising=False)
+        monkeypatch.setattr(w.pipe, "CreateNamedPipe", lambda *args: 91, raising=False)
+        monkeypatch.setattr(w.pipe, "GetNamedPipeClientProcessId", lambda handle: source.pid, raising=False)
+        monkeypatch.setattr(w.pipe, "DisconnectNamedPipe", disconnected, raising=False)
+        io = SimpleNamespace(unresolved=False, accept=lambda deadline: None, read=read_eof,
+                             write=lambda *args: pytest.fail("EOF unexpectedly produced a request"), close=lambda: None)
+        monkeypatch.setattr(bridge, "_native", lambda: w)
+        monkeypatch.setattr(bridge, "_self_sid", lambda value: service.sid)
+        monkeypatch.setattr(bridge, "_check_path", lambda *args, **kwargs: None)
+        monkeypatch.setattr(bridge, "_lock_file", lambda *args: 92)
+        monkeypatch.setattr(bridge, "_security_attributes", lambda *args, **kwargs: None)
+        monkeypatch.setattr(bridge, "_atomic_private", lambda *args: None)
+        monkeypatch.setattr(bridge, "_PipeIO", lambda *args: io)
+        service._run()
+        assert reads == checked == [True] and errors == []
+    assert (len(natives), sum(len(value.writes) for value in natives), sum(len(value.owners) for value in natives)) == native_before
+    assert registry.reservations() == fences

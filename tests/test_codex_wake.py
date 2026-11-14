@@ -6387,23 +6387,34 @@ def test_http_ack_before_reserve_prevents_fence_and_native_write(
     with patch(target, side_effect=gated_schedule):
         send_thread = threading.Thread(target=send)
         send_thread.start()
-        assert scheduler_entered.wait(2)
-        claim_response = claim_route.post("/relay/turn", json={
-            "runtime": runtime, "session_ref": "target", **scope,
-        })
-        assert claim_response.status_code == 200
-        claim = claim_response.json()["deliveries"][0]
-        ack = route.post("/relay/deliveries/ack", json={
-            "delivery_id": claim["delivery_id"], "claim_token": claim["claim_token"], **scope,
-        })
-        assert ack.status_code == 200 and callback_entered.is_set()
-        continue_scheduler.set()
-        send_thread.join(timeout=2)
+        try:
+            assert scheduler_entered.wait(2), {
+                "send_status": getattr(responses.get("send"), "status_code", None),
+                "sender_alive": send_thread.is_alive(),
+                "scheduler_entered": scheduler_entered.is_set(),
+                "callback_entered": callback_entered.is_set(),
+                "workers_alive": [None if worker is None else worker.is_alive() for worker in workers[:4]],
+            }
+            claim_response = claim_route.post("/relay/turn", json={
+                "runtime": runtime, "session_ref": "target", **scope,
+            })
+            assert claim_response.status_code == 200
+            claim = claim_response.json()["deliveries"][0]
+            ack = route.post("/relay/deliveries/ack", json={
+                "delivery_id": claim["delivery_id"], "claim_token": claim["claim_token"], **scope,
+            })
+            assert ack.status_code == 200 and callback_entered.is_set()
+
+        finally:
+            continue_scheduler.set()
+            send_thread.join(timeout=2)
+            for worker in workers:
+                if worker is not None:
+                    worker.join(timeout=2)
 
     assert not send_thread.is_alive() and responses["send"].status_code == 200
     for worker in workers:
         if worker is not None:
-            worker.join(timeout=2)
             assert not worker.is_alive()
     assert native_writes == []
     if runtime == "codex":
