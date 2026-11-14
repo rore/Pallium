@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -16,6 +18,9 @@ pytest.importorskip("mcp", reason="mcp[cli] is required for real stdio coverage"
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from anyio import ClosedResourceError
+
+from integrations.hermes import mcp_bridge as bridge_module
 
 from app.mcp.context import (
     PalliumContext,
@@ -295,6 +300,298 @@ def test_dedicated_hermes_stdio_binds_identity_and_reuses_relay_tools(client) ->
     })
     assert peer_inbox.status_code == 200, peer_inbox.text
     assert any(item["payload"] == "réponse" for item in peer_inbox.json()["deliveries"])
+
+
+@pytest.fixture
+def joined_bridge_recovery_context(client, monkeypatch):
+    """Keep the real SDK/stdio/HTTP/storage path and exact owned cleanup handles."""
+    import mcp.client.stdio as sdk_stdio
+
+    lock = threading.Lock()
+    bridges, bridge_threads, sessions, stdio_contexts, events = [], [], [], [], []
+    requests, sdk_calls, errors = [], [], []
+    state = SimpleNamespace(poisoned=None, committed=None, injections=0)
+    server = listener = None
+    startup_error = None
+    original_call = ClientSession.call_tool
+    original_enter, original_exit = ClientSession.__aenter__, ClientSession.__aexit__
+    original_stdio = sdk_stdio.stdio_client
+
+    def event(kind, owner):
+        with lock:
+            events.append((kind, owner))
+
+    async def enter_session(session):
+        entry = SimpleNamespace(owner=session, entered=False, exited=False)
+        with lock:
+            sessions.append(entry)  # Retain partial construction too.
+        result = await original_enter(session)
+        entry.entered = True
+        event("session-enter", session)
+        return result
+
+    async def exit_session(session, *failure):
+        result = await original_exit(session, *failure)
+        entry = next(entry for entry in sessions if entry.owner is session)
+        entry.exited = True
+        event("session-exit", session)
+        return result
+
+    @asynccontextmanager
+    async def owned_stdio(*args, **kwargs):
+        context = original_stdio(*args, **kwargs)
+        entry = SimpleNamespace(owner=context, entered=False, exited=False)
+        with lock:
+            stdio_contexts.append(entry)
+        streams = await context.__aenter__()
+        entry.entered = True
+        event("stdio-enter", context)
+        try:
+            yield streams
+        except BaseException:
+            suppressed = await context.__aexit__(*os.sys.exc_info())
+            entry.exited = True
+            event("stdio-exit", context)
+            if not suppressed:
+                raise
+        else:
+            await context.__aexit__(None, None, None)
+            entry.exited = True
+            event("stdio-exit", context)
+
+    async def forward_then_poison_original(session, name, arguments=None, **kwargs):
+        observed = {
+            "owner": session, "name": name,
+            "arguments": json.loads(json.dumps(arguments)),
+            "metadata": json.loads(json.dumps(kwargs.get("meta"))),
+        }
+        with lock:
+            sdk_calls.append(observed)
+            poisoned = session is state.poisoned
+        if poisoned:
+            raise ClosedResourceError("controlled original-session transport failure")
+        result = await original_call(session, name, arguments=arguments, **kwargs)
+        if name == "pallium_relay_send" and state.poisoned is None:
+            wire = result.model_dump(mode="json", by_alias=True)
+            if wire.get("isError") is False:
+                text = "\n".join(block["text"] for block in wire["content"])
+                committed = json.loads(text)
+                if "message_id" in committed:
+                    with lock:
+                        state.committed = committed
+                        state.poisoned = session
+                        state.injections += 1
+                    # The actual send already completed. Do not poison replacements,
+                    # fake its response, close shared transports or replay the call.
+                    raise ClosedResourceError("controlled lost response after commit")
+        return result
+
+    def owned_thread(*args, **kwargs):
+        thread = threading.Thread(*args, **kwargs)
+        with lock:
+            bridge_threads.append(thread)
+        return thread
+
+    class Handler(_RelayHandler):
+        mutation_responses = []
+
+        def _write_response(self, response):
+            if self.command == "POST" and self.path == "/relay/messages":
+                with self.lock:
+                    self.mutation_responses.append((response.status_code, response.json()))
+            super()._write_response(response)
+
+    Handler.client, Handler.calls, Handler.lock = client, [], threading.Lock()
+
+    class Proxy(ThreadingHTTPServer):
+        def process_request(self, request, client_address):
+            worker = threading.Thread(
+                target=self.process_request_thread, args=(request, client_address),
+                name="hermes-bridge-recovery-http-request", daemon=True,
+            )
+            with lock:
+                requests.append(worker)
+            try:
+                worker.start()
+            except BaseException as error:
+                errors.append(error)
+                attempt(self.shutdown_request, request)
+                raise
+
+        def handle_error(self, request, client_address):
+            with lock:
+                errors.append(os.sys.exception() or RuntimeError("Forwarding request failed"))
+
+    class Bridge(bridge_module.RelayMcpBridge):
+        def __init__(self, **kwargs):
+            bridges.append(self)
+            super().__init__(**kwargs)
+
+    def attempt(callback, *args):
+        try:
+            callback(*args)
+        except BaseException as error:
+            errors.append(error)
+
+    def join_owned(thread):
+        if thread.ident is not None:
+            thread.join(timeout=2)
+        assert not thread.is_alive(), "Owned bridge regression thread did not exit"
+
+    def check_context(entry):
+        assert entry.entered and entry.exited, "Owned SDK context startup/cleanup incomplete"
+
+    def serve():
+        try:
+            server.serve_forever(poll_interval=.01)
+        except BaseException as error:
+            with lock:
+                errors.append(error)
+
+    def create(scope):
+        return Bridge(
+            python=os.sys.executable, repo=str(Path(__file__).resolve().parents[1]),
+            base_url=f"http://127.0.0.1:{server.server_port}",
+            container_ref=scope, actor_ref="bridge-test-actor", visibility="private",
+            memory_enabled=False,
+        )
+
+    try:
+        threading_view = SimpleNamespace(**vars(threading))
+        threading_view.Thread = owned_thread
+        monkeypatch.setattr(bridge_module, "threading", threading_view)
+        monkeypatch.setattr(ClientSession, "__aenter__", enter_session)
+        monkeypatch.setattr(ClientSession, "__aexit__", exit_session)
+        monkeypatch.setattr(ClientSession, "call_tool", forward_then_poison_original)
+        monkeypatch.setattr(sdk_stdio, "stdio_client", owned_stdio)
+        server = Proxy(("127.0.0.1", 0), Handler)
+        listener = threading.Thread(target=serve, name="hermes-bridge-recovery-http", daemon=True)
+        listener.start()
+        yield SimpleNamespace(
+            create=create, state=state, sdk_calls=sdk_calls, http_calls=Handler.calls,
+            http_mutations=Handler.mutation_responses,
+            sessions=sessions, stdio_contexts=stdio_contexts, events=events,
+        )
+    except BaseException as error:
+        startup_error = error
+        raise
+    finally:
+        for bridge in reversed(bridges):
+            if getattr(bridge, "_thread", None) is not None:
+                attempt(bridge.close)
+        with lock:
+            owned = list(bridge_threads)
+        for thread in owned:
+            attempt(join_owned, thread)
+        for entry in [*sessions, *stdio_contexts]:
+            attempt(check_context, entry)
+        if server is not None:
+            if listener is not None and listener.is_alive():
+                attempt(server.shutdown)
+            attempt(server.server_close)
+        if listener is not None:
+            attempt(join_owned, listener)
+        with lock:
+            workers = list(requests)
+        for worker in workers:
+            attempt(join_owned, worker)
+        if errors:
+            # Pytest retains body failures separately; include setup errors when
+            # teardown also fails, rather than replace either failure with a pass.
+            failures = ([startup_error] if startup_error is not None else []) + errors
+            raise BaseExceptionGroup("Bridge regression owned cleanup failed", failures) from None
+
+
+def test_bridge_transport_failure_after_commit_is_not_replayed_and_next_call_recovers_e2e(
+    client, joined_bridge_recovery_context,
+) -> None:
+    """Injected post-success transport loss, not genuine EOF/original-race proof."""
+    joined = joined_bridge_recovery_context
+    scope = {"container_ref": "git:example.test/hermes-bridge-recovery"}
+    sender, recipient = "sending-שלום", "recipient-调用-שלום"
+    sender_turn, later_turn = "send-turn-一", "later-turn-שני"
+    payload = "bridge recovery héllo 任务"
+    endpoints = {}
+    # Recipient explicitly doubles as the later caller. Address does not register.
+    for session in (sender, recipient):
+        registered = client.post("/relay/turn", json={
+            "runtime": "hermes", "session_ref": session, "max_messages": 0, **scope,
+        })
+        assert registered.status_code == 200, "Normal endpoint registration failed; not behavioral RED"
+        endpoints[session] = registered.json()["session"]["endpoint_id"]
+    empty = client.get("/dashboard/api/relay/messages", params=scope)
+    assert empty.status_code == 200 and empty.json()["total"] == 0
+
+    bridge = joined.create(scope["container_ref"])
+    assert {tool["name"] for tool in bridge.catalog} == set(HERMES_TOOLS)
+    first = json.loads(bridge.call("pallium_relay_send", {
+        "recipient": endpoints[recipient], "message": payload, "expires_in_seconds": 3600,
+    }, (sender, sender_turn)))
+    assert joined.state.injections == 1 and joined.state.committed is not None, (
+        "Real send did not complete before fault injection; not behavioral RED"
+    )
+    assert "error" in first and "message_id" not in first
+    message_id = joined.state.committed["message_id"]
+    original_session = joined.state.poisoned
+
+    def assert_one_real_mutation_and_message():
+        sdk_sends = [call for call in joined.sdk_calls if call["name"] == "pallium_relay_send"]
+        assert len(sdk_sends) == 1, "The original invocation was replayed at the SDK boundary"
+        assert "message_id" not in sdk_sends[0]["arguments"]
+        assert sdk_sends[0]["metadata"] == _identity(sender, sender_turn)
+        sends = [body for path, body in joined.http_calls if path == "/relay/messages"]
+        assert len(sends) == 1, "Multiple HTTP attempts need prerequisite/replay disposition; not assumed RED"
+        successful = [body for status, body in joined.http_mutations if 200 <= status < 300]
+        assert len(successful) == 1 and successful[0]["message_id"] == message_id
+        # The existing HTTP client generates a fresh ID per tool invocation.
+        # It is not a caller-supplied retry key; count both dispatches and storage.
+        assert sends[0]["message_id"] == message_id
+        assert sends[0]["payload"] == payload and sends[0]["recipient"] == endpoints[recipient]
+        assert sends[0]["sender_runtime"] == "hermes" and sends[0]["sender_session_ref"] == sender
+        assert sends[0]["container_ref"] == scope["container_ref"]
+        persisted = client.get(f"/relay/messages/{message_id}", params=scope)
+        assert persisted.status_code == 200
+        stored = persisted.json()
+        assert stored["payload"] == payload
+        assert len(stored["deliveries"]) == 1
+        assert stored["deliveries"][0]["recipient_endpoint_id"] == endpoints[recipient]
+        page = client.get("/dashboard/api/relay/messages", params={**scope, "limit": 200})
+        assert page.status_code == 200
+        rows = page.json()
+        assert rows["total"] == len(rows["messages"]) == 1 and not rows["has_more"]
+        assert rows["messages"][0]["id"] == message_id
+        assert rows["messages"][0]["payload"] == payload
+
+    assert_one_real_mutation_and_message()
+    later = json.loads(bridge.call("pallium_relay_address", {}, (recipient, later_turn)))
+    later_calls = [call for call in joined.sdk_calls if call["name"] == "pallium_relay_address"]
+    assert len(later_calls) == 1
+    assert later_calls[0]["metadata"] == _identity(recipient, later_turn)
+    assert later_calls[0]["arguments"]["container_ref"] == scope["container_ref"]
+    assert joined.state.poisoned is original_session and joined.state.injections == 1
+    assert_one_real_mutation_and_message()
+
+    # Baseline-predicted decisive failure: it reuses the exact poisoned session.
+    # Preconditions above prove registration, real persistence and later metadata.
+    assert "error" not in later, "A later independent registered caller must recover its own usable connection"
+    assert later["runtime"] == "hermes" and later["session_ref"] == recipient
+    assert later["exact_selector"] == endpoints[recipient]
+    assert later_calls[0]["owner"] is not original_session
+    assert "may have committed" in first["error"].lower()
+    queries = [query for path, query in joined.http_calls
+               if path == "/relay/sessions" and query.get("session_ref") == [recipient]]
+    assert len(queries) == 1
+    assert queries[0]["runtime"] == ["hermes"] and queries[0]["container_ref"] == [scope["container_ref"]]
+
+    def event_index(kind, owner):
+        return next(index for index, event in enumerate(joined.events)
+                    if event[0] == kind and event[1] is owner)
+
+    assert event_index("session-exit", original_session) < event_index("session-enter", later_calls[0]["owner"])
+    assert len(joined.stdio_contexts) >= 2
+    assert event_index("stdio-exit", joined.stdio_contexts[0].owner) < event_index(
+        "stdio-enter", joined.stdio_contexts[1].owner,
+    )
 
 
 def test_default_server_registration_is_unchanged() -> None:
