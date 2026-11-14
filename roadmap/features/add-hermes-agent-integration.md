@@ -64,8 +64,13 @@ initial Relay registration with HTTP 503 before that case's delivery assertions.
 Its cause and availability impact remain unresolved. Earlier failed runs and
 fixture corrections remain recorded, not relabeled as passing.
 
-The existing architect's current product/result review and the manager's separate
-failure disposition remain pending. SDK1 wire checks pass with memory off/on;
+The existing architect gave current product/result GO, and the manager accepted
+the registration 503 as an unresolved, nonblocking shared-availability finding
+for this bounded contribution. Failed CI is not relabeled green and no complete
+causal independence is claimed. [PR #408](https://github.com/rore/Pallium/pull/408)
+merged normally as `6eaf303507a2463e5a47986d4145cca1ad223b24`, without a protection
+bypass. Its final canonical record is adopted in the manager's existing PR #409.
+SDK1 wire checks pass with memory off/on;
 optional SDK2 checks skipped and do not qualify SDK2. No local recovery test,
 native-host campaign or installed rollout occurred. This work remains separate
 from the deliberate RED
