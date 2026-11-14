@@ -57,6 +57,32 @@ jobs:
         coalesced native wake keeps uncertainty without replay: context
         coalesced native wake keeps uncertainty without replay: terminal-rejected
         coalesced native wake keeps uncertainty without replay: terminal-reply-lost
+      HTTP_CASES: |
+        test_activation_settlement_preserves_original_authority_before_backlog[semantic-delivered]
+        test_activation_settlement_preserves_original_authority_before_backlog[semantic-pending]
+        test_activation_settlement_preserves_original_authority_before_backlog[semantic-claimed]
+        test_activation_settlement_preserves_original_authority_before_backlog[semantic-expired]
+        test_stale_or_wrong_binding_is_rejected[semantic-poll-overrides0-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-poll-overrides1-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-poll-overrides2-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-poll-overrides3-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-poll-overrides4-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-poll-overrides5-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-poll-overrides6-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-admitted-overrides0-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-admitted-overrides1-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-admitted-overrides2-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-admitted-overrides3-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-admitted-overrides4-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-admitted-overrides5-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-admitted-overrides6-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-terminal-overrides0-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-terminal-overrides1-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-terminal-overrides2-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-terminal-overrides3-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-terminal-overrides4-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-terminal-overrides5-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-terminal-overrides6-404]
     steps:
       - name: Establish disposable job and evidence budgets
         timeout-minutes: 1
@@ -188,21 +214,25 @@ jobs:
             if ($selected.Count -ne 1 -or $selected[0].skipped -or $selected[0].failure -or $selected[0].error) { throw "Required settlement case missing, skipped or failed: $name" }
           }
 
-      - name: Verify affected HTTP and workflow contracts once
+      - name: Verify affected HTTP contracts once
         id: backend
         timeout-minutes: 1
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           if ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START -gt 600) { throw 'Insufficient HTTP/native/cleanup reserve' }
-          python -m pytest tests/test_opencode_relay_wake_e2e.py tests/test_ci_workflow.py -q -n 0 --junitxml="$env:QUALIFICATION_ROOT/raw/backend.xml" *> "$env:QUALIFICATION_ROOT/raw/backend.log"
+          python -u -m pytest tests/test_opencode_relay_wake_e2e.py::test_activation_settlement_preserves_original_authority_before_backlog tests/test_opencode_relay_wake_e2e.py::test_stale_or_wrong_binding_is_rejected -vv -n 0 --junitxml="$env:QUALIFICATION_ROOT/raw/backend.xml" *> "$env:QUALIFICATION_ROOT/raw/backend.log"
           $exit = $LASTEXITCODE
           "BACKEND_EXIT=$exit" >> $env:GITHUB_ENV
           [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/backend.xml" -Raw
           $cases = @($xml.SelectNodes('//testcase'))
-          if ($exit -ne 0 -or -not $cases.Count -or $xml.SelectNodes('//testcase[skipped or failure or error]').Count) { throw 'HTTP/workflow contracts failed or did not execute' }
+          if ($exit -ne 0 -or $cases.Count -ne 25 -or $xml.SelectNodes('//testcase[skipped or failure or error]').Count) { throw 'HTTP contracts failed or did not execute exactly 25 cases' }
           $states = @($cases | Where-Object { $_.name -like 'test_activation_settlement_preserves_original_authority_before_backlog*' })
           if ($states.Count -ne 4) { throw 'Original-state matrix did not execute exactly four cases' }
+          foreach ($name in ($env:HTTP_CASES -split "\r?\n" | Where-Object { $_ })) {
+            $selected = @($cases | Where-Object { $_.name -ceq $name })
+            if ($selected.Count -ne 1) { throw "Required HTTP case missing or duplicated: $name" }
+          }
 
       - name: Qualify released native coalescing and automatic backlog once
         id: native
@@ -313,14 +343,15 @@ jobs:
                       if failed:
                           item['failures'] = failed[:12]
                           item['failures_truncated'] = len(failed) > 12
-                      if name == 'package':
-                          item['new_cases'] = {}
-                          for expected in os.environ['NEW_CASES'].splitlines():
+                      if name in ('package', 'backend'):
+                          inventory_key = 'new_cases' if name == 'package' else 'required_cases'
+                          item[inventory_key] = {}
+                          for expected in os.environ['NEW_CASES' if name == 'package' else 'HTTP_CASES'].splitlines():
                               if not expected:
                                   continue
                               found = [c for c in cases if c.get('name') == expected]
                               state = 'missing' if not found else 'duplicate' if len(found) != 1 else 'skipped' if found[0].find('skipped') is not None else 'failed' if found[0].find('failure') is not None or found[0].find('error') is not None else 'passed'
-                              item['new_cases'][expected] = state
+                              item[inventory_key][expected] = state
                   except ET.ParseError:
                       item['report'] = 'incomplete_or_malformed'
               if item['outcome'] not in ('success', 'skipped', 'not_run'):
@@ -329,6 +360,16 @@ jobs:
                       with log.open(encoding='utf-8', errors='replace') as stream:
                           tail = stream.read(1024 * 1024)
                       item['failure_log'] = failure_details(tail)
+                      if name == 'backend':
+                          progress = []
+                          for line in tail.splitlines():
+                              for expected in os.environ['HTTP_CASES'].splitlines():
+                                  node = 'tests/test_opencode_relay_wake_e2e.py::' + expected
+                                  if expected and line.startswith(node):
+                                      words = line[len(node):].split()
+                                      state = words[0] if words and words[0] in ('PASSED', 'FAILED', 'ERROR', 'SKIPPED') else 'started'
+                                      progress.append({'case': sanitize(expected), 'state': state})
+                          item['progress'] = progress[-25:]
               phases[name] = item
           version_exit = root / 'raw' / 'version-exit.txt'
           phases['setup']['version_command'] = {

@@ -174,6 +174,9 @@ def test_activation_settlement_preserves_original_authority_before_backlog(
     for index in range(4):
         clock[0] += timedelta(seconds=1)
         backlog.append(_send(client, base, f"backlog_{index}_界", relay_admission_clock=relay_admission_clock).json())
+    renewed = _wake(client, base, "poll")
+    assert renewed.status_code == 200, renewed.text
+    assert renewed.json()["wake"] == {**wake, "admitted": True}
     # Admission, ACK, live/expired claims and time alone never retire the anchor.
     for _ in range(5):
         clock[0] += timedelta(seconds=12)

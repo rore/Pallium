@@ -283,8 +283,17 @@ def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_na
     assert "coalesced exact wake must settle activation without replay" in steps["baseline"]["run"]
     assert "$exit -ne 1 -or $failed.Count -ne 1" in steps["baseline"]["run"]
     assert "$selected.Count -ne 1" in steps["focused"]["run"]
-    assert "test_activation_settlement_preserves_original_authority_before_backlog*" in steps["backend"]["run"]
-    assert "$states.Count -ne 4" in steps["backend"]["run"]
+    backend = steps["backend"]["run"]
+    command, = [line.strip() for line in backend.splitlines() if line.strip().startswith("python ")]
+    assert shlex.split(command) == ["python", "-u", "-m", "pytest",
+        "tests/test_opencode_relay_wake_e2e.py::test_activation_settlement_preserves_original_authority_before_backlog",
+        "tests/test_opencode_relay_wake_e2e.py::test_stale_or_wrong_binding_is_rejected", "-vv", "-n", "0",
+        "--junitxml=$env:QUALIFICATION_ROOT/raw/backend.xml", "*>", "$env:QUALIFICATION_ROOT/raw/backend.log"]
+    assert "tests/test_ci_workflow.py" not in backend
+    assert "$cases.Count -ne 25" in backend and "$states.Count -ne 4" in backend
+    assert "$env:HTTP_CASES" in backend and "$selected.Count -ne 1" in backend
+    assert "//testcase[skipped or failure or error]" in backend
+    assert steps["backend"]["timeout-minutes"] == 1
     native = steps["native"]["run"]
     assert "test_released_native_coalesced_settlement_and_automatic_backlog -m slow -q -n 0" in native
     assert "$cases.Count -ne 1 -or $cases[0].skipped" in native
@@ -294,6 +303,12 @@ def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_na
     for key in ("ordered_coalesced_outcome", "lost_terminal_reply_reconciled", "automatic_backlog_over_two",
                 "terminal_reload_safe", "missing_proof_compaction_hold", "missing_proof_reload_hold"):
         assert key in evidence
+    assert "if expected and line.startswith(node):" in evidence
+    assert "('PASSED', 'FAILED', 'ERROR', 'SKIPPED') else 'started'" in evidence
+    assert "progress.append({'case': sanitize(expected), 'state': state})" in evidence
+    assert "item['progress'] = progress[-25:]" in evidence
+    assert "inventory_key = 'new_cases' if name == 'package' else 'required_cases'" in evidence
+    assert "os.environ['NEW_CASES' if name == 'package' else 'HTTP_CASES']" in evidence
     uploads = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")]
     assert len(uploads) == 1 and uploads[0]["with"]["path"].endswith("/public/summary.json")
 
@@ -316,6 +331,13 @@ def test_opencode_settlement_qualification_inventories_every_new_case_and_preser
     expected.update(f"coalesced native wake keeps uncertainty without replay: {failure}" for failure in (
         "wait", "context", "terminal-rejected", "terminal-reply-lost"))
     assert len(cases) == len(set(cases)) == 31 and set(cases) == expected
+    http_cases = workflow["jobs"]["qualify"]["env"]["HTTP_CASES"].splitlines()
+    expected_http = {f"test_activation_settlement_preserves_original_authority_before_backlog[semantic-{state}]"
+                     for state in ("delivered", "pending", "claimed", "expired")}
+    expected_http.update(f"test_stale_or_wrong_binding_is_rejected[semantic-{operation}-overrides{index}-{status}]"
+                         for operation in ("poll", "admitted", "terminal")
+                         for index, status in enumerate((404, 404, 404, 409, 409, 409, 404)))
+    assert len(http_cases) == len(set(http_cases)) == 25 and set(http_cases) == expected_http
 
 def _gate(jobs: dict, event: str) -> subprocess.CompletedProcess:
     block = _job("result")
