@@ -1107,23 +1107,26 @@ def test_bridge_unresolved_cleanup_fences_replacement_until_owned_exit_e2e(
 def test_bridge_cleanup_failure_remains_fail_closed_and_retains_primary_e2e(
     client, joined_bridge_recovery_context, monkeypatch,
 ):
+    import mcp.client.stdio as sdk_stdio
+
     joined = joined_bridge_recovery_context
     bridge, scope, identities, endpoints = _bridge_lifecycle_case(client, joined)
     old = bridge._connection
-    original_init, original_exit = ClientSession.initialize, ClientSession.__aexit__
+    original_init, original_stdio = ClientSession.initialize, sdk_stdio.stdio_client
 
     async def startup_failure(session, *args, **kwargs):
         await original_init(session, *args, **kwargs)
         raise ValueError("private primary startup detail")
 
-    async def cleanup_failure(session, *failure):
-        result = await original_exit(session, *failure)
-        if session is not old.session:
-            raise RuntimeError("private cleanup detail")
-        return result
+    @asynccontextmanager
+    async def cleanup_failure(*args, **kwargs):
+        async with original_stdio(*args, **kwargs) as streams:
+            yield streams
+        # Report cleanup failure after the real SDK has disposed every owner.
+        raise RuntimeError("private cleanup detail")
 
     monkeypatch.setattr(ClientSession, "initialize", startup_failure)
-    monkeypatch.setattr(ClientSession, "__aexit__", cleanup_failure)
+    monkeypatch.setattr(sdk_stdio, "stdio_client", cleanup_failure)
     bridge._retire(old)
     result = _bridge_address(bridge, identities[0])
     failed = bridge._connection
@@ -1150,6 +1153,13 @@ def test_bridge_close_during_work_is_terminal_and_disposes_owners_e2e(
     old = bridge._connection
     original_init, original_call, original_retire = ClientSession.initialize, ClientSession.call_tool, bridge._retire
     owner = []
+
+    def release_gate():
+        if owner:
+            try:
+                owner[0].call_soon_threadsafe(gate.set)
+            except RuntimeError:
+                assert owner[0].is_closed()  # Close may already have drained/cancelled the invocation.
 
     async def initialize(session, *args, **kwargs):
         result = await original_init(session, *args, **kwargs)
@@ -1183,12 +1193,11 @@ def test_bridge_close_during_work_is_terminal_and_disposes_owners_e2e(
             assert entered.wait(3)
             close = pool.submit(bridge.close)
             assert closing.wait(3)
-            owner[0].call_soon_threadsafe(gate.set)
+            release_gate()
             result = invocation.result(timeout=5)
             close.result(timeout=5)
         finally:
-            if owner and not owner[0].is_closed():
-                owner[0].call_soon_threadsafe(gate.set)
+            release_gate()
     if phase == "recovery":
         assert "error" in result and not joined.sdk_calls
     else:
