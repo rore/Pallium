@@ -143,12 +143,13 @@ def test_child_factory_bind_handoff_is_overwritten_and_restored(monkeypatch, rel
     calls = []
     monkeypatch.setattr(main, "app", lambda **kwargs: calls.append(kwargs))
 
-    def run(factory, **options):
+    def run(app_target, **options):
         from uvicorn.importer import import_from_string
 
-        assert factory == "app.run:_child_app"
+        assert app_target == "app.run:_child_app"
+        assert options["factory"] is True
         assert options["host"] == os.environ["_PALLIUM_API_BIND_HOST"] == host
-        import_from_string(factory)()
+        import_from_string(app_target)()
         if failure is not None:
             raise failure("driver failed")
 
