@@ -70,8 +70,12 @@ bounded runner diagnostic correction awaits hosted evidence; failures remain in
 [PR404](https://github.com/rore/Pallium/pull/404#issuecomment-6880634885).
 The first added [run 43617560050](https://github.com/rore/Pallium/actions/runs/43617560050)
 captured `opencode v2.2.7` with exit 0 before the bare-version comparison rejected
-it; coverage remains 0/9 with no native witness. A source-reviewed exact
-CLI-output-contract correction awaits the remaining bounded attempt.
+it. The source-reviewed exact CLI-output-contract correction then passed setup.
+The final added [run 43619082058](https://github.com/rore/Pallium/actions/runs/43619082058)
+passed setup and observed the expected baseline RED, but propagated native exit 1
+as step failure. Candidate coverage remains 0/9 with no native witness. Both added
+attempts are consumed; a source-reviewed expected-RED shell-exit correction needs
+fresh execution authority before runtime verification.
 The original historical cause and broader findings remain open.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified

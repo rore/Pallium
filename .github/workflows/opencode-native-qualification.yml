@@ -132,6 +132,7 @@ jobs:
           [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/baseline.xml" -Raw
           $failed = @($xml.SelectNodes('//testcase[failure]'))
           if ($exit -ne 1 -or $failed.Count -ne 1 -or $failed[0].name -cne 'startup empty discovery recovers without a recipient prompt: empty then eligible' -or $failed[0].failure.InnerText -notmatch 'a later eligible endpoint must enroll without a recipient turn') { throw 'Unexpected baseline outcome; all later phases stop' }
+          exit 0 # Expected RED validated; do not propagate its native exit 1 through the Actions shell.
 
       - name: Verify the corrected focused regression
         id: focused
