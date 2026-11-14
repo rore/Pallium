@@ -71,38 +71,46 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $elapsed = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START
-          if ($elapsed -ge 600 -or (git rev-parse HEAD).Trim() -cne $env:CANDIDATE) { throw 'Setup budget or candidate mismatch' }
-          python -m pip install --disable-pip-version-check -e '.[dev,mcp]' *> "$env:QUALIFICATION_ROOT/raw/setup.log"
-          if ($LASTEXITCODE) { throw 'Dependency setup failed; later phases not run' }
-          $archive = "$env:QUALIFICATION_ROOT/opencode.zip"
-          Invoke-WebRequest -Uri 'https://github.com/anomalyco/opencode/releases/download/v2.2.7/opencode-windows-x64.zip' -OutFile $archive
-          if ((Get-Item $archive).Length -ne 124794067 -or (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:OPENCODE_ARCHIVE_SHA256) { throw 'Official portable archive identity mismatch' }
-          Expand-Archive -LiteralPath $archive -DestinationPath "$env:QUALIFICATION_ROOT/host"
-          $binary = @(Get-ChildItem "$env:QUALIFICATION_ROOT/host" -Recurse -Filter opencode.exe -File)
-          if ($binary.Count -ne 1) { throw 'Expected exactly one portable executable' }
-          $env:HOME = "$env:QUALIFICATION_ROOT/profile"
-          $env:USERPROFILE = $env:HOME
-          $env:OPENCODE_TEST_HOME = $env:HOME
-          $env:OPENCODE_CONFIG_DIR = "$env:QUALIFICATION_ROOT/profile/config"
-          $env:OPENCODE_DB = "$env:QUALIFICATION_ROOT/profile/native.db"
-          $env:OPENCODE_DISABLE_MODELS_FETCH = '1'
-          $env:OPENCODE_CONFIG_CONTENT = '{"update":"disable"}'
-          $version = (& $binary[0].FullName --version).Trim()
-          if ($LASTEXITCODE -or $version -cne '2.2.7') { throw 'Portable executable version mismatch' }
-          "PALLIUM_OPENCODE_V2_BINARY=$($binary[0].FullName)" >> $env:GITHUB_ENV
-          "PALLIUM_OPENCODE_BINARY_VERSION=$version" >> $env:GITHUB_ENV
-          "PALLIUM_OPENCODE_BINARY_SHA256=$((Get-FileHash $binary[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant())" >> $env:GITHUB_ENV
-          "PALLIUM_OPENCODE_NATIVE_PLUGIN_DIR=$env:GITHUB_WORKSPACE/integrations/opencode/.opencode/plugins" >> $env:GITHUB_ENV
-          "PALLIUM_OPENCODE_BOOTSTRAP_SUMMARY=$env:QUALIFICATION_ROOT/raw/native-summary.json" >> $env:GITHUB_ENV
-          "npm_config_cache=$env:QUALIFICATION_ROOT/npm-cache" >> $env:GITHUB_ENV
-          $before = @{}
-          foreach ($path in @('integrations/opencode/.opencode/plugins/pallium-v2.mjs', 'integrations/opencode/.opencode/plugins/pallium-common.mjs', 'integrations/opencode/tests/v2-plugin.test.mjs', 'tests/test_opencode_native_wake_e2e.py', '.github/workflows/opencode-native-qualification.yml')) {
-            $before[$path] = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+          try {
+            $elapsed = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START
+            if ($elapsed -ge 600 -or (git rev-parse HEAD).Trim() -cne $env:CANDIDATE) { throw 'Setup budget or candidate mismatch' }
+            $before = @{}
+            foreach ($path in @('integrations/opencode/.opencode/plugins/pallium-v2.mjs', 'integrations/opencode/.opencode/plugins/pallium-common.mjs', 'integrations/opencode/tests/v2-plugin.test.mjs', 'tests/test_opencode_native_wake_e2e.py', '.github/workflows/opencode-native-qualification.yml')) {
+              $before[$path] = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            $before | ConvertTo-Json | Set-Content "$env:QUALIFICATION_ROOT/raw/source-before.json" -Encoding utf8
+            python -m pip install --disable-pip-version-check -e '.[dev,mcp]' *> "$env:QUALIFICATION_ROOT/raw/setup.log"
+            if ($LASTEXITCODE) { throw 'Dependency setup failed; later phases not run' }
+            $archive = "$env:QUALIFICATION_ROOT/opencode.zip"
+            Invoke-WebRequest -Uri 'https://github.com/anomalyco/opencode/releases/download/v2.2.7/opencode-windows-x64.zip' -OutFile $archive
+            if ((Get-Item $archive).Length -ne 124794067 -or (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:OPENCODE_ARCHIVE_SHA256) { throw 'Official portable archive identity mismatch' }
+            Expand-Archive -LiteralPath $archive -DestinationPath "$env:QUALIFICATION_ROOT/host"
+            $binary = @(Get-ChildItem "$env:QUALIFICATION_ROOT/host" -Recurse -Filter opencode.exe -File)
+            if ($binary.Count -ne 1) { throw 'Expected exactly one portable executable' }
+            $env:HOME = "$env:QUALIFICATION_ROOT/profile"
+            $env:USERPROFILE = $env:HOME
+            $env:OPENCODE_TEST_HOME = $env:HOME
+            $env:OPENCODE_CONFIG_DIR = "$env:QUALIFICATION_ROOT/profile/config"
+            $env:OPENCODE_DB = "$env:QUALIFICATION_ROOT/profile/native.db"
+            $env:OPENCODE_DISABLE_MODELS_FETCH = '1'
+            $env:OPENCODE_CONFIG_CONTENT = '{"update":"disable"}'
+            "PALLIUM_OPENCODE_V2_BINARY=$($binary[0].FullName)" >> $env:GITHUB_ENV
+            "PALLIUM_OPENCODE_BINARY_SHA256=$((Get-FileHash $binary[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant())" >> $env:GITHUB_ENV
+            & $binary[0].FullName --version 1> "$env:QUALIFICATION_ROOT/raw/version-stdout.txt" 2> "$env:QUALIFICATION_ROOT/raw/version-stderr.txt"
+            $versionExit = $LASTEXITCODE
+            $versionExit | Set-Content "$env:QUALIFICATION_ROOT/raw/version-exit.txt" -Encoding utf8
+            $version = [IO.File]::ReadAllText("$env:QUALIFICATION_ROOT/raw/version-stdout.txt", [Text.Encoding]::UTF8).Trim()
+            if ($versionExit -or $version -cne '2.2.7') { throw 'Portable executable version mismatch' }
+            "PALLIUM_OPENCODE_BINARY_VERSION=$version" >> $env:GITHUB_ENV
+            "PALLIUM_OPENCODE_NATIVE_PLUGIN_DIR=$env:GITHUB_WORKSPACE/integrations/opencode/.opencode/plugins" >> $env:GITHUB_ENV
+            "PALLIUM_OPENCODE_BOOTSTRAP_SUMMARY=$env:QUALIFICATION_ROOT/raw/native-summary.json" >> $env:GITHUB_ENV
+            "npm_config_cache=$env:QUALIFICATION_ROOT/npm-cache" >> $env:GITHUB_ENV
+            $elapsed = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START
+            if ($elapsed -gt 480) { throw 'Setup exceeded execution-and-cleanup reserve' }
+          } catch {
+            $_.Exception.Message | Set-Content "$env:QUALIFICATION_ROOT/raw/setup-exception.txt" -NoNewline -Encoding utf8
+            throw
           }
-          $before | ConvertTo-Json | Set-Content "$env:QUALIFICATION_ROOT/raw/source-before.json" -Encoding utf8
-          $elapsed = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START
-          if ($elapsed -gt 480) { throw 'Setup exceeded execution-and-cleanup reserve' }
 
       - name: Observe only the expected baseline regression
         id: baseline
@@ -203,7 +211,7 @@ jobs:
           from pathlib import Path
           import hashlib, json, os, re, xml.etree.ElementTree as ET
           root = Path(os.environ['QUALIFICATION_ROOT'])
-          def sanitize(value):
+          def sanitize(value, limit=500):
               text = str(value)
               for key in ('QUALIFICATION_ROOT', 'GITHUB_WORKSPACE', 'USERPROFILE', 'RUNNER_TEMP'):
                   value = os.environ.get(key)
@@ -219,7 +227,19 @@ jobs:
               text = re.sub(r'https?://\S+', '<url>', text)
               text = re.sub(r'(?i)(?<![A-Za-z0-9])[A-Z]:[/\\][^\s<>]+|/(?:home|tmp|Users|usr|opt|runner|__w)/[^\s<>]+', '<path>', text)
               text = re.sub(r'(?:ses_|msg_|relay-(?:session|delivery)-|opencode-owner-)[A-Za-z0-9_-]+', '<synthetic-id>', text)
-              return text[:500]
+              return text[:limit]
+          def bounded_text(name):
+              path = root / 'raw' / name
+              if not path.exists():
+                  return {'state': 'not_captured'}
+              with path.open('rb') as stream:
+                  raw = stream.read(4096)
+              text = raw.decode('utf-8', errors='backslashreplace')
+              safe = sanitize(text, 4096)
+              return {'state': 'captured', 'text': safe, 'bytes': path.stat().st_size,
+                      'captured_bytes': len(raw), 'encoding': 'utf-8/backslashreplace',
+                      'truncated': path.stat().st_size > len(raw) or len(text) > 4096,
+                      'redacted': safe != text}
           def failure_details(value):
               # Retain meaningful assertions/errors, never arbitrary provider/body dumps.
               lines = str(value).splitlines()
@@ -270,11 +290,17 @@ jobs:
                           tail = stream.read(1024 * 1024)
                       item['failure_log'] = failure_details(tail)
               phases[name] = item
+          version_exit = root / 'raw' / 'version-exit.txt'
+          phases['setup']['version_command'] = {
+              'stdout': bounded_text('version-stdout.txt'),
+              'stderr': bounded_text('version-stderr.txt'),
+              'exit_code': int(version_exit.read_text(encoding='utf-8-sig').strip()) if version_exit.exists() else 'not_captured'}
+          phases['setup']['exception'] = bounded_text('setup-exception.txt')
           summary = {'candidate': os.environ['CANDIDATE'], 'baseline': os.environ['BASELINE'],
                      'expected_host_version': '2.2.7',
                      'binary_reported_version': os.environ.get('PALLIUM_OPENCODE_BINARY_VERSION', 'not_verified'),
                      'archive_sha256': os.environ['OPENCODE_ARCHIVE_SHA256'],
-                     'binary_sha256': os.environ.get('PALLIUM_OPENCODE_BINARY_SHA256', 'not_verified'),
+                      'binary_sha256': os.environ.get('PALLIUM_OPENCODE_BINARY_SHA256', 'not_captured'),
                      'phases': phases, 'baseline_expected_assertion': phases['baseline']['outcome'] == 'success',
                      'owned_drain_normal': os.environ['OWNED_DRAIN_NORMAL'] == 'True',
                      'owned_drain_final': os.environ['OWNED_DRAIN_FINAL'] == 'True',
@@ -288,19 +314,21 @@ jobs:
           before = root / 'raw' / 'source-before.json'
           if before.exists():
               expected = json.loads(before.read_text(encoding='utf-8-sig'))
-              summary['source_sha256'] = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in expected}
-              summary['source_unchanged'] = summary['source_sha256'] == expected
+              summary['source_sha256'] = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() if Path(p).is_file() else None for p in expected}
+              summary['source_bookend'] = 'unchanged' if summary['source_sha256'] == expected else 'changed'
           else:
-              summary['source_unchanged'] = False
+              summary['source_bookend'] = 'not_captured'
           binary = os.environ.get('PALLIUM_OPENCODE_V2_BINARY')
-          summary['binary_unchanged'] = bool(binary) and Path(binary).is_file() and hashlib.sha256(Path(binary).read_bytes()).hexdigest() == summary['binary_sha256']
+          summary['binary_bookend'] = 'not_captured'
+          if binary and summary['binary_sha256'] != 'not_captured':
+              summary['binary_bookend'] = 'unchanged' if Path(binary).is_file() and hashlib.sha256(Path(binary).read_bytes()).hexdigest() == summary['binary_sha256'] else 'changed'
           public = root / 'public'
           public.mkdir(exist_ok=True)
           payload = json.dumps(summary, indent=2)
           assert len(payload.encode()) < 1024 * 1024
           assert not re.search(r'(?i)(?<![A-Za-z0-9])[A-Z]:[/\\]|ses_[A-Za-z0-9_-]+|relay-(?:session|delivery)-[0-9a-f]{32}|github_pat_', payload)
           (public / 'summary.json').write_text(payload, encoding='utf-8')
-          assert summary['source_unchanged'] and summary['binary_unchanged'], 'Source/runtime bookends unavailable or changed'
+          assert summary['source_bookend'] == 'unchanged' and summary['binary_bookend'] == 'unchanged', 'Source/runtime bookends not captured or changed'
           '@ | python -I -S -B -
           if ($LASTEXITCODE) { throw 'Sanitized evidence generation failed' }
           if (-not $drainedNormally -or $remaining.Count) { throw 'Owned native process outlived its test; failure retained' }

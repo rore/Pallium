@@ -62,6 +62,14 @@ re-resolve them before implementing remaining work.
 
 ### Current qualification boundary (2026-10-22)
 
+PR404 contribution (2026-11-14): the discovery-only source is independently
+reviewed but unqualified. [Run 43615224581](https://github.com/rore/Pallium/actions/runs/43615224581)
+failed at the setup version guard before any of the nine new cases or the new
+native witness ran (0/9). Returned version/exit were not retained. A source-reviewed
+bounded runner diagnostic correction awaits hosted evidence; failures remain in
+[PR404](https://github.com/rore/Pallium/pull/404#issuecomment-6880634885).
+The original historical cause and broader findings remain open.
+
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
 [39695623972](https://github.com/rore/Pallium/actions/runs/39695623972) and
