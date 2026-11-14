@@ -73,8 +73,13 @@ The manager independently accepted the actual artifact and combined disposition.
 Full Python 3.12, Windows and governance passed; the unrelated Python 3.13
 acquisition-deadline failure and all earlier failed attempts remain preserved in
 the [owning Work Record](../../.agent-workflow/tasks/opencode-automatic-delivery-recovery.md).
-Normal merge follows metadata finalization. Installed alignment is manager-owned;
-the original historical cause and broader findings remain open. This item stays active.
+PR404 merged as `479b9aa2db8fdd5ee872fdc9bfadf5c941bdb52e`. Development and
+stable installed source were aligned to that commit with a verified paired backup
+and the supported service restart. Health, readiness, embedding and queue checks
+passed; existing work and configuration were preserved. The active OpenCode host
+was not reloaded. [Rollout evidence](https://github.com/rore/Pallium/pull/404#issuecomment-6882031037)
+does not establish loaded-host recovery, historical cause or broader reliability.
+This item stays active.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI

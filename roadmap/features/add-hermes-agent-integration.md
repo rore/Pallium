@@ -34,6 +34,18 @@ Historical reviewed prose head `5f21bfcb46e3800927d16544d423b78f182b967f` change
 five prose paths from qualified `d5896a24ec3b72c1f23f5323e43ab8d2a06e60ca`;
 application, tests, dependencies and workflows were identical at that checkpoint.
 
+### Current bridge recovery boundary (2026-11-14)
+
+The dedicated MCP bridge recovery plan is accepted and its first caller-surface
+regression is authored but unexecuted. It must prove that a transport failure
+after persistence does not replay the original call, while a later independent
+call recovers with its own immutable binding after the old owned resources close.
+Continuation is held on the implementation owner's source-custody handoff.
+The manager owns resolving that blocker; an unread request or inactive session
+does not transfer ownership. This work remains separate from the deliberate RED
+reply-contract [PR #400](https://github.com/rore/Pallium/pull/400), the qualified
+integration above and installed adoption. No bridge recovery is yet qualified.
+
 ### Corrected service fault paths (2026-10-21)
 
 Corrected source `a48b0fef48d91868ffefd903742ef025e66ceeed` repairs exactly two
