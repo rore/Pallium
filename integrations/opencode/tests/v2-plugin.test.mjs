@@ -1117,7 +1117,43 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
       }
     } finally { await f.close(); }
   }
-  for (const writer of ["poll", "enroll"]) for (const stale of ["older", "empty"]) {
+  for (const writer of ["poll", "enroll"]) for (const fault of ["runtime", "session", "container", "endpoint", "scope", "state", "health",
+    "missing-wake", "invalid-wake", "zero-generation", "lower-generation", "same-input-new-generation", "same-generation-delivery", "same-generation-input", "wake-scope", "wake-location", "invalid-admitted", "invalid-terminal"]) {
+    const original = snapshot({ admitted: true, generation: 2 }); let invalid = false;
+    const f = await callerFixture({ wake: original, response: async (route) => {
+      if (route !== "/relay/opencode/wake" || !invalid) return;
+      const session = { ...relaySession }, wake = { ...original }, response = { session, wake };
+      if (fault === "runtime") session.runtime = "codex";
+      if (fault === "session") session.session_ref = "ses_other";
+      if (fault === "container") session.container_ref = "other";
+      if (fault === "endpoint") session.endpoint_id += "f";
+      if (fault === "scope") session.scope_generation++;
+      if (fault === "state") session.state = "closed";
+      if (fault === "health") session.destination_health = "inactive";
+      if (fault === "missing-wake") delete response.wake;
+      if (fault === "invalid-wake") response.wake = {};
+      if (fault === "zero-generation") wake.generation = 0;
+      if (fault === "lower-generation") wake.generation--;
+      if (fault === "same-input-new-generation") wake.generation++;
+      if (fault === "same-generation-delivery") wake.delivery_id = "relay-delivery-" + "d".repeat(32);
+      if (fault === "same-generation-input") wake.native_input_id = "msg_conflicting";
+      if (fault === "wake-scope") wake.scope_generation++;
+      if (fault === "wake-location") wake.native_location += "/other";
+      if (fault === "invalid-admitted") wake.admitted = "true";
+      if (fault === "invalid-terminal") wake.terminal = 0;
+      return response;
+    } });
+    try {
+      invalid = true;
+      const boundary = f.trace.length;
+      if (writer === "enroll") await f.emit({ type: "session.created", data: { sessionID } });
+      await f.tick();
+      assert.ok(!f.trace.slice(boundary).includes("raw"), `${writer}/${fault}: invalid response cannot launch a flight`);
+      assert.equal(terminals(f).length, 0, `${writer}/${fault}`);
+      assert.equal(f.native.prompt.length, 0, `${writer}/${fault}`);
+    } finally { await f.close(); }
+  }
+  for (const writer of ["poll", "enroll"]) for (const stale of ["older", "empty", "released"]) {
     const gate = barrier(), original = snapshot({ admitted: true });
     const newer = snapshot({ admitted: true, generation: 2, native_input_id: "msg_retry_generation" });
     let backend = original, hold = false;
@@ -1137,17 +1173,53 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
       if (writer === "poll") await f.tick();
       else await f.emit({ type: "session.created", data: { sessionID } });
       await gate.entered;
-      backend = newer;
+      backend = stale === "released" ? null : newer;
       if (writer === "poll") await f.emit({ type: "session.created", data: { sessionID } });
       else await f.tick();
-      // First-observe U only AFTER the other writer has accepted newer G.
+      // First-observe U only AFTER the other writer has accepted newer G/null.
       await observePrompt(f); f.history.push(freshUser());
-      gate.release(); await pause(); await f.tick();
-      assert.equal(terminals(f).length, 1, `${writer}/${stale}: stale reply cannot erase newer candidate or restore old anchor`);
-      assert.equal(terminals(f)[0].body.generation, 2);
-      assert.equal(terminals(f)[0].body.native_input_id, newer.native_input_id);
+      gate.release(); await pause();
+      if (stale === "released") {
+        await assert.doesNotReject(() => f.hooks.context({ sessionID, messages: [projectedWake()] }),
+          `${writer}: delayed pre-release response cannot restore internal-context authority`);
+        assert.equal(f.calls.filter((c) => c.body.operation === "context").length, 0, `${writer}: released anchor remains absent`);
+      }
+      await f.tick();
+      assert.equal(terminals(f).length, stale === "released" ? 0 : 1, `${writer}/${stale}: stale reply cannot erase newer candidate or restore old anchor`);
+      if (stale !== "released") {
+        assert.equal(terminals(f)[0].body.generation, 2);
+        assert.equal(terminals(f)[0].body.native_input_id, newer.native_input_id);
+      }
       assert.equal(f.native.prompt.length, 0, `${writer}/${stale}: no old native replay`);
     } finally { gate.release(); await f.close(); }
+  }
+  for (const writer of ["poll", "enroll"]) {
+    const oldWait = barrier(), newWait = barrier(), original = snapshot({ admitted: true });
+    let regress = false, waits = 0;
+    const projected = projectedWake();
+    const f = await callerFixture({ wake: original,
+      history: [{ type: "user", id: nativeID, text: projected.content[0].text, metadata: projected.metadata }],
+      response: async (route) => route === "/relay/opencode/wake"
+        ? { session: relaySession, wake: regress ? { ...original, admitted: false } : original } : undefined,
+      wait: async (history) => {
+        if (++waits === 1) await oldWait.wait();
+        else { await newWait.wait(); history.push(freshIdle()); }
+      } });
+    try {
+      await f.tick(); await oldWait.entered;
+      regress = true;
+      if (writer === "enroll") await f.emit({ type: "session.created", data: { sessionID } });
+      else await f.tick();
+      regress = false;
+      await f.tick(); await newWait.entered;
+      oldWait.release(); await pause();
+      assert.equal(terminals(f).length, 0, `${writer}: cancelled old flight cannot finish after valid replacement starts`);
+      await f.tick();
+      assert.equal(waits, 2, `${writer}: old finally cannot clear replacement flight's busy reservation`);
+      newWait.release(); await pause();
+      assert.equal(terminals(f).length, 1, `${writer}: replacement flight can finish normally`);
+      assert.equal(f.native.prompt.length, 0);
+    } finally { oldWait.release(); newWait.release(); await f.close(); }
   }
   const first = snapshot({ admitted: true, terminal: true });
   let backend = first;

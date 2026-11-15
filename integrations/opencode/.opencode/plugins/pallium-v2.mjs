@@ -107,17 +107,40 @@ export default {
       retire(id, item);
       if (!disposed && payload) await pallium.relayRequest("POST", "/relay/opencode/wake", payload, 500, abort.signal);
     };
+    const wakeResponseContext = (id, item) => ({ signal: item.abort.signal, binding: base(id, item),
+      wake: item.wake, witness: item.witness, flight: item.wakeBusy });
+    const applyWakeResponse = (id, item, request, response) => {
+      if (!live(id, item, request.signal) || item.wake !== request.wake ||
+          !Object.entries(request.binding).every(([key, value]) => base(id, item)[key] === value)) return false;
+      const reject = () => {
+        if (item.witness === request.witness) item.witness = null;
+        // Cancel this flight, never a newer one started while HTTP was pending.
+        if (item.wakeBusy === request.flight) item.wakeBusy = false;
+        return false;
+      };
+      const session = response?.session, wake = response?.wake, known = item.wake;
+      if (session?.runtime !== "opencode" || session.session_ref !== id || session.container_ref !== request.binding.container_ref ||
+          session.endpoint_id !== request.binding.endpoint_id || session.scope_generation !== request.binding.scope_generation ||
+          session.state !== "recent" || session.destination_health !== "active") return reject();
+      if (wake !== null) {
+        if (!validInput(wake?.native_input_id) || !validDelivery(wake?.delivery_id) || !Number.isInteger(wake?.generation) || wake.generation < 1 ||
+            wake.scope_generation !== request.binding.scope_generation || !sameLocation(wake.native_location, request.binding.native_location) ||
+            typeof wake.admitted !== "boolean" || typeof wake.terminal !== "boolean") return reject();
+        if (known && (wake.generation < known.generation ||
+            wake.generation > known.generation && wake.native_input_id === known.native_input_id ||
+            wake.generation === known.generation && (wake.delivery_id !== known.delivery_id || wake.native_input_id !== known.native_input_id ||
+              known.admitted && !wake.admitted || known.terminal && !wake.terminal))) return reject();
+      }
+      if (item.witness && !sameWake(item.witness.wake, wake)) item.witness = null;
+      item.wake = wake;
+      return true;
+    };
     const enroll = async (id, item) => {
       const signal = item?.abort.signal;
       if (!live(id, item, signal) || !item.endpointId || !await owned(id, item, signal)) return;
+      const request = wakeResponseContext(id, item);
       const response = await wakeRequest(id, item, "enroll");
-      if (!live(id, item, signal)) return;
-      if (response?.session && !remember(id, item, response.session)) item.witness = null;
-      if (response) {
-        if (item.witness && !sameWake(item.witness.wake, response.wake)) item.witness = null;
-        item.wake = response.wake;
-      }
-      return response;
+      if (applyWakeResponse(id, item, request, response)) return response;
     };
     const terminalAfter = (messages, inputId) => {
       const index = messages.findIndex((m) => m?.type === "user" && m.id === inputId);
@@ -215,11 +238,11 @@ export default {
       if (!live(id, item, signal) || item.wakeBusy || !validInput(wake?.native_input_id) || !validDelivery(wake?.delivery_id) || !Number.isInteger(wake?.generation)) return;
       const fields = { generation: wake.generation, delivery_id: wake.delivery_id, native_input_id: wake.native_input_id };
       const endpointId = item.endpointId, scopeGeneration = item.scopeGeneration, container = scope(id), nativeLocation = wake.native_location;
-      const current = () => live(id, item, signal) && item.endpointId === endpointId && item.scopeGeneration === scopeGeneration &&
-        scope(id) === container && item.wake?.generation === fields.generation && item.wake?.delivery_id === fields.delivery_id &&
-        item.wake?.native_input_id === fields.native_input_id && item.wake?.scope_generation === scopeGeneration &&
+      const flight = {};
+      const current = () => live(id, item, signal) && item.wakeBusy === flight && item.endpointId === endpointId && item.scopeGeneration === scopeGeneration &&
+        scope(id) === container && sameWake(item.wake, wake) && item.wake?.scope_generation === scopeGeneration &&
         sameLocation(item.wake?.native_location, nativeLocation) && sameLocation(nativeLocation, cwd);
-      item.wakeBusy = true;
+      item.wakeBusy = flight;
       const witness = item.witness;
       const discardWitness = () => { if (item.witness === witness) item.witness = null; };
       try {
@@ -247,7 +270,7 @@ export default {
         const terminalId = terminalAfter(after, fields.native_input_id) || coalescedTerminalAfter(after, fields);
         if (terminalId) await wakeRequest(id, item, "terminal", { ...fields, terminal_message_id: terminalId });
       } catch (error) { discardWitness(); log(`V2 wake deferred: ${String(error)}`); }
-      finally { if (live(id, item, signal)) item.wakeBusy = false; }
+      finally { if (live(id, item, signal) && item.wakeBusy === flight) item.wakeBusy = false; }
     };
     const poll = async (id) => {
       const item = sessions.get(id);
@@ -257,19 +280,20 @@ export default {
       item.busy = true;
       try {
         if (!await owned(id, item, signal)) { if (live(id, item, signal)) await detach(id, item); return; }
+        const request = wakeResponseContext(id, item);
         let registrationMissing = false;
         let response = await wakeRequest(id, item, "poll", {}, (status, error) => {
           registrationMissing = status === 409 && error?.detail === "OpenCode registration is missing or stale";
         });
         if (!live(id, item, signal)) return;
         // Only an explicit registration conflict warrants another enrollment write.
-        if (!response && registrationMissing) response = await enroll(id, item);
-        if (!await owned(id, item, signal) || !response?.session || !remember(id, item, response.session)) {
+        let applied = false;
+        if (!response && registrationMissing) { response = await enroll(id, item); applied = !!response; }
+        if (!await owned(id, item, signal) || !response) {
           if (item.witness === witness) item.witness = null;
           return;
         }
-        if (item.witness && !sameWake(item.witness.wake, response.wake)) item.witness = null;
-        item.wake = response.wake;
+        if (applied ? item.wake !== response.wake : !applyWakeResponse(id, item, request, response)) return;
         if (response.wake && !response.wake.terminal && sameLocation(response.wake.native_location, cwd))
           void runWake(id, item, response.wake);
       } finally { if (live(id, item, signal)) item.busy = false; }
