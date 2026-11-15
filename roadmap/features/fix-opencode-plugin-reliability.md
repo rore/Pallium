@@ -101,12 +101,32 @@ OC-1 is the immediate functional priority. The existing architect completed the
 bounded source investigation against official OpenCode 2.2.7. Native idle covers
 coalesced inputs, so an outcome-bearing terminal can settle a visible exact wake
 despite intervening input. Bare `wait()` does not prove consumption or success.
-The plugin lacks the existing historical-message read API needed to prove an
-already-compacted anchor after reload. Do not invent that capability or clear
-the anchor without evidence. The existing developer published the no-storage
-visible-wake contribution in draft [PR #410](https://github.com/rore/Pallium/pull/410),
-owned by `.agent-workflow/tasks/opencode-wake-anchor-retirement.md`. Source and
-runner review passed. Full recovery and the already-compacted incident remain open.
+The supported plugin API cannot reread old messages outside active context.
+That blocks retrospective correlation, but is **not** a blanket recovery blocker.
+The existing architect's pinned-source reassessment supports a fresh causal
+boundary: the supported adapter records admission only after the exact wake is
+promoted into native visible history and its inbox row is consumed. If that
+admitted generation is already known before a genuinely new ordinary prompt,
+the adapter can witness that new input's native promotion and a later settled
+outcome-idle, then revalidate the complete owner/scope/generation binding before
+using the existing terminal operation. Queue acceptance or a new steer alone
+does not supply this proof.
+
+The proposed root fix uses one ephemeral witness in existing session state,
+not another persistent ledger or backend transition. Missing or changed proof,
+another input, shutdown, revert, move, reload or disposal must invalidate it.
+It cannot retrospectively bless completed manual turns, clear arbitrary
+admission flags or claim downstream task success. This corrects the earlier
+overstatement that historical listing is always necessary. It is source/design
+evidence, not implementation approval or observed recovery.
+
+The existing developer owns the concrete root plan in
+`.agent-workflow/tasks/opencode-wake-anchor-retirement.md`. Draft
+[PR #410](https://github.com/rore/Pallium/pull/410) contains the earlier visible-wake
+contribution and remains unqualified. The task owner prioritizes the actual local
+failure, including already-compacted anchors, over more hosted-test correction.
+Diagnostic-only source is preserved and paused. No fourth campaign is authorized.
+Full recovery and the local incident remain open.
 Preserve the OC-1 outcome and regression matrix below. Activation settlement is
 not downstream task completion.
 No live rows were cleared, messages replayed, or installed applications restarted
@@ -123,12 +143,25 @@ Both ordinary Linux lanes stopped at a new fixture error: four backlog seconds
 plus a 12-second jump exceeded the unchanged 15-second owner lease before renewal.
 Windows smoke and governance passed, but full-suite coverage is incomplete.
 
-The existing architect supports a normal poll renewal before that jump and a
-25-case, directly affected HTTP selection in the bounded qualification job.
-Complete HTTP/workflow coverage remains in ordinary CI. One corrected-source
-attempt is authorized within the same caps, not an unchanged rerun or timeout
-extension. [First-attempt evidence](https://github.com/rore/Pallium/pull/410#issuecomment-6885286594)
-remains failed evidence. No merge, installed change or incident recovery is claimed.
+The second campaign failed its expired-state fixture readback after completing
+the narrowed HTTP selection: wake operations used synthetic time, but public
+status received real UTC. Its native phase was skipped. The third campaign ran
+native validation first; that unskipped journey failed and the qualification's
+HTTP phase was skipped. Its sanitized diagnostic lost the precise assertion
+location, so that native failure's predicate and cause remain unknown. None of
+the three campaigns qualifies the contribution, and the first timeout's cause
+remains unknown.
+
+Ordinary third-campaign Python 3.13 did complete: 9,140 passed, 106 skipped and
+two xfails, including all 46 HTTP-file cases and all 25 workflow-contract cases.
+The shared-clock fixture correction therefore has ordinary-CI evidence, distinct
+from the failed native qualification. Python 3.12 still failed in unchanged Codex
+cases; their causes are unresolved. Windows smoke and governance passed. Preserve
+the [first](https://github.com/rore/Pallium/pull/410#issuecomment-6885286594),
+[second](https://github.com/rore/Pallium/pull/410#issuecomment-6885852162) and
+[third](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488) receipts as
+failed campaigns, not new execution authority. No OC-1 merge, installed change
+or incident recovery is claimed.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
