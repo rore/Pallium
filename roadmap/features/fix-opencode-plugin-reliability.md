@@ -258,8 +258,10 @@ accepted and forwarded these findings for consolidation, not as source or runtim
 GO for the evolving correction. The unpublished correction now separates those
 freshness checks and fences stale rejection effects as well as wake acceptance.
 Both-writer caller schedules are authored but unexecuted. The same independent
-reviewer has the narrow source request; disposition remains pending. Obtain that
-disposition before choosing any later validation budget. No sixth campaign
+reviewer completed narrow SOURCE / CONTRACT GO at exact unpublished `f80df956`.
+The manager read and accepted that source disposition. Registration compatibility
+and ordering source gates are closed; runtime qualification and any later execution
+or publication budget remain separate. No sixth campaign
 is released by this source-only continuation. The local automatic-wake incident
 remains open.
 
