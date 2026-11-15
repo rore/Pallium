@@ -121,8 +121,13 @@ export default {
       };
       const session = response?.session, wake = response?.wake, known = item.wake;
       if (session?.runtime !== "opencode" || session.session_ref !== id || session.container_ref !== request.binding.container_ref ||
-          session.endpoint_id !== request.binding.endpoint_id || session.scope_generation !== request.binding.scope_generation ||
+          session.endpoint_id !== request.binding.endpoint_id || !Number.isInteger(session.scope_generation) ||
+          session.scope_generation < request.binding.scope_generation ||
           session.state !== "recent" || session.destination_health !== "active") return reject();
+      if (session.scope_generation > request.binding.scope_generation) {
+        remember(id, item, session); // Invalidate the old lifetime, never adopt this old request's wake body.
+        return false;
+      }
       if (wake !== null) {
         if (!validInput(wake?.native_input_id) || !validDelivery(wake?.delivery_id) || !Number.isInteger(wake?.generation) || wake.generation < 1 ||
             wake.scope_generation !== request.binding.scope_generation || !sameLocation(wake.native_location, request.binding.native_location) ||
