@@ -182,13 +182,40 @@ request. The backend still checks the current owner and exact wake binding.
 This settles activation, not the requested business task. Failed or interrupted
 work is not reported as successful. ACK, wait alone, elapsed time, an unknown or
 outcomeless idle, and a missing wake input do not authorize this extra path.
-No transcript or proof is stored. If compaction removed the input before that
-fresh read, automatic activation can remain blocked through plugin reload.
-A later normal turn can collect eligible backlog without repairing that anchor.
-The plugin never prompts again merely to reconstruct missing proof.
+No transcript or proof is stored. The plugin never prompts again merely to
+reconstruct missing proof. A separate fresh-witness path can settle an absent
+admitted anchor after compaction/reload, but only prospectively:
 
-The new path is not yet runtime-qualified. Earlier 2.2.7 discovery-only evidence
-does not qualify coalesced settlement or recovery after compaction. Full wake-anchor
+- The certified producer must have observed the exact native wake promoted
+  before setting `admitted`. Queue acceptance alone is not admission proof.
+- That admitted generation must already be known when a genuinely new ordinary
+  prompt is first observed. The plugin freezes one session-lifetime relationship
+  before awaits; delayed enrollment or an old manual/context row cannot create it.
+- Until that SAME ordinary input is observed promoted, its absence means not
+  ready. The existing poll rechecks the same candidate, without another prompt.
+  After promotion, missing, changed or nonlatest input invalidates it.
+- Outside hooks, native wait must finish through successors. Fresh raw context
+  must show the same latest ordinary input and a later valid outcome-idle.
+  After a fresh exact-generation backend poll and final native ownership read,
+  a final raw read must confirm that SAME input and SAME selected idle before
+  the existing fenced terminal request. It cannot select replacement evidence.
+
+This witness is ephemeral. Compaction, reload, shutdown, move, revert, disposal,
+duplicate input, binding changes or verification errors discard it. Loss of the
+event subscription disables this path for that plugin lifetime. Old completed
+manual turns cannot be blessed retrospectively. With no eligible fresh witness,
+the anchor stays held even if a normal turn collects backlog. A lost terminal
+reply is reconciled by normal polling, never by replaying the old payload.
+Backend transactions fence backend changes; they do not create an atomic native
+snapshot or undo an already committed request. Claim/ACK, expiry, original
+delivery priority and continuation rules stay unchanged.
+
+These paths are source candidates, not runtime-qualified recovery. The three
+earlier native qualification failures remain unresolved. Earlier 2.2.7
+discovery-only evidence does not qualify settlement or recovery after compaction.
+The extended witness requires four distinct NEW sequential automatic wakes after
+recovery, not an earlier cumulative backlog latch or batched payload count.
+Full wake-anchor
 recovery remains open in the [reliability feature](../../roadmap/features/fix-opencode-plugin-reliability.md).
 
 V2 owns a short server lease and renews it while polling. Disposal retires local

@@ -229,6 +229,7 @@ async function callerFixture(options = {}) {
   const previousInterval = globalThis.setInterval;
   const previousClear = globalThis.clearInterval;
   const calls = [];
+  const trace = [];
   const native = { prompt: [], wait: 0, interrupt: 0 };
   const hooks = {};
   const history = options.history || [];
@@ -244,6 +245,7 @@ async function callerFixture(options = {}) {
     const path = new URL(url).pathname;
     const body = init?.body ? JSON.parse(init.body) : {};
     calls.push({ path, body, signal: init?.signal });
+    if (body.operation) trace.push(body.operation);
     const intercepted = options.fetch ? await options.fetch(path, body, init) : undefined;
     if (intercepted !== undefined) return intercepted;
     if (path === "/relay/sessions") {
@@ -266,15 +268,15 @@ async function callerFixture(options = {}) {
     location: { directory: location }, app: { log() {} },
     session: {
       hook: async (name, fn) => { hooks[name] = fn; return { dispose: () => { retired.push(name); return options.dispose?.(name); } }; },
-      get: async (input) => options.get ? options.get(input) : ({ id: input.sessionID, location: { directory: location } }),
-      context: async (input) => options.context ? options.context(input, history) : ({ data: history }),
+      get: async (input) => { trace.push("get"); return options.get ? options.get(input) : ({ id: input.sessionID, location: { directory: location } }); },
+      context: async (input) => { trace.push("raw"); return options.context ? options.context(input, history) : ({ data: history }); },
       prompt: async (input) => {
         native.prompt.push(input);
         history.push({ type: "user", id: input.id, text: input.text, metadata: input.metadata });
         if (options.prompt) return options.prompt(input);
         return { id: input.id };
       },
-      wait: async () => { native.wait++; if (options.wait) await options.wait(history, hooks); },
+      wait: async () => { trace.push("wait"); native.wait++; if (options.wait) await options.wait(history, hooks); },
       interrupt: async () => { native.interrupt++; },
     },
     event: { subscribe: async function* ({ signal }) {
@@ -316,7 +318,7 @@ async function callerFixture(options = {}) {
     }
   }
   return {
-    calls, native, hooks, history, retired, dispose, listed: () => listed, eventRetired: () => eventRetired,
+    calls, trace, native, hooks, history, retired, dispose, listed: () => listed, eventRetired: () => eventRetired,
     emit: async (event) => { events.push(event); eventReady?.(); await pause(); },
     tick: async () => { interval(); await pause(); },
     close: async () => {
@@ -834,6 +836,8 @@ for (const outcome of ["succeeded", "failed", "interrupted"]) {
       [1, deliveryID, nativeID, freshIdle().id]);
       assert.equal(f.calls.filter((c) => c.body.operation === "admitted" || c.path === "/relay/deliveries/ack").length, 0);
       assert.deepEqual(f.native, { prompt: [], wait: 1, interrupt: 0 });
+      assert.deepEqual(f.trace.slice(f.trace.lastIndexOf("wait") - 2),
+        ["get", "raw", "wait", "get", "raw", "poll", "get", "raw", "terminal"], "canonical final raw ordering");
       await f.tick();
       assert.equal(terminals(f).length, 1, "consumed proof cannot replay even before backend reconciliation");
     } finally { await f.close(); }
@@ -908,6 +912,7 @@ test("fresh supersession never retrofits duplicate or historical observations", 
       get: async ({ sessionID: id }) => { if (hold) { hold = false; await gate.wait(); } return { id, location: { directory: location } }; },
       response: async (route) => {
         if (route === "/item-and-query" && fault === "memory-retry") return null;
+        if (route === "/relay/opencode/wake" && fault === "delayed-enroll" && !known) await gate.wait();
         if (route === "/relay/opencode/wake") return { session: relaySession,
           wake: known ? snapshot({ admitted: fault !== "unadmitted-G" || later, terminal: fault === "terminal-G" }) : null };
       }, wait: async (history) => history.push(freshIdle()) });
@@ -925,7 +930,7 @@ test("fresh supersession never retrofits duplicate or historical observations", 
       }
       known = true; later = true;
       f.history.push(freshUser(), freshIdle());
-      if (fault === "delayed-enroll") await f.emit({ type: "session.created", data: { sessionID } });
+      if (fault === "delayed-enroll") { gate.release(); await pause(); }
       await f.tick();
       assert.equal(terminals(f).length, 0, fault);
       // Null freshness tombstones must not break ordinary snapshots or capture.
@@ -1003,16 +1008,30 @@ test("fresh supersession rechecks raw evidence across final asynchronous fences"
 });
 
 test("fresh supersession fences lifecycle and backend changes during settlement", async () => {
-  for (const fault of ["dispose", "compaction-hook", "move", "revert-staged", "revert-cleared", "revert-committed", "shutdown", "delete", "archive",
+  for (const stage of ["wait", "postwait-get", "postwait-context", "final-poll", "final-get", "final-context"])
+    for (const fault of ["dispose", "compaction-hook", "compaction-event", "move", "revert-staged", "revert-cleared", "revert-committed", "shutdown", "delete", "archive",
     "subscription-end", "subscription-error", "endpoint", "scope", "generation", "delivery", "input", "terminal", "admitted", "owner", "location", "native-session", "native-revert"]) {
-    const gate = barrier(); let changed = false;
+    const gate = barrier(); let changed = false, waitEnded = false, fenced = false, contexts = 0;
     const f = await callerFixture({ wake: snapshot({ admitted: true }),
-      wait: async (history) => { await gate.wait(); history.push(freshIdle()); },
-      get: async ({ sessionID: id }) => ({ id: changed && fault === "native-session" ? "ses_other" : id,
-        location: { directory: changed && fault === "location" ? location + "/other" : location },
-        ...(changed && fault === "native-revert" ? { revert: { messageID: freshUser().id } } : {}) }),
+      wait: async (history) => { if (stage === "wait") await gate.wait(); history.push(freshIdle()); waitEnded = true; },
+      get: async ({ sessionID: id }) => {
+        if (waitEnded && !fenced && stage === "postwait-get" || fenced && stage === "final-get") await gate.wait();
+        return { id: changed && fault === "native-session" ? "ses_other" : id,
+          location: { directory: changed && fault === "location" ? location + "/other" : location },
+          ...(changed && fault === "native-revert" ? { revert: { messageID: freshUser().id } } : {}) };
+      },
+      context: async (_input, history) => {
+        contexts++;
+        if (contexts === 3 && stage === "postwait-context" || contexts === 4 && stage === "final-context") await gate.wait();
+        return { data: history };
+      },
       response: async (route, body) => {
+        if (waitEnded && route === "/relay/opencode/wake" && body.operation === "poll") {
+          if (stage === "final-poll") await gate.wait();
+          fenced = true;
+        }
         if (!changed || route !== "/relay/opencode/wake") return;
+        if (body.operation === "terminal") return null; // Server rejects the frozen stale fence, never rebinds it.
         if (fault === "owner" && body.operation === "poll") return null;
         const session = { ...relaySession }, wake = snapshot({ admitted: true });
         if (fault === "endpoint") session.endpoint_id += "f";
@@ -1026,18 +1045,26 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
       } });
     try {
       await observePrompt(f); f.history.push(freshUser()); await f.tick(); await gate.entered;
+      assert.equal(terminals(f).length, 0, "no terminal before the held verification boundary");
       changed = true;
       if (fault === "dispose") await f.dispose();
       else if (fault === "compaction-hook") await f.hooks.compaction({ sessionID });
       else if (fault === "subscription-end") await f.emit({ fixtureEnd: true });
       else if (fault === "subscription-error") await f.emit({ fixtureError: true });
-      else if (["move", "delete", "archive", "shutdown"].includes(fault) || fault.startsWith("revert-")) {
-        const type = { move: "session.moved", delete: "session.deleted", archive: "session.archived", shutdown: "session.execution.interrupted" }[fault]
+      else if (["compaction-event", "move", "delete", "archive", "shutdown"].includes(fault) || fault.startsWith("revert-")) {
+        const type = { "compaction-event": "session.compaction.started", move: "session.moved", delete: "session.deleted", archive: "session.archived", shutdown: "session.execution.interrupted" }[fault]
           || "session.revert." + fault.slice(7);
         await f.emit({ type, location: { directory: fault === "move" ? location + "/other" : location }, data: { sessionID, reason: "shutdown" } });
       } else await f.tick();
       gate.release(); await pause();
-      assert.equal(terminals(f).length, 0, fault);
+      const lateBackend = ["final-get", "final-context"].includes(stage) &&
+        ["endpoint", "scope", "generation", "delivery", "input", "terminal", "admitted", "owner"].includes(fault);
+      if (lateBackend) {
+        assert.ok(terminals(f).length <= 1, `${stage}/${fault}`);
+        for (const call of terminals(f)) assert.deepEqual(
+          [call.body.endpoint_id, call.body.scope_generation, call.body.generation, call.body.delivery_id, call.body.native_input_id],
+          [endpointID, 0, 1, deliveryID, nativeID], "late server changes reject the old fence, never retarget it");
+      } else assert.equal(terminals(f).length, 0, `${stage}/${fault}`);
       assert.equal(f.native.prompt.length, 0);
     } finally { gate.release(); await f.close(); }
   }

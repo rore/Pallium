@@ -752,6 +752,7 @@ export default {...production,setup:async ctx=>{
 
             # Freeze AFTER root G/T. No earlier latch/backlog/admission may count.
             wake_boundary, observation_boundary, request_boundary = len(wake_responses), len(observations()), len(requests)
+            root_payload_count = sum("MISSING_PROOF_PAYLOAD_שלום" in json.dumps(body, ensure_ascii=False) for body in requests)
             earlier_ids = {row["inputID"] for row in observations() if row["kind"] == "wake.prompt"}
             earlier_generations = {row["request"]["generation"] for row in wake_rows("admitted")}
             ack_boundary = len(retirement_acks)
@@ -795,6 +796,7 @@ export default {...production,setup:async ctx=>{
             assert len([row for row in observations() if row["kind"] == "wake.prompt" and row["inputID"] == missing_wake["native_input_id"]]) == root_prompts
             assert client.get("/relay/messages/" + missing["message_id"], params=scope).json()["deliveries"][0]["attempts"] == root_attempts
             assert len(wake_rows("terminal", missing_delivery)) == 1
+            assert sum("MISSING_PROOF_PAYLOAD_שלום" in json.dumps(body, ensure_ascii=False) for body in requests) == root_payload_count
             assert not any(row["kind"] == "wake.interrupt" for row in observations())
             coalesced_summary["fresh_supersession_reload_recovery"] = True
             api("DELETE", prefix)
