@@ -1153,7 +1153,7 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
       assert.equal(f.native.prompt.length, 0, `${writer}/${fault}`);
     } finally { await f.close(); }
   }
-  for (const writer of ["poll", "enroll"]) for (const stale of ["older", "empty", "released", "higher-scope"]) {
+  for (const writer of ["poll", "enroll"]) for (const stale of ["older", "empty", "released", "foreign-higher"]) {
     const gate = barrier(), original = snapshot({ admitted: true });
     const newer = snapshot({ admitted: true, generation: 2, native_input_id: "msg_retry_generation" });
     let backend = original, hold = false;
@@ -1164,7 +1164,7 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
           hold = false;
           const captured = stale === "empty" ? null : { ...backend };
           await gate.wait();
-          return { session: stale === "higher-scope" ? { ...relaySession, scope_generation: 1 } : relaySession, wake: captured };
+          return { session: stale === "foreign-higher" ? { ...relaySession, scope_generation: 1, endpoint_id: endpointID + "f" } : relaySession, wake: captured };
         }
         return { session: relaySession, wake: backend };
       } });
@@ -1279,7 +1279,7 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
     } finally { oldWait.release(); newWait.release(); await f.close(); }
   }
   for (const writer of ["poll", "enroll"]) for (const bodyKind of ["null", "old-wake", "new-wake", "malformed"]) {
-    const turnGate = barrier(), captureGate = barrier(), original = snapshot({ admitted: true });
+    const turnGate = barrier(), captureGate = barrier(), scopeGate = barrier(), original = snapshot({ admitted: true });
     const nextScope = ["new-wake", "malformed"].includes(bodyKind) ? 3 : 1;
     const replacement = { ...relaySession, scope_generation: nextScope };
     const carried = bodyKind === "null" ? null : bodyKind === "old-wake" ? original : bodyKind === "malformed" ? {}
@@ -1306,7 +1306,9 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
         if (route === "/relay/deliveries/ack") return { delivery_id: body.delivery_id, state: "delivered", already_delivered: false };
         if (route !== "/relay/opencode/wake") return;
         if (replace && body.operation === writer) {
-          replace = false; registration = replacement; backendWake = null; registered = false;
+          replace = false;
+          await scopeGate.wait();
+          registration = replacement; backendWake = null; registered = false;
           return { session: replacement, wake: carried };
         }
         if (body.operation === "enroll" && body.scope_generation === nextScope) registered = true;
@@ -1328,6 +1330,13 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
       replace = true;
       if (writer === "poll") await f.tick();
       else await f.emit({ type: "session.created", data: { sessionID } });
+      await scopeGate.entered;
+      backendWake = ["null", "new-wake"].includes(bodyKind) ? null : original;
+      if (writer === "poll") await f.emit({ type: "session.created", data: { sessionID } });
+      else await f.tick();
+      assert.equal(turnCall.signal.aborted, false, "same-binding wake/null cache advancement is not a registration reset");
+      assert.equal(captureCall.signal.aborted, false);
+      scopeGate.release(); await pause();
       assert.equal(turnCall.signal.aborted, true, `${writer}/${bodyKind}: positive replacement retires old ordinary transport`);
       assert.equal(captureCall.signal.aborted, true, `${writer}/${bodyKind}: positive replacement retires old capture transport`);
       for (const wake of [original, carried].filter((w) => w?.native_input_id)) {
@@ -1353,13 +1362,17 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
       assert.equal(turns, initialTurns + 2, "old response cannot erase successor claim cache");
       assert.equal(captures, 2, "old capture finally/receipt cannot erase or complete successor capture state");
       assert.equal(f.calls.filter((c) => c.path === "/relay/deliveries/ack").length, 1);
+      const queries = f.calls.filter((c) => c.path === "/item-and-query").length;
+      await f.hooks.prompt({ sessionID, messageID: "msg_scope_source", prompt: { text: "question" } });
+      assert.equal(f.calls.filter((c) => c.path === "/item-and-query").length, queries, "reset preserves seen first-observation identity");
+      assert.equal(turns, initialTurns + 2, "reset retains immutable source/role identity without a new claim");
       backendWake = snapshot({ scope_generation: nextScope, generation: 4, native_input_id: "msg_scope_recovered" });
       await f.tick();
       assert.deepEqual(f.native.prompt.map((p) => p.id), ["msg_scope_recovered"], "only a FRESH new-scope snapshot may start a new wake");
       assert.equal(terminals(f).length, 1); assert.equal(terminals(f)[0].body.scope_generation, nextScope);
       assert.equal(f.calls.filter((c) => c.body.operation === "admitted").length, 1);
       await f.tick(); assert.equal(backendWake, null, "new-scope terminal release remains usable");
-    } finally { turnGate.release(); captureGate.release(); await running; await oldCapture; await f.close(); }
+    } finally { scopeGate.release(); turnGate.release(); captureGate.release(); await running; await oldCapture; await f.close(); }
   }
   for (const writer of ["poll", "enroll"]) for (const fault of ["lower", "negative", "fraction", "string", "missing", "runtime", "session", "container", "endpoint", "state", "health"]) {
     const gate = barrier(); let registration = relaySession, advance = false, invalid = false, hold = false;
@@ -1401,6 +1414,70 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
       assert.equal(f.calls.filter((c) => c.body.operation === "poll").at(-1).body.scope_generation, 1, `${writer}/${fault}: no binding downgrade`);
       assert.equal(f.native.prompt.length, 0); assert.equal(terminals(f).length, 0);
     } finally { gate.release(); await running; await f.close(); }
+  }
+  for (const writer of ["poll", "enroll"]) for (const fault of ["lower", "foreign", "malformed"]) {
+    const responseGate = barrier(), waitGate = barrier(); let hold = false;
+    const session = { ...relaySession, scope_generation: 1 }, wake = snapshot({ admitted: true, scope_generation: 1 });
+    const bad = fault === "lower" ? { ...session, scope_generation: 0 } : fault === "foreign"
+      ? { ...session, scope_generation: 2, endpoint_id: endpointID + "f" } : { ...session, scope_generation: 1.5 };
+    const f = await callerFixture({ fetch: async (route) => route === "/relay/sessions" ? jsonResponse([session]) : undefined,
+      response: async (route, body) => {
+        if (route === "/relay/turn") return { session, deliveries: [] };
+        if (route !== "/relay/opencode/wake") return;
+        if (hold && body.operation === writer) { hold = false; await responseGate.wait(); return { session: bad, wake }; }
+        return { session, wake };
+      }, wait: async (history) => { await waitGate.wait(); history.push(freshIdle()); } });
+    try {
+      await observePrompt(f); f.history.push(freshUser()); await f.tick(); await waitGate.entered;
+      hold = true;
+      if (writer === "poll") await f.tick(); else await f.emit({ type: "session.created", data: { sessionID } });
+      await responseGate.entered;
+      if (writer === "poll") await f.emit({ type: "session.created", data: { sessionID } }); else await f.tick();
+      // The SAME wake keeps the SAME witness/flight but advances its opaque cache revision.
+      responseGate.release(); await pause(); await f.tick();
+      assert.equal(f.native.wait, 1, `${writer}/${fault}: stale registration rejection cannot release a still-current flight`);
+      assert.equal(terminals(f).length, 0);
+      waitGate.release(); await pause();
+      assert.equal(terminals(f).length, 1, `${writer}/${fault}: equivalent cache progress protects the existing witness from stale rejection`);
+      assert.equal(terminals(f)[0].body.scope_generation, 1);
+      assert.equal(f.native.prompt.length, 0);
+    } finally { responseGate.release(); waitGate.release(); await f.close(); }
+  }
+  for (const writer of ["poll", "enroll"]) {
+    const responseGate = barrier(), waitGate = barrier(); let hold = false, advance = false;
+    let session = { ...relaySession, scope_generation: 1 }, wake = snapshot({ admitted: true, scope_generation: 1 });
+    const f = await callerFixture({ fetch: async (route) => route === "/relay/sessions" ? jsonResponse([session]) : undefined,
+      response: async (route, body) => {
+        if (route === "/relay/turn") return { session, deliveries: [] };
+        if (route !== "/relay/opencode/wake") return;
+        if (hold && body.operation === writer) {
+          hold = false;
+          const captured = { session: { ...session, scope_generation: 2 }, wake: { ...wake } };
+          await responseGate.wait(); return captured;
+        }
+        if (advance) {
+          advance = false; session = { ...session, scope_generation: 3 };
+          wake = snapshot({ admitted: true, scope_generation: 3, generation: 3, native_input_id: "msg_new_scope_generation" });
+        }
+        return { session, wake };
+      }, wait: async (history) => { await waitGate.wait(); history.push(freshIdle()); } });
+    try {
+      hold = true;
+      if (writer === "poll") await f.tick(); else await f.emit({ type: "session.created", data: { sessionID } });
+      await responseGate.entered;
+      advance = true;
+      if (writer === "poll") await f.emit({ type: "session.created", data: { sessionID } }); else await f.tick();
+      await f.tick(); // NEW-scope request, not the old higher-registration response, learns the wake.
+      await observePrompt(f); f.history.push(freshUser()); await f.tick(); await waitGate.entered;
+      responseGate.release(); await pause(); await f.tick();
+      assert.equal(f.native.wait, 1, `${writer}: old-signal/base completion cannot clear the successor flight`);
+      assert.equal(terminals(f).length, 0);
+      waitGate.release(); await pause();
+      assert.equal(terminals(f).length, 1, `${writer}: old scope2 response cannot erase new scope3 proof`);
+      assert.equal(terminals(f)[0].body.scope_generation, 3);
+      assert.equal(terminals(f)[0].body.native_input_id, "msg_new_scope_generation");
+      assert.equal(f.native.prompt.length, 0);
+    } finally { responseGate.release(); waitGate.release(); await f.close(); }
   }
   const first = snapshot({ admitted: true, terminal: true });
   let backend = first;
