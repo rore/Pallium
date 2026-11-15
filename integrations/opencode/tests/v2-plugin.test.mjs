@@ -870,25 +870,43 @@ for (const preparation of ["prompt-await", "queued"]) {
 }
 
 test("fresh supersession requires observed producer promotion before admission", async () => {
-  const wake = snapshot(); let promoted = false;
-  const f = await callerFixture({ wake,
-    prompt: async () => { if (!promoted) f.history.pop(); return { queued: true }; },
-    response: async (route, body) => { if (route === "/relay/opencode/wake" && body.operation === "admitted") wake.admitted = true; },
-    wait: async (history) => { if (!history.some((row) => row.id === nativeID)) history.push(freshIdle()); } });
-  try {
-    await f.tick();
-    assert.equal(f.calls.filter((c) => c.body.operation === "admitted").length, 0, "queue acceptance is not native promotion");
-    const input = f.native.prompt[0];
-    promoted = true;
-    f.history.push({ type: "user", id: input.id, text: input.text, metadata: input.metadata });
-    await f.tick();
-    assert.equal(wake.admitted, true);
-    assert.equal(terminals(f).length, 0);
-    f.history.length = 0; // Genuine promoted G no longer survives raw context.
-    await observePrompt(f); f.history.push(freshUser()); await f.tick();
-    assert.equal(terminals(f).length, 1);
-    assert.equal(f.native.prompt.length, 1, "fresh witness must not replay G");
-  } finally { await f.close(); }
+  for (const knownBeforePrompt of [false, true]) {
+    const wake = snapshot(), readbacks = []; let promoted = false;
+    const f = await callerFixture({ wake,
+      prompt: async () => { if (!promoted) f.history.pop(); return { queued: true }; },
+      response: async (route, body) => {
+        if (route !== "/relay/opencode/wake") return;
+        if (body.operation === "admitted") wake.admitted = true; // Backend write is NOT a local cache update.
+        if (body.operation === "poll") readbacks.push({ ...wake });
+      },
+      wait: async (history) => { if (!history.some((row) => row.id === nativeID)) history.push(freshIdle()); } });
+    try {
+      await f.tick();
+      assert.equal(f.calls.filter((c) => c.body.operation === "admitted").length, 0, "queue acceptance is not native promotion");
+      const input = f.native.prompt[0];
+      promoted = true;
+      f.history.push({ type: "user", id: input.id, text: input.text, metadata: input.metadata });
+      await f.tick();
+      assert.equal(wake.admitted, true, "certified native producer committed admission in backend");
+      assert.equal(readbacks.at(-1).admitted, false, "preceding poll did not yet tell the adapter admission was committed");
+      assert.equal(terminals(f).length, 0, "promotion alone is not terminal evidence");
+      if (knownBeforePrompt) {
+        const waits = f.native.wait;
+        await f.tick(); // Genuine normal-poll readback while G remains visible.
+        assert.equal(readbacks.at(-1).admitted, true, "admitted G was returned BEFORE first observation of U");
+        assert.equal(f.native.wait, waits + 1, "adapter consumed that poll and progressed its bound visible-G flight");
+      }
+      f.history.length = 0;
+      await observePrompt(f);
+      f.history.push(freshUser());
+      if (!knownBeforePrompt) f.history.push(freshIdle()); // Even completed later U cannot retrofit eligibility.
+      await f.tick();
+      await f.tick();
+      assert.equal(terminals(f).length, knownBeforePrompt ? 1 : 0,
+        knownBeforePrompt ? "poll-established admitted G permits fresh witnessed settlement" : "later enrollment/poll must not retrofit first observation");
+      assert.equal(f.native.prompt.length, 1, "fresh witness must not replay G");
+    } finally { await f.close(); }
+  }
 });
 
 test("fresh supersession keeps native ID and ordinary input boundaries", async () => {
@@ -1078,6 +1096,81 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
       assert.equal(f.native.prompt.length, 0);
     } finally { gate.release(); await f.close(); }
   }
+  for (const writer of ["poll", "enroll"]) for (const flag of ["admitted", "terminal"]) {
+    const original = snapshot({ admitted: true, terminal: flag === "terminal" });
+    let regress = false;
+    const f = await callerFixture({ wake: original, wait: async (history) => history.push(freshIdle()),
+      response: async (route) => route === "/relay/opencode/wake"
+        ? { session: relaySession, wake: regress ? { ...original, [flag]: false } : original } : undefined });
+    try {
+      regress = true;
+      const boundary = f.trace.length;
+      if (writer === "enroll") await f.emit({ type: "session.created", data: { sessionID } });
+      await f.tick(); await f.tick();
+      assert.equal(f.native.prompt.length, 0, `${writer}/${flag}: regressed same-G snapshot cannot authorize replay`);
+      assert.equal(terminals(f).length, 0, `${writer}/${flag}: no terminal from rejected response`);
+      assert.ok(!f.trace.slice(boundary).includes("raw"), `${writer}/${flag}: rejected snapshot cannot launch a legacy wake flight`);
+      if (flag === "admitted") {
+        regress = false; // Server repair alone is not a cache observation before hook entry.
+        await observePrompt(f); f.history.push(freshUser()); await f.tick();
+        assert.equal(terminals(f).length, 1, `${writer}: rejection retained the known admitted snapshot, not the regressed flag`);
+      }
+    } finally { await f.close(); }
+  }
+  for (const writer of ["poll", "enroll"]) for (const stale of ["older", "empty"]) {
+    const gate = barrier(), original = snapshot({ admitted: true });
+    const newer = snapshot({ admitted: true, generation: 2, native_input_id: "msg_retry_generation" });
+    let backend = original, hold = false;
+    const f = await callerFixture({ wake: original, wait: async (history) => history.push(freshIdle()),
+      response: async (route, body) => {
+        if (route !== "/relay/opencode/wake") return;
+        if (hold && body.operation === writer) {
+          hold = false;
+          const captured = stale === "empty" ? null : { ...backend };
+          await gate.wait();
+          return { session: relaySession, wake: captured };
+        }
+        return { session: relaySession, wake: backend };
+      } });
+    try {
+      hold = true;
+      if (writer === "poll") await f.tick();
+      else await f.emit({ type: "session.created", data: { sessionID } });
+      await gate.entered;
+      backend = newer;
+      if (writer === "poll") await f.emit({ type: "session.created", data: { sessionID } });
+      else await f.tick();
+      // First-observe U only AFTER the other writer has accepted newer G.
+      await observePrompt(f); f.history.push(freshUser());
+      gate.release(); await pause(); await f.tick();
+      assert.equal(terminals(f).length, 1, `${writer}/${stale}: stale reply cannot erase newer candidate or restore old anchor`);
+      assert.equal(terminals(f)[0].body.generation, 2);
+      assert.equal(terminals(f)[0].body.native_input_id, newer.native_input_id);
+      assert.equal(f.native.prompt.length, 0, `${writer}/${stale}: no old native replay`);
+    } finally { gate.release(); await f.close(); }
+  }
+  const first = snapshot({ admitted: true, terminal: true });
+  let backend = first;
+  const f = await callerFixture({ wake: first, wait: async (history) => history.push({ ...freshIdle(), id: "msg_terminal_" + backend.generation }),
+    response: async (route, body) => {
+      if (route !== "/relay/opencode/wake") return;
+      if (body.operation === "admitted") backend = { ...backend, admitted: true };
+      if (body.operation === "terminal") backend = { ...backend, terminal: true };
+      return { session: relaySession, wake: backend };
+    } });
+  try {
+    for (const generation of [2, 3]) {
+      backend = snapshot({ generation, native_input_id: "msg_progress_" + generation,
+        delivery_id: generation === 2 ? deliveryID : "relay-delivery-" + "c".repeat(32) });
+      await f.tick();
+      assert.equal(f.native.prompt.at(-1).id, backend.native_input_id, "new generation is eligible even with reset admission/terminal flags");
+      assert.equal(terminals(f).at(-1).body.generation, generation);
+      await f.tick(); // Learn committed terminal normally; same-generation bits only advance.
+      backend = null;
+      await f.tick(); // Legitimate terminal release must not be mistaken for a stale null reply.
+    }
+    assert.deepEqual(f.native.prompt.map((p) => p.id), ["msg_progress_2", "msg_progress_3"], "pending retry/new delivery use NEW native IDs only");
+  } finally { await f.close(); }
 });
 
 test("fresh supersession consumes uncertain terminal without stale follow-up", async () => {
