@@ -1193,6 +1193,62 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
       assert.equal(f.native.prompt.length, 0, `${writer}/${stale}: no old native replay`);
     } finally { gate.release(); await f.close(); }
   }
+  for (const generation of [1, 2]) {
+    const gate = barrier(); let backend = null, hold = false;
+    const wakeFor = (value) => snapshot({ generation: value, native_input_id: "msg_aba_" + value,
+      delivery_id: "relay-delivery-" + String(value).repeat(32) });
+    const f = await callerFixture({
+      wait: async (history) => history.push({ ...freshIdle(), id: "msg_aba_terminal_" + backend.generation }),
+      response: async (route, body) => {
+        if (route !== "/relay/opencode/wake") return;
+        if (body.operation === "enroll" && hold) {
+          hold = false;
+          const captured = { ...backend };
+          await gate.wait();
+          return { session: relaySession, wake: captured };
+        }
+        if (body.operation === "admitted") backend = { ...backend, admitted: true };
+        if (body.operation === "terminal") backend = { ...backend, terminal: true };
+        if (body.operation === "poll" && backend?.terminal) backend = null;
+        return { session: relaySession, wake: backend };
+      } });
+    const counts = () => [f.native.prompt.length,
+      f.calls.filter((c) => c.body.operation === "admitted").length, terminals(f).length];
+    try {
+      if (generation === 2) {
+        backend = wakeFor(1);
+        await f.tick();
+        assert.equal(backend.terminal, true, "warmup generation completed through normal prompt/admission/terminal");
+        await f.tick();
+        assert.equal(backend, null, "normal poll returned null release before the newer generation");
+      }
+      backend = wakeFor(generation);
+      const staleWake = { ...projectedWake(), id: backend.native_input_id,
+        metadata: { pallium_relay_wake: true, generation, delivery_id: backend.delivery_id } };
+      hold = true;
+      await f.emit({ type: "session.created", data: { sessionID } });
+      await gate.entered; // Enroll captured LOCAL null, but its backend G body is held.
+      await f.tick();
+      assert.equal(backend.admitted, true, "intervening normal poll drove genuine admission");
+      assert.equal(backend.terminal, true, "intervening normal poll drove genuine terminal");
+      assert.deepEqual(counts(), [generation, generation, generation]);
+      await f.tick();
+      assert.equal(backend, null, "normal poll returned null release, completing null -> G -> null");
+      const retiredCounts = counts();
+      gate.release(); await pause();
+      // No repair poll is allowed between the delayed body and this readback.
+      await assert.doesNotReject(() => f.hooks.context({ sessionID, messages: [staleWake] }),
+        `null ABA generation ${generation}: retired input cannot regain internal-context authority`);
+      assert.equal(f.calls.filter((c) => c.body.operation === "context").length, 0, "no stale internal context request before repair poll");
+      assert.deepEqual(counts(), retiredCounts, "no new native prompt, admission or terminal from the old response");
+      backend = wakeFor(generation + 1);
+      await f.tick();
+      assert.equal(f.native.prompt.at(-1).id, backend.native_input_id, "current new generation still progresses after ABA rejection");
+      assert.deepEqual(counts(), [generation + 1, generation + 1, generation + 1]);
+      await f.tick();
+      assert.equal(backend, null, "current null release remains accepted");
+    } finally { gate.release(); await f.close(); }
+  }
   for (const writer of ["poll", "enroll"]) {
     const oldWait = barrier(), newWait = barrier(), original = snapshot({ admitted: true });
     let regress = false, waits = 0;
