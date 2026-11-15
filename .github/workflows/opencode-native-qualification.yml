@@ -57,6 +57,18 @@ jobs:
         coalesced native wake keeps uncertainty without replay: context
         coalesced native wake keeps uncertainty without replay: terminal-rejected
         coalesced native wake keeps uncertainty without replay: terminal-reply-lost
+        fresh supersession settles exact frozen generation: succeeded
+        fresh supersession settles exact frozen generation: failed
+        fresh supersession settles exact frozen generation: interrupted
+        fresh supersession retains unpromoted candidate: prompt-await
+        fresh supersession retains unpromoted candidate: queued
+        fresh supersession requires observed producer promotion before admission
+        fresh supersession keeps native ID and ordinary input boundaries
+        fresh supersession never retrofits duplicate or historical observations
+        fresh supersession rejects malformed or lost promoted proof
+        fresh supersession rechecks raw evidence across final asynchronous fences
+        fresh supersession fences lifecycle and backend changes during settlement
+        fresh supersession consumes uncertain terminal without stale follow-up
       HTTP_CASES: |
         test_activation_settlement_preserves_original_authority_before_backlog[semantic-delivered]
         test_activation_settlement_preserves_original_authority_before_backlog[semantic-pending]
@@ -228,7 +240,7 @@ jobs:
           $cases = @($xml.SelectNodes('//testcase'))
           if ($exit -ne 0 -or $cases.Count -ne 1 -or $cases[0].skipped -or $cases[0].failure -or $cases[0].error) { throw 'Native witness failed or did not execute' }
           $summary = Get-Content $env:PALLIUM_OPENCODE_COALESCED_SUMMARY -Raw | ConvertFrom-Json
-          if (@($summary.PSObject.Properties).Count -ne 12 -or @($summary.PSObject.Properties | Where-Object { $_.Value -cne $true }).Count) { throw 'Native settlement evidence or owned drain incomplete' }
+          if (@($summary.PSObject.Properties).Count -ne 13 -or $summary.fresh_supersession_reload_recovery -cne $true -or @($summary.PSObject.Properties | Where-Object { $_.Value -cne $true }).Count) { throw 'Native settlement evidence or owned drain incomplete' }
 
       - name: Verify affected HTTP contracts once
         id: backend
@@ -389,7 +401,8 @@ jobs:
           native = root / 'raw' / 'native-summary.json'
           keys = ('host_version_verified', 'ordered_coalesced_outcome', 'attached_before_ack', 'lost_terminal_reply_reconciled',
                   'automatic_backlog_over_two', 'unique_native_admissions', 'provider_payloads', 'terminal_reload_safe',
-                  'missing_proof_compaction_hold', 'missing_proof_reload_hold', 'no_interrupt', 'owned_drain')
+                  'missing_proof_compaction_hold', 'missing_proof_reload_hold', 'no_interrupt', 'owned_drain',
+                  'fresh_supersession_reload_recovery')
           if native.exists():
               data = json.loads(native.read_text(encoding='utf-8'))
               summary['native_checks'] = {key: data.get(key) is True for key in keys}

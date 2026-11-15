@@ -304,13 +304,14 @@ def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_na
     assert "-gt 540) { throw 'Insufficient native/HTTP/cleanup reserve' }" in native
     assert "test_released_native_coalesced_settlement_and_automatic_backlog -m slow -q -n 0" in native
     assert "$cases.Count -ne 1 -or $cases[0].skipped" in native
-    assert "PALLIUM_OPENCODE_COALESCED_SUMMARY" in native and ".Count -ne 12" in native
+    assert "PALLIUM_OPENCODE_COALESCED_SUMMARY" in native and ".Count -ne 13" in native
+    assert "$summary.fresh_supersession_reload_recovery -cne $true" in native
     assert steps["native"]["timeout-minutes"] == 2
     drain = next(step for step in job["steps"] if step.get("name") == "Verify owned drain and produce public-safe evidence")
     assert drain["if"] == "always()" and drain["timeout-minutes"] == 1
     evidence = drain["run"]
     for key in ("ordered_coalesced_outcome", "lost_terminal_reply_reconciled", "automatic_backlog_over_two",
-                "terminal_reload_safe", "missing_proof_compaction_hold", "missing_proof_reload_hold"):
+                "terminal_reload_safe", "missing_proof_compaction_hold", "missing_proof_reload_hold", "fresh_supersession_reload_recovery"):
         assert key in evidence
     assert "if expected and line.startswith(node):" in evidence
     assert "('PASSED', 'FAILED', 'ERROR', 'SKIPPED') else 'started'" in evidence
@@ -340,7 +341,17 @@ def test_opencode_settlement_qualification_inventories_every_new_case_and_preser
         "dispose", "location", "endpoint", "scope", "wake-generation", "wake-delivery", "wake-input", "wake-location"))
     expected.update(f"coalesced native wake keeps uncertainty without replay: {failure}" for failure in (
         "wait", "context", "terminal-rejected", "terminal-reply-lost"))
-    assert len(cases) == len(set(cases)) == 31 and set(cases) == expected
+    assert len(expected) == 31, "preserve the complete legacy inventory"
+    expected.update(f"fresh supersession settles exact frozen generation: {outcome}" for outcome in ("succeeded", "failed", "interrupted"))
+    expected.update(f"fresh supersession retains unpromoted candidate: {phase}" for phase in ("prompt-await", "queued"))
+    expected.update(("fresh supersession requires observed producer promotion before admission",
+        "fresh supersession keeps native ID and ordinary input boundaries",
+        "fresh supersession never retrofits duplicate or historical observations",
+        "fresh supersession rejects malformed or lost promoted proof",
+        "fresh supersession rechecks raw evidence across final asynchronous fences",
+        "fresh supersession fences lifecycle and backend changes during settlement",
+        "fresh supersession consumes uncertain terminal without stale follow-up"))
+    assert len(cases) == len(set(cases)) == 43 and set(cases) == expected
     http_cases = workflow["jobs"]["qualify"]["env"]["HTTP_CASES"].splitlines()
     expected_http = {f"test_activation_settlement_preserves_original_authority_before_backlog[semantic-{state}]"
                      for state in ("delivered", "pending", "claimed", "expired")}

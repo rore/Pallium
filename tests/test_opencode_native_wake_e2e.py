@@ -203,7 +203,7 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
     coalesced_summary = dict.fromkeys(("host_version_verified", "ordered_coalesced_outcome", "attached_before_ack",
         "lost_terminal_reply_reconciled", "automatic_backlog_over_two", "unique_native_admissions",
         "provider_payloads", "terminal_reload_safe", "missing_proof_compaction_hold", "missing_proof_reload_hold",
-        "no_interrupt", "owned_drain"), False)
+        "no_interrupt", "owned_drain", "fresh_supersession_reload_recovery"), False)
     root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -722,6 +722,81 @@ export default {...production,setup:async ctx=>{
             assert len(all_ids) == len(set(all_ids)) and all_ids.count(missing_wake["native_input_id"]) == 1
             assert not any(row["kind"] == "wake.interrupt" for row in observations())
             coalesced_summary["missing_proof_reload_hold"] = coalesced_summary["no_interrupt"] = True
+
+            # Prospective proof only: the restored owner must know this promoted
+            # nonterminal G BEFORE a genuinely new ordinary prompt is observed.
+            current_owner = [row for row in wake_responses[boundary:] if row["status"] == 200
+                             and row["request"]["operation"] == "poll"][-1]["request"]["owner_id"]
+            assert current_owner != missing_wake["owner_id"]
+            root_acks = len([row for row in observations() if row["kind"] == "wake.ack"
+                             and row["deliveryID"] == missing_delivery])
+            root_admissions = len(wake_rows("admitted", missing_delivery))
+            root_prompts = all_ids.count(missing_wake["native_input_id"])
+            root_attempts = client.get("/relay/messages/" + missing["message_id"], params=scope).json()["deliveries"][0]["attempts"]
+            assert root_acks == root_admissions == root_prompts == root_attempts == 1
+            api("POST", prefix + "/prompt", {"id": "msg_fresh_recovery_ordinary",
+                "text": "fresh ordinary work 界 😀", "delivery": "queue"})
+            api("POST", "/api/experimental/session/" + session + "/wait")
+            root_terminal = eventually(lambda: wake_rows("terminal", missing_delivery))[-1]["request"]
+            assert root_terminal["owner_id"] == current_owner
+            assert root_terminal["native_input_id"] == missing_wake["native_input_id"]
+            assert root_terminal["generation"] == missing_wake["generation"]
+            context = api("GET", prefix + "/context")["data"]
+            users = [row for row in context if row.get("type") == "user"]
+            assert users[-1]["id"] == "msg_fresh_recovery_ordinary"
+            u = next(i for i, row in enumerate(context) if row.get("id") == users[-1]["id"])
+            t = next(row for row in context[u + 1:] if row.get("type") == "idle")
+            assert t["id"] == root_terminal["terminal_message_id"] and t["outcome"] == "succeeded"
+            assert not any(row.get("id") == missing_wake["native_input_id"] for row in context)
+            eventually(lambda: delivered(held_backlog))  # Manual fallback is NOT suffix evidence.
+
+            # Freeze AFTER root G/T. No earlier latch/backlog/admission may count.
+            wake_boundary, observation_boundary, request_boundary = len(wake_responses), len(observations()), len(requests)
+            earlier_ids = {row["inputID"] for row in observations() if row["kind"] == "wake.prompt"}
+            earlier_generations = {row["request"]["generation"] for row in wake_rows("admitted")}
+            ack_boundary = len(retirement_acks)
+            suffix_ids, suffix_generations, suffix_terminals = [], [], []
+            for index in range(4):
+                # Sequential enqueue forces four distinct automatic activations,
+                # rather than four payloads batched into one max_messages=3 claim.
+                marker = f"FRESH_AUTOMATIC_SUFFIX_{index}_界"
+                sent = send(marker)
+                delivery_id = sent["deliveries"][0]["delivery_id"]
+                eventually(lambda sent=sent: delivered(sent))
+                terminal = eventually(lambda: wake_rows("terminal", delivery_id))[-1]["request"]
+                api("POST", "/api/experimental/session/" + session + "/wait")
+                admitted = wake_rows("admitted", delivery_id)
+                assert len(admitted) == len(wake_rows("terminal", delivery_id)) == 1
+                assert admitted[0]["request"]["native_input_id"] == terminal["native_input_id"]
+                assert terminal["native_input_id"] not in earlier_ids
+                assert terminal["generation"] not in earlier_generations
+                assert any(row["request"] is terminal for row in wake_responses[wake_boundary:])
+                prompts = [row for row in observations()[observation_boundary:] if row["kind"] == "wake.prompt"
+                           and row["inputID"] == terminal["native_input_id"]]
+                acks = [row for row in observations()[observation_boundary:] if row["kind"] == "wake.ack"
+                        and row["deliveryID"] == delivery_id]
+                assert len(prompts) == len(acks) == 1 and acks[0]["attached"] is True
+                assert len([ack for ack in retirement_acks[ack_boundary:] if ack["delivery_id"] == delivery_id]) == 1
+                assert any(marker in json.dumps(body, ensure_ascii=False) for body in requests[request_boundary:])
+                native_context = api("GET", prefix + "/context")["data"]
+                start = next(i for i, row in enumerate(native_context) if row.get("id") == terminal["native_input_id"])
+                end = next(row for row in native_context[start + 1:] if row.get("type") == "idle")
+                assert end["id"] == terminal["terminal_message_id"] and end["outcome"] == "succeeded"
+                for _ in range(2):
+                    state = client.get("/relay/messages/" + sent["message_id"], params=scope).json()["deliveries"][0]
+                    assert state["state"] == "delivered" and state["attempts"] == 1
+                suffix_ids.append(terminal["native_input_id"])
+                suffix_generations.append(terminal["generation"])
+                suffix_terminals.append(terminal["terminal_message_id"])
+            assert len(set(suffix_ids)) == len(set(suffix_generations)) == len(set(suffix_terminals)) == 4
+            assert len([row for row in observations()[observation_boundary:] if row["kind"] == "wake.prompt"]) == 4
+            assert len([row for row in observations() if row["kind"] == "wake.ack" and row["deliveryID"] == missing_delivery]) == root_acks
+            assert len(wake_rows("admitted", missing_delivery)) == root_admissions
+            assert len([row for row in observations() if row["kind"] == "wake.prompt" and row["inputID"] == missing_wake["native_input_id"]]) == root_prompts
+            assert client.get("/relay/messages/" + missing["message_id"], params=scope).json()["deliveries"][0]["attempts"] == root_attempts
+            assert len(wake_rows("terminal", missing_delivery)) == 1
+            assert not any(row["kind"] == "wake.interrupt" for row in observations())
+            coalesced_summary["fresh_supersession_reload_recovery"] = True
             api("DELETE", prefix)
             eventually(lambda: client.get("/relay/sessions", params={"runtime": "opencode", **scope,
                 "include_inactive": True}).json()[0]["state"] == "closed")
