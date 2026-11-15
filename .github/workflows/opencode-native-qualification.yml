@@ -185,13 +185,23 @@ jobs:
           Copy-Item 'integrations/opencode/tests/v2-plugin.test.mjs' "$baseline/integrations/opencode/tests/v2-plugin.test.mjs"
           Push-Location $baseline
           try {
-            node --test --test-name-pattern='^coalesced native wake settles from exact outcome-bearing idle: succeeded$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/baseline.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/baseline.log"
+            # BASELINE is immutable pre-fix93f497bf, not the published040f source base.
+            node --test --test-name-pattern='^(coalesced native wake settles from exact outcome-bearing idle: succeeded|fresh supersession settles exact frozen generation: succeeded)$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/baseline.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/baseline.log"
             $exit = $LASTEXITCODE
           } finally { Pop-Location }
           "BASELINE_EXIT=$exit" >> $env:GITHUB_ENV
           [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/baseline.xml" -Raw
           $failed = @($xml.SelectNodes('//testcase[failure]'))
-          if ($exit -ne 1 -or $failed.Count -ne 1 -or $failed[0].name -cne 'coalesced native wake settles from exact outcome-bearing idle: succeeded' -or $failed[0].failure.InnerText -notmatch 'coalesced exact wake must settle activation without replay') { throw 'Unexpected baseline outcome; all later phases stop' }
+          $selected = @($xml.SelectNodes('//testcase[not(skipped)]'))
+          if ($exit -ne 1 -or $selected.Count -ne 2 -or $failed.Count -ne 2 -or $xml.SelectNodes('//testcase[error]').Count) { throw 'Unexpected baseline outcome; all later phases stop' }
+          $expected = @{
+            'coalesced native wake settles from exact outcome-bearing idle: succeeded' = 'coalesced exact wake must settle activation without replay'
+            'fresh supersession settles exact frozen generation: succeeded' = 'fresh promoted ordinary work must release the missing admitted anchor'
+          }
+          foreach ($name in $expected.Keys) {
+            $case = @($selected | Where-Object { $_.name -ceq $name })
+            if ($case.Count -ne 1 -or -not $case[0].failure -or $case[0].failure.InnerText -notmatch [regex]::Escape($expected[$name])) { throw "Unexpected baseline assertion: $name; all later phases stop" }
+          }
           exit 0 # Expected RED validated; do not propagate its native exit 1 through the Actions shell.
 
       - name: Verify the corrected focused regression
@@ -201,12 +211,16 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START -gt 480) { throw 'Insufficient remaining qualification budget' }
-          node --test --test-name-pattern='^coalesced native wake settles from exact outcome-bearing idle: succeeded$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/focused.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/focused.log"
+          node --test --test-name-pattern='^(coalesced native wake settles from exact outcome-bearing idle: succeeded|fresh supersession settles exact frozen generation: succeeded)$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/focused.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/focused.log"
           $exit = $LASTEXITCODE
           "FOCUSED_EXIT=$exit" >> $env:GITHUB_ENV
           [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/focused.xml" -Raw
           $selected = @($xml.SelectNodes('//testcase[not(skipped)]'))
-          if ($exit -ne 0 -or $selected.Count -ne 1 -or $selected[0].name -cne 'coalesced native wake settles from exact outcome-bearing idle: succeeded' -or $selected[0].failure -or $selected[0].error) { throw 'Corrected focused regression did not pass exactly once' }
+          if ($exit -ne 0 -or $selected.Count -ne 2 -or $xml.SelectNodes('//testcase[failure or error]').Count) { throw 'Corrected focused regressions did not both pass' }
+          foreach ($name in @('coalesced native wake settles from exact outcome-bearing idle: succeeded', 'fresh supersession settles exact frozen generation: succeeded')) {
+            $case = @($selected | Where-Object { $_.name -ceq $name })
+            if ($case.Count -ne 1) { throw "Corrected focused regression did not pass exactly once: $name" }
+          }
 
       - name: Validate the affected package once
         id: package
@@ -215,8 +229,24 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START -gt 540) { throw 'Insufficient remaining package/native/cleanup budget' }
+          # Exercise the ACTUAL embedded extractor and native assertion before
+          # paying for native execution, within this existing package phase/cap.
+          python -m pytest tests/test_ci_workflow.py::test_opencode_qualification_executes_embedded_failure_locator tests/test_ci_workflow.py::test_opencode_recovery_payload_oracle_rejects_extra_presentation --noconftest -q -n 0 --tb=short --junitxml="$env:QUALIFICATION_ROOT/raw/package-contracts.xml" *> "$env:QUALIFICATION_ROOT/raw/package.log"
+          $exit = $LASTEXITCODE
+          "PACKAGE_EXIT=$exit" >> $env:GITHUB_ENV
+          if ($exit) { throw 'Extractor/oracle preflight failed; native witness not run' }
+          [xml]$contractXml = Get-Content "$env:QUALIFICATION_ROOT/raw/package-contracts.xml" -Raw
+          $checks = @($contractXml.SelectNodes('//testcase'))
+          if ($checks.Count -ne 2 -or $contractXml.SelectNodes('//testcase[skipped or failure or error]').Count) {
+            "PACKAGE_EXIT=1" >> $env:GITHUB_ENV
+            throw 'Extractor/oracle preflight did not execute exactly two passing checks'
+          }
+          foreach ($name in @('test_opencode_qualification_executes_embedded_failure_locator', 'test_opencode_recovery_payload_oracle_rejects_extra_presentation')) {
+            $check = @($checks | Where-Object { $_.name -ceq $name })
+            if ($check.Count -ne 1) { "PACKAGE_EXIT=1" >> $env:GITHUB_ENV; throw "Required extractor/oracle preflight missing or duplicated: $name" }
+          }
           # npm's node-options config affects lifecycle scripts, not npm itself.
-          npm --prefix integrations/opencode --node-options="--test-reporter=junit --test-reporter-destination=$env:QUALIFICATION_ROOT/raw/package.xml" test *> "$env:QUALIFICATION_ROOT/raw/package.log"
+          npm --prefix integrations/opencode --node-options="--test-reporter=junit --test-reporter-destination=$env:QUALIFICATION_ROOT/raw/package.xml" test *>> "$env:QUALIFICATION_ROOT/raw/package.log"
           $exit = $LASTEXITCODE
           "PACKAGE_EXIT=$exit" >> $env:GITHUB_ENV
           if ($exit) { throw 'Package validation failed; native witness not run' }
@@ -233,7 +263,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START -gt 540) { throw 'Insufficient native/HTTP/cleanup reserve' }
-          python -m pytest tests/test_opencode_native_wake_e2e.py::test_released_native_coalesced_settlement_and_automatic_backlog -m slow -q -n 0 --basetemp "$env:QUALIFICATION_ROOT/raw/native" --junitxml="$env:QUALIFICATION_ROOT/raw/native.xml" *> "$env:QUALIFICATION_ROOT/raw/native.log"
+          python -m pytest tests/test_opencode_native_wake_e2e.py::test_released_native_coalesced_settlement_and_automatic_backlog -m slow -q -n 0 --tb=short --basetemp "$env:QUALIFICATION_ROOT/raw/native" --junitxml="$env:QUALIFICATION_ROOT/raw/native.xml" *> "$env:QUALIFICATION_ROOT/raw/native.log"
           $exit = $LASTEXITCODE
           "NATIVE_EXIT=$exit" >> $env:GITHUB_ENV
           [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/native.xml" -Raw
@@ -322,7 +352,40 @@ jobs:
                       'captured_bytes': len(raw), 'encoding': 'utf-8/backslashreplace',
                       'truncated': path.stat().st_size > len(raw) or len(text) > 4096,
                       'redacted': safe != text}
+          def failure_locator(value, checkout_root):
+              allowed = ('tests/test_opencode_native_wake_e2e.py', 'tests/test_opencode_relay_wake_e2e.py')
+              classes = ('AssertionError', 'RuntimeError', 'TimeoutError', 'ValueError', 'TypeError', 'OSError', 'Failed')
+              kinds = '|'.join(classes)
+              checkout = checkout_root.replace('\\', '/').rstrip('/')
+              frames, exceptions = [], []
+              total = 0
+              candidate = unknown_exception = False
+              for line in str(value).splitlines():
+                  candidate = candidate or '.py:' in line
+                  match = re.fullmatch(r'(.+\.py):([1-9][0-9]{0,8}): (?:in [A-Za-z_][A-Za-z0-9_]*|(' + kinds + '))', line)
+                  if match:
+                      path = match[1].replace('\\', '/')
+                      if checkout and path.startswith(checkout + '/'):
+                          path = path[len(checkout) + 1:]
+                      if path in allowed:
+                          total += 1
+                          frames.append({'file': path, 'line': int(match[2]), 'kind': 'footer' if match[3] else 'frame'})
+                          frames = frames[-8:]
+                          if match[3] and match[3] not in exceptions:
+                              exceptions.append(match[3])
+                  # Copy only a fixed class token, never the E-line message or values.
+                  error = re.fullmatch(r'E[ \t]+(' + kinds + r')(?::.*)?', line)
+                  if error and error[1] not in exceptions:
+                      exceptions.append(error[1])
+                  elif re.match(r'E[ \t]+[A-Za-z_][A-Za-z0-9_]*(?::|$)', line) and not error:
+                      unknown_exception = True
+              return {'state': 'captured' if frames else 'unparseable' if candidate else 'missing',
+                      'frames': frames, 'order': 'observed_tail', 'frames_truncated': total > 8,
+                      'frames_omitted_prefix': max(0, total - 8),
+                      'exception_state': 'captured' if exceptions else 'unparseable' if unknown_exception else 'missing',
+                      'exception_classes': exceptions}
           def failure_details(value):
+              locator = failure_locator(value, os.environ.get('GITHUB_WORKSPACE', ''))
               # Retain meaningful assertions/errors, never arbitrary provider/body dumps.
               lines = str(value).splitlines()
               selected = []
@@ -331,7 +394,7 @@ jobs:
                       continue
                   if re.search(r'(?i)assert|error|fail|expected|actual|timeout|status|version|mismatch|unexpected|not allowed', line):
                       selected.append(sanitize(line))
-              return {'lines': selected[:24], 'truncated': len(selected) > 24,
+              return {'locator': locator, 'lines': selected[:24], 'truncated': len(selected) > 24,
                       'raw_lines': len(lines), 'note': 'paths/identities/secrets and provider-body lines omitted'}
           phases = {}
           for name in ('setup', 'baseline', 'focused', 'package', 'backend', 'native'):

@@ -282,12 +282,24 @@ def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_na
         assert "if" not in phase and "continue-on-error" not in phase
     assert steps["package"]["timeout-minutes"] == 2
     focused = "coalesced native wake settles from exact outcome-bearing idle: succeeded"
+    root_focused = "fresh supersession settles exact frozen generation: succeeded"
     for phase in ("baseline", "focused"):
-        assert f"--test-name-pattern='^{focused}$'" in steps[phase]["run"]
+        assert f"--test-name-pattern='^({focused}|{root_focused})$'" in steps[phase]["run"]
         assert "startup empty discovery" not in steps[phase]["run"]
     assert "coalesced exact wake must settle activation without replay" in steps["baseline"]["run"]
-    assert "$exit -ne 1 -or $failed.Count -ne 1" in steps["baseline"]["run"]
-    assert "$selected.Count -ne 1" in steps["focused"]["run"]
+    assert "fresh promoted ordinary work must release the missing admitted anchor" in steps["baseline"]["run"]
+    assert "$exit -ne 1 -or $selected.Count -ne 2 -or $failed.Count -ne 2" in steps["baseline"]["run"]
+    assert "$case.Count -ne 1" in steps["baseline"]["run"] and "[regex]::Escape($expected[$name])" in steps["baseline"]["run"]
+    assert "$selected.Count -ne 2" in steps["focused"]["run"] and "$case.Count -ne 1" in steps["focused"]["run"]
+    for name in (focused, root_focused):
+        assert name in steps["baseline"]["run"] and name in steps["focused"]["run"]
+    preflight = steps["package"]["run"]
+    for name in ("test_opencode_qualification_executes_embedded_failure_locator", "test_opencode_recovery_payload_oracle_rejects_extra_presentation"):
+        assert f"tests/test_ci_workflow.py::{name}" in preflight and f"'{name}'" in preflight
+    assert preflight.index("python -m pytest") < preflight.index("npm --prefix integrations/opencode")
+    assert "--noconftest -q -n 0" in preflight
+    assert "$checks.Count -ne 2" in preflight and "$check.Count -ne 1" in preflight
+    assert "//testcase[skipped or failure or error]" in preflight
     backend = steps["backend"]["run"]
     command, = [line.strip() for line in backend.splitlines() if line.strip().startswith("python ")]
     assert shlex.split(command) == ["python", "-u", "-m", "pytest",
@@ -303,6 +315,7 @@ def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_na
     native = steps["native"]["run"]
     assert "-gt 540) { throw 'Insufficient native/HTTP/cleanup reserve' }" in native
     assert "test_released_native_coalesced_settlement_and_automatic_backlog -m slow -q -n 0" in native
+    assert "--tb=short" in native
     assert "$cases.Count -ne 1 -or $cases[0].skipped" in native
     assert "PALLIUM_OPENCODE_COALESCED_SUMMARY" in native and ".Count -ne 13" in native
     assert "$summary.fresh_supersession_reload_recovery -cne $true" in native
@@ -322,6 +335,106 @@ def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_na
     uploads = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")]
     assert len(uploads) == 1 and uploads[0]["with"]["path"].endswith("/public/summary.json")
     assert uploads[0]["if"] == "always()" and uploads[0]["timeout-minutes"] == 1
+
+
+def test_opencode_qualification_executes_embedded_failure_locator(monkeypatch) -> None:
+    import ast
+    import yaml
+
+    workflow = yaml.safe_load((Path(__file__).parents[1] / ".github/workflows/opencode-native-qualification.yml").read_text(encoding="utf-8"))
+    evidence = next(step["run"] for step in workflow["jobs"]["qualify"]["steps"]
+                    if step.get("name") == "Verify owned drain and produce public-safe evidence")
+    code = evidence.split("@'\n", 1)[1].split("\n'@", 1)[0]
+    functions = [node for node in ast.parse(code).body if isinstance(node, ast.FunctionDef)
+                 and node.name in ("sanitize", "failure_locator", "failure_details")]
+    assert len(functions) == 3
+    namespace = {"re": re, "os": os}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), "<embedded-evidence>", "exec"), namespace)
+    details, locate = namespace["failure_details"], namespace["failure_locator"]
+    checkout = "C:/qualification/checkout"
+    monkeypatch.setenv("GITHUB_WORKSPACE", checkout)
+    native = "tests/test_opencode_native_wake_e2e.py"
+    http = "tests/test_opencode_relay_wake_e2e.py"
+    noise = [f'    assert provider_status_{i} == "source noise"' for i in range(30)]
+    late = [f"{native}:190: in test_wrapper", f"{native}:610: in helper", f"{native}:610: AssertionError"]
+    result = details("\n".join(noise + late))
+    locator = result["locator"]
+    assert len(result["lines"]) == 24 and result["truncated"] is True
+    assert locator == {"state": "captured", "frames": [
+        {"file": native, "line": 190, "kind": "frame"},
+        {"file": native, "line": 610, "kind": "frame"},
+        {"file": native, "line": 610, "kind": "footer"}],
+        "order": "observed_tail", "frames_truncated": False, "frames_omitted_prefix": 0,
+        "exception_state": "captured", "exception_classes": ["AssertionError"]}
+    windows = f"{checkout}/{native}:610: AssertionError".replace("/", "\\")
+    assert locate(windows, checkout.replace("/", "\\"))["frames"] == [locator["frames"][-1]]
+    assert locate(f"/qualification/checkout/{native}:610: AssertionError", "/qualification/checkout")["frames"] == [locator["frames"][-1]]
+    wrapper = locate(late[0], checkout)
+    assert wrapper["frames"] == [locator["frames"][0]] and wrapper["exception_state"] == "missing"
+    assert locate(f"{http}:216: ValueError", checkout)["exception_classes"] == ["ValueError"]
+    for forged in (f"C:/outside/{native}:610: AssertionError",
+                   f"{checkout}-other/{native}:610: AssertionError",
+                   f"{checkout}/../{native}:610: AssertionError",
+                   f"tests/../{native}:610: AssertionError",
+                   f"{native}:0: AssertionError", f"{native}:9999999999: AssertionError",
+                   f"{native}:NaN: AssertionError", f"{native}:610: CustomError",
+                   f"{native}:610: in helper arbitrary suffix",
+                   f"{native}:610: AssertionError: runtime value",
+                   f'    "{native}:610: AssertionError"', f">   {native}:610: in helper",
+                   f'print("{native}:610: AssertionError")', f"    {native}:610: in helper",
+                   f"/outside/{native}:610: AssertionError",
+                   "tests/test_ci_workflow.py:1: AssertionError"):
+        rejected = locate(forged, checkout)
+        assert rejected["state"] == "unparseable" and rejected["frames"] == []
+        assert rejected["exception_classes"] == []
+    for missing in ("", "no traceback retained"):
+        absent = locate(missing, checkout)
+        assert absent["state"] == absent["exception_state"] == "missing" and absent["frames"] == []
+    unknown = locate("E   CustomError: private message", checkout)
+    assert unknown["exception_state"] == "unparseable" and unknown["exception_classes"] == []
+    private = '\n'.join((
+        '{"payload": "provider-private-body", "apiKey": "credential-value"}',
+        '    local = "C:/private/profile/secret.txt"',
+        f'E   RuntimeError: provider-private-body credential-value C:/private/profile/secret.txt {native}:4: in forged'))
+    safe = details("\n".join(noise + late + [private]))["locator"]
+    assert safe["frames"] == locator["frames"] and safe["exception_classes"] == ["AssertionError", "RuntimeError"]
+    for forbidden in ("provider-private-body", "credential-value", "C:/", "private/profile", "local =", "apiKey", "payload"):
+        assert forbidden not in json.dumps(safe)
+    bounded = locate("\n".join(f"{native}:{i}: in helper" for i in range(1, 13)), checkout)
+    assert bounded["order"] == "observed_tail" and bounded["frames_truncated"] is True
+    assert bounded["frames_omitted_prefix"] == 4 and [frame["line"] for frame in bounded["frames"]] == list(range(5, 13))
+    assert bounded["exception_state"] == "missing" and bounded["exception_classes"] == []
+    exact = locate("\n".join(f"{native}:{i}: in helper" for i in range(1, 9)), checkout)
+    assert len(exact["frames"]) == 8 and exact["frames_truncated"] is False and exact["frames_omitted_prefix"] == 0
+    classes = ["AssertionError", "RuntimeError", "TimeoutError", "ValueError", "TypeError", "OSError", "Failed"]
+    classes_only = locate("\n".join(f"E   {name}: private-value" for name in classes * 3), checkout)
+    assert classes_only["state"] == "missing" and classes_only["frames"] == []
+    assert classes_only["exception_state"] == "captured" and classes_only["exception_classes"] == classes
+    assert "private-value" not in json.dumps(classes_only)
+    assert len(json.dumps(locate("\n".join(late * 10 + [private]), checkout))) < 2048
+
+
+def test_opencode_recovery_payload_oracle_rejects_extra_presentation() -> None:
+    import ast
+
+    source = (Path(__file__).parents[1] / "tests/test_opencode_native_wake_e2e.py").read_text(encoding="utf-8")
+    functions = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.FunctionDef)
+                 and node.name == "assert_no_original_presentation"]
+    assert len(functions) == 1
+    namespace = {"json": json, "original_payload": "original-payload-界", "root_payload_count": 1}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), "<native-payload-oracle>", "exec"), namespace)
+    check = namespace["assert_no_original_presentation"]
+    requests = [{"messages": [{"role": "user", "content": namespace["original_payload"]}]}]
+    counters = {"acks": 1, "admissions": 1, "prompts": 1, "attempts": 1}
+    before = counters.copy()
+    check(requests)
+    replay = {"messages": [{"role": "user", "content": namespace["original_payload"]}], "fixture_input_id": "msg_fresh_recovery_ordinary"}
+    with pytest.raises(AssertionError, match="original payload re-presented"):
+        check([*requests, replay])
+    assert counters == before
+    check(requests)  # Copied evidence did not dispatch or mutate the real list.
+    assert source.index("root_payload_count =") < source.index('api("POST", prefix + "/prompt", {"id": "msg_fresh_recovery_ordinary"')
+    assert source.count("assert_no_original_presentation(requests)") == 2
 
 
 def test_opencode_settlement_qualification_inventories_every_new_case_and_preserved_negative() -> None:
