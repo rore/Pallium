@@ -255,8 +255,11 @@ wake/null progress must not hide valid higher-scope invalidation. Discard that o
 request's wake body after reset; only a fresh new-scope request can obtain wake
 authority. Keep revision protection for all same-scope wake acceptance. The manager
 accepted and forwarded these findings for consolidation, not as source or runtime
-GO for the evolving correction. Obtain the same independent reviewer's narrow
-source disposition before choosing any later validation budget. No sixth campaign
+GO for the evolving correction. The unpublished correction now separates those
+freshness checks and fences stale rejection effects as well as wake acceptance.
+Both-writer caller schedules are authored but unexecuted. The same independent
+reviewer has the narrow source request; disposition remains pending. Obtain that
+disposition before choosing any later validation budget. No sixth campaign
 is released by this source-only continuation. The local automatic-wake incident
 remains open.
 
