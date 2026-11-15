@@ -10,6 +10,9 @@
 # Parallel · Runtime Expansion
 - add-hermes-agent-integration
 
+# Later · Runtime Lifecycle Hardening
+- harden-runtime-lifecycle-and-delivery-evidence
+
 # Later · Relay Documentation and Examples
 - validate-relay-dependency-workflows
 

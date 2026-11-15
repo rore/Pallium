@@ -112,16 +112,28 @@ outcome-idle, then revalidate the complete owner/scope/generation binding before
 using the existing terminal operation. Queue acceptance or a new steer alone
 does not supply this proof.
 
-The proposed root fix uses one ephemeral witness in existing session state,
-not another persistent ledger or backend transition. Missing or changed proof,
-another input, shutdown, revert, move, reload or disposal must invalidate it.
+The root fix uses one ephemeral witness in existing session state,
+not another persistent ledger or backend transition. Before the new ordinary
+input is observed promoted, its absence means not ready and retains that same
+frozen witness. After promotion, missing or changed proof invalidates it.
+Another input, shutdown, revert, move, reload or disposal must invalidate it.
 It cannot retrospectively bless completed manual turns, clear arbitrary
 admission flags or claim downstream task success. This corrects the earlier
 overstatement that historical listing is always necessary. It is source/design
-evidence, not implementation approval or observed recovery.
+evidence, not runtime qualification or observed recovery.
 
-The existing developer owns the concrete root plan in
-`.agent-workflow/tasks/opencode-wake-anchor-retirement.md`. Draft
+The existing developer owns the root correction in
+`.agent-workflow/tasks/opencode-wake-anchor-retirement.md`. Its corrected plan
+passed technical review, and the task owner's human approval carries forward.
+Root source `f68e82496d1c25b59ec8dca0979e08abb1fb6406` is authored on an isolated
+branch from the published candidate, but remains unpushed and unexecuted. Its
+test source adds 12 named root cases to the 31 required Node entries and a
+mandatory 13th native check. That check requires four distinct sequential new
+automatic wakes after recovery, with frozen post-recovery counters; earlier
+traffic, manual fallback and batched messages cannot supply acceptance.
+Static checks passed, but application tests, native qualification and independent
+implementation/result review are still pending. Earlier passing evidence does
+not qualify this changed source. Draft
 [PR #410](https://github.com/rore/Pallium/pull/410) contains the earlier visible-wake
 contribution and remains unqualified. The task owner prioritizes the actual local
 failure, including already-compacted anchors, over more hosted-test correction.
