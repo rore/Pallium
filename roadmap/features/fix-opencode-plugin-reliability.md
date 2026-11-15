@@ -126,18 +126,19 @@ The existing developer owns the root correction in
 `.agent-workflow/tasks/opencode-wake-anchor-retirement.md`. Its corrected plan
 passed technical review, and the task owner's human approval carries forward.
 Root source was independently reviewed and published as
-`a4a040c6eb38268139c6713553c22850fd86464d` in draft
+`55d61d3fc22193c276a46a08f326b527e3863b7d` in draft
 [PR #410](https://github.com/rore/Pallium/pull/410). Its test source adds 12 named
 root cases to the 31 required Node entries and a
 mandatory 13th native check. That check requires four distinct sequential new
 automatic wakes after recovery, with frozen post-recovery counters; earlier
 traffic, manual fallback and batched messages cannot supply acceptance.
-The separately budgeted corrected-root attempt failed at package validation;
+The fifth, separately budgeted corrected-root attempt failed at package validation;
 native recovery remains unexecuted and unqualified. The task owner prioritizes
 the actual local failure, including already-compacted anchors. Reviewed bounded
 diagnostic hunks were integrated without replacing the root inventories or
 publishing raw logs. The original diagnostic checkout/evidence remain preserved.
-That execution budget is closed; no fifth attempt or unchanged retry is authorized.
+All five execution budgets are closed. No sixth attempt, unchanged retry, root-source
+push, relabel, merge or live change is authorized.
 Full recovery and the local incident remain open.
 Preserve the OC-1 outcome and regression matrix below. Activation settlement is
 not downstream task completion.
@@ -194,8 +195,70 @@ including all 46 HTTP-file, 27 workflow and 19 protected-contract cases. Python
 3.13 stopped at an unchanged dashboard test returning HTTP 503 instead of 200;
 its cause, independence and flakiness remain unproved. Windows smoke and governance
 passed; aggregate CI failed. The [same result receipt](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488)
-preserves all earlier evidence. Independent actual-result review remains pending.
+preserves all earlier evidence. Independent actual-result review completed with
+HOLD / NOT QUALIFIED; the manager accepted that failed-result disposition.
 No source retry, merge, live change or incident recovery is accepted.
+
+The fifth [qualification](https://github.com/rore/Pallium/actions/runs/43700268471)
+at `55d61d3f` also failed at package validation. Its non-record source is identical
+to independently source-reviewed `9ba27e98`. Both exact baseline RED and candidate
+focused GREEN gates passed. Both actual extractor/oracle preflights passed before
+the package ran. Package results were 217 recorded cases, one failure and seven
+existing skips. All 43 required entries passed, including the two fourth-attempt
+failures, but the whole package still failed. The unchanged caller test
+`replaced scope generation fences an older response inside the same entry`
+received unexpected Relay context on an ordinary input expected to stay unchanged.
+Its Node runtime locator is missing; a source reference is not a retained runtime
+file/line or proof of an exclusive cause. The unchanged test remains mandatory.
+
+Native and qualification HTTP were skipped: zero observed native 13-check journey
+or qualification HTTP25 evidence. Compaction/restore, fresh ordinary recovery,
+original-payload non-replay and four distinct sequential NEW automatic wakes have
+not passed. Official OpenCode 2.2.7 pins, all seven source hashes, unchanged
+source/binary bookends and normal/final drain were verified, but cannot substitute
+for that journey. The inspected safe qualification artifact is `14155604687`.
+
+Fifth [ordinary CI](https://github.com/rore/Pallium/actions/runs/43700194523)
+also failed overall. Python 3.13 passed the full non-slow suite: 9,142 passed,
+106 skipped and two xfails. Python 3.12 stopped at 6,750 passed, one failure,
+37 skipped and two xfails. Its failure was
+`test_modeled_summary_turn_refuses_real_writer_contention[sqlite-semantic]`:
+the prerequisite admission audit reported started 0, expected 1. Its later
+contention assertions were not established. The files are unchanged and the same
+case passed in current Python 3.13; cause, independence and flakiness remain unknown.
+Both Linux artifacts passed all 46 HTTP-file cases, the exact 25 required HTTP
+names, 27 workflow and 19 protected-contract cases, plus the extractor/oracle checks.
+The historical dashboard case passed both current lanes; its earlier 503 cause is
+still unresolved. Windows smoke and all three governance runs passed. All owned
+jobs completed within their original caps, without cancellation, retry or a
+remaining observer. These partial passes do not make aggregate CI green.
+
+Independent fifth actual-result/evidence review completed with HOLD / NOT QUALIFIED.
+The manager accepts the evidence as a failed result, not recovery. The
+[same receipt](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488)
+retains all five histories. A clean result-only successor remains unpushed; draft
+PR410 remains at `55d61d3f`. No root fix has merged or reached the installed host.
+
+The existing developer has adopted a source-only continuation for the failed
+registration contract. Source tracing shows the new shared wake-response guard
+rejecting a higher scope before the existing `remember()` reset can abort older
+requests. This identifies a correction direction, not a recovered runtime locator
+or exclusive campaign diagnosis. Restore valid monotonic registration invalidation
+through the existing reset path without accepting an old request's wake body under
+the new scope. Preserve the original test's unchanged-context, zero-ACK and
+future-poll-scope assertions, cache revisions, stale-response rejection, witness
+fences and replacement-flight isolation. The existing architect completed the
+bounded read-only compatibility comparison. It confirmed that the omitted reset
+also fences ordinary claims, context and assistant captures. Registration freshness
+must be checked separately from wake-cache freshness: intervening same-binding
+wake/null progress must not hide valid higher-scope invalidation. Discard that old
+request's wake body after reset; only a fresh new-scope request can obtain wake
+authority. Keep revision protection for all same-scope wake acceptance. The manager
+accepted and forwarded these findings for consolidation, not as source or runtime
+GO for the evolving correction. Obtain the same independent reviewer's narrow
+source disposition before choosing any later validation budget. No sixth campaign
+is released by this source-only continuation. The local automatic-wake incident
+remains open.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
