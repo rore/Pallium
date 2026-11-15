@@ -734,10 +734,27 @@ export default {...production,setup:async ctx=>{
             root_prompts = all_ids.count(missing_wake["native_input_id"])
             root_attempts = client.get("/relay/messages/" + missing["message_id"], params=scope).json()["deliveries"][0]["attempts"]
             assert root_acks == root_admissions == root_prompts == root_attempts == 1
+            original_payload = "MISSING_PROOF_PAYLOAD_שלום"
+            recovery_context = api("GET", prefix + "/context")["data"]
+            assert original_payload not in json.dumps(recovery_context, ensure_ascii=False), "fixture compaction must remove the original payload, not retain it as ordinary history"
+            # Original no-replay baseline is BEFORE U, unlike the new automatic
+            # suffix boundary below. Recovery itself must not inflate this count.
+            root_payload_count = sum(original_payload in json.dumps(body, ensure_ascii=False) for body in requests)
+
+            def assert_no_original_presentation(bodies):
+                assert sum(original_payload in json.dumps(body, ensure_ascii=False) for body in bodies) == root_payload_count, "original payload re-presented during recovery or automatic suffix"
+
+            # Negative control changes provider evidence only: no extra ACK,
+            # admission, prompt or claim attempt can help detect this replay.
+            replay = {"messages": [{"role": "user", "content": original_payload}],
+                      "fixture_input_id": "msg_fresh_recovery_ordinary"}
+            with pytest.raises(AssertionError, match="original payload re-presented"):
+                assert_no_original_presentation([*requests, replay])
             api("POST", prefix + "/prompt", {"id": "msg_fresh_recovery_ordinary",
                 "text": "fresh ordinary work 界 😀", "delivery": "queue"})
             api("POST", "/api/experimental/session/" + session + "/wait")
             root_terminal = eventually(lambda: wake_rows("terminal", missing_delivery))[-1]["request"]
+            assert_no_original_presentation(requests)
             assert root_terminal["owner_id"] == current_owner
             assert root_terminal["native_input_id"] == missing_wake["native_input_id"]
             assert root_terminal["generation"] == missing_wake["generation"]
@@ -752,7 +769,6 @@ export default {...production,setup:async ctx=>{
 
             # Freeze AFTER root G/T. No earlier latch/backlog/admission may count.
             wake_boundary, observation_boundary, request_boundary = len(wake_responses), len(observations()), len(requests)
-            root_payload_count = sum("MISSING_PROOF_PAYLOAD_שלום" in json.dumps(body, ensure_ascii=False) for body in requests)
             earlier_ids = {row["inputID"] for row in observations() if row["kind"] == "wake.prompt"}
             earlier_generations = {row["request"]["generation"] for row in wake_rows("admitted")}
             ack_boundary = len(retirement_acks)
@@ -796,7 +812,7 @@ export default {...production,setup:async ctx=>{
             assert len([row for row in observations() if row["kind"] == "wake.prompt" and row["inputID"] == missing_wake["native_input_id"]]) == root_prompts
             assert client.get("/relay/messages/" + missing["message_id"], params=scope).json()["deliveries"][0]["attempts"] == root_attempts
             assert len(wake_rows("terminal", missing_delivery)) == 1
-            assert sum("MISSING_PROOF_PAYLOAD_שלום" in json.dumps(body, ensure_ascii=False) for body in requests) == root_payload_count
+            assert_no_original_presentation(requests)
             assert not any(row["kind"] == "wake.interrupt" for row in observations())
             coalesced_summary["fresh_supersession_reload_recovery"] = True
             api("DELETE", prefix)
