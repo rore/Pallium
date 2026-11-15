@@ -125,19 +125,19 @@ evidence, not runtime qualification or observed recovery.
 The existing developer owns the root correction in
 `.agent-workflow/tasks/opencode-wake-anchor-retirement.md`. Its corrected plan
 passed technical review, and the task owner's human approval carries forward.
-Root source `f68e82496d1c25b59ec8dca0979e08abb1fb6406` is authored on an isolated
-branch from the published candidate, but remains unpushed and unexecuted. Its
-test source adds 12 named root cases to the 31 required Node entries and a
+Root source was independently reviewed and published as
+`a4a040c6eb38268139c6713553c22850fd86464d` in draft
+[PR #410](https://github.com/rore/Pallium/pull/410). Its test source adds 12 named
+root cases to the 31 required Node entries and a
 mandatory 13th native check. That check requires four distinct sequential new
 automatic wakes after recovery, with frozen post-recovery counters; earlier
 traffic, manual fallback and batched messages cannot supply acceptance.
-Static checks passed, but application tests, native qualification and independent
-implementation/result review are still pending. Earlier passing evidence does
-not qualify this changed source. Draft
-[PR #410](https://github.com/rore/Pallium/pull/410) contains the earlier visible-wake
-contribution and remains unqualified. The task owner prioritizes the actual local
-failure, including already-compacted anchors, over more hosted-test correction.
-Diagnostic-only source is preserved and paused. No fourth campaign is authorized.
+The separately budgeted corrected-root attempt failed at package validation;
+native recovery remains unexecuted and unqualified. The task owner prioritizes
+the actual local failure, including already-compacted anchors. Reviewed bounded
+diagnostic hunks were integrated without replacing the root inventories or
+publishing raw logs. The original diagnostic checkout/evidence remain preserved.
+That execution budget is closed; no fifth attempt or unchanged retry is authorized.
 Full recovery and the local incident remain open.
 Preserve the OC-1 outcome and regression matrix below. Activation settlement is
 not downstream task completion.
@@ -174,6 +174,28 @@ the [first](https://github.com/rore/Pallium/pull/410#issuecomment-6885286594),
 [third](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488) receipts as
 failed campaigns, not new execution authority. No OC-1 merge, installed change
 or incident recovery is claimed.
+
+The fourth, corrected-root [qualification](https://github.com/rore/Pallium/actions/runs/43691537059)
+failed at package validation. Both exact legacy/root baseline assertions were
+observed as expected, and both candidate focused cases passed. Actual extractor
+and replay-oracle checks passed before the package ran. Package results were
+217 cases, two failures and seven existing skips; 41 of 43 required entries passed.
+The failures were `fresh supersession requires observed producer promotion before
+admission` (actual 0, expected 1) and `fresh supersession fences lifecycle and
+backend changes during settlement` (`final-poll/admitted`, actual 1, expected 0).
+No Node file/line was retained. Product-versus-fixture causes are not established;
+source investigation continues without weakening either assertion.
+
+Native and qualification HTTP were skipped: zero native 13-check or qualification
+HTTP25 evidence. Source/binary bookends and owned drain passed, but do not prove
+recovery. In [ordinary CI](https://github.com/rore/Pallium/actions/runs/43691371959),
+Python 3.12 passed the full non-slow suite: 9,142 passed, 106 skipped, two xfails,
+including all 46 HTTP-file, 27 workflow and 19 protected-contract cases. Python
+3.13 stopped at an unchanged dashboard test returning HTTP 503 instead of 200;
+its cause, independence and flakiness remain unproved. Windows smoke and governance
+passed; aggregate CI failed. The [same result receipt](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488)
+preserves all earlier evidence. Independent actual-result review remains pending.
+No source retry, merge, live change or incident recovery is accepted.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
