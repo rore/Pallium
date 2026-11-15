@@ -210,9 +210,11 @@ Backend transactions fence backend changes; they do not create an atomic native
 snapshot or undo an already committed request. Claim/ACK, expiry, original
 delivery priority and continuation rules stay unchanged.
 
-These paths are source candidates, not runtime-qualified recovery. The three
-earlier native qualification failures remain unresolved. Earlier 2.2.7
-discovery-only evidence does not qualify settlement or recovery after compaction.
+These paths are source candidates, not runtime-qualified recovery. Three earlier
+qualification campaigns failed. The first two skipped native execution; only the
+third executed and failed native, with its failure predicate/cause still unknown.
+Earlier 2.2.7 discovery-only evidence does not qualify settlement or recovery
+after compaction.
 The extended witness requires four distinct NEW sequential automatic wakes after
 recovery, not an earlier cumulative backlog latch or batched payload count.
 Full wake-anchor

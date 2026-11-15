@@ -1011,11 +1011,15 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
   for (const stage of ["wait", "postwait-get", "postwait-context", "final-poll", "final-get", "final-context"])
     for (const fault of ["dispose", "compaction-hook", "compaction-event", "move", "revert-staged", "revert-cleared", "revert-committed", "shutdown", "delete", "archive",
     "subscription-end", "subscription-error", "endpoint", "scope", "generation", "delivery", "input", "terminal", "admitted", "owner", "location", "native-session", "native-revert"]) {
-    const gate = barrier(); let changed = false, waitEnded = false, fenced = false, contexts = 0;
+    const gate = barrier(); let changed = false, waitEnded = false, fenced = false, contexts = 0, heldGets = 0, getCalls = 0;
     const f = await callerFixture({ wake: snapshot({ admitted: true }),
       wait: async (history) => { if (stage === "wait") await gate.wait(); history.push(freshIdle()); waitEnded = true; },
       get: async ({ sessionID: id }) => {
-        if (waitEnded && !fenced && stage === "postwait-get" || fenced && stage === "final-get") await gate.wait();
+        getCalls++;
+        if (!heldGets && (waitEnded && !fenced && stage === "postwait-get" || fenced && stage === "final-get")) {
+          heldGets++; // Hold only the selected verification lookup, not compaction's ownership lookup.
+          await gate.wait();
+        }
         return { id: changed && fault === "native-session" ? "ses_other" : id,
           location: { directory: changed && fault === "location" ? location + "/other" : location },
           ...(changed && fault === "native-revert" ? { revert: { messageID: freshUser().id } } : {}) };
@@ -1045,11 +1049,17 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
       } });
     try {
       await observePrompt(f); f.history.push(freshUser()); await f.tick(); await gate.entered;
+      if (stage.endsWith("-get")) assert.equal(heldGets, 1, "selected verification lookup reached its one-shot barrier");
       assert.equal(terminals(f).length, 0, "no terminal before the held verification boundary");
       changed = true;
       if (fault === "dispose") await f.dispose();
-      else if (fault === "compaction-hook") await f.hooks.compaction({ sessionID });
-      else if (fault === "subscription-end") await f.emit({ fixtureEnd: true });
+      else if (fault === "compaction-hook") {
+        const before = getCalls;
+        await f.hooks.compaction({ sessionID });
+        assert.ok(getCalls > before, "compaction performed its own ownership lookup while verification stayed held");
+        if (stage.endsWith("-get")) assert.equal(heldGets, 1, "compaction must not re-enter the verification barrier");
+        assert.equal(terminals(f).length, 0, "compaction cannot retire before the verification barrier is released");
+      } else if (fault === "subscription-end") await f.emit({ fixtureEnd: true });
       else if (fault === "subscription-error") await f.emit({ fixtureError: true });
       else if (["compaction-event", "move", "delete", "archive", "shutdown"].includes(fault) || fault.startsWith("revert-")) {
         const type = { "compaction-event": "session.compaction.started", move: "session.moved", delete: "session.deleted", archive: "session.archived", shutdown: "session.execution.interrupted" }[fault]
