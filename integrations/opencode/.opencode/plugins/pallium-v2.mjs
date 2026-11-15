@@ -45,7 +45,7 @@ export default {
       if (disposed) return null;
       let item = sessions.get(id);
       if (!item) { item = { busy: false, wakeBusy: false, seen: new Set(), captures: new Set(), completedCaptures: new Set(), lastAssistant: null,
-        roleTurns: new Map(), naturalClaims: new Map(), abort: new AbortController() }; sessions.set(id, item); }
+        roleTurns: new Map(), naturalClaims: new Map(), wakeRevision: {}, abort: new AbortController() }; sessions.set(id, item); }
       return item;
     };
     const live = (id, item, signal = item?.abort.signal) => !disposed && item &&
@@ -85,6 +85,7 @@ export default {
         item.naturalClaims = new Map();
         item.memory = null;
         item.wake = null;
+        item.wakeRevision = {};
       }
       item.endpointId = session.endpoint_id;
       item.scopeGeneration = session.scope_generation;
@@ -108,9 +109,9 @@ export default {
       if (!disposed && payload) await pallium.relayRequest("POST", "/relay/opencode/wake", payload, 500, abort.signal);
     };
     const wakeResponseContext = (id, item) => ({ signal: item.abort.signal, binding: base(id, item),
-      wake: item.wake, witness: item.witness, flight: item.wakeBusy });
+      revision: item.wakeRevision, witness: item.witness, flight: item.wakeBusy });
     const applyWakeResponse = (id, item, request, response) => {
-      if (!live(id, item, request.signal) || item.wake !== request.wake ||
+      if (!live(id, item, request.signal) || item.wakeRevision !== request.revision ||
           !Object.entries(request.binding).every(([key, value]) => base(id, item)[key] === value)) return false;
       const reject = () => {
         if (item.witness === request.witness) item.witness = null;
@@ -133,6 +134,7 @@ export default {
       }
       if (item.witness && !sameWake(item.witness.wake, wake)) item.witness = null;
       item.wake = wake;
+      item.wakeRevision = {}; // Null releases also advance freshness; null itself can recur.
       return true;
     };
     const enroll = async (id, item) => {
