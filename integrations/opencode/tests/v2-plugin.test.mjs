@@ -1153,7 +1153,7 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
       assert.equal(f.native.prompt.length, 0, `${writer}/${fault}`);
     } finally { await f.close(); }
   }
-  for (const writer of ["poll", "enroll"]) for (const stale of ["older", "empty", "released"]) {
+  for (const writer of ["poll", "enroll"]) for (const stale of ["older", "empty", "released", "higher-scope"]) {
     const gate = barrier(), original = snapshot({ admitted: true });
     const newer = snapshot({ admitted: true, generation: 2, native_input_id: "msg_retry_generation" });
     let backend = original, hold = false;
@@ -1164,7 +1164,7 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
           hold = false;
           const captured = stale === "empty" ? null : { ...backend };
           await gate.wait();
-          return { session: relaySession, wake: captured };
+          return { session: stale === "higher-scope" ? { ...relaySession, scope_generation: 1 } : relaySession, wake: captured };
         }
         return { session: relaySession, wake: backend };
       } });
@@ -1189,6 +1189,7 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
       if (stale !== "released") {
         assert.equal(terminals(f)[0].body.generation, 2);
         assert.equal(terminals(f)[0].body.native_input_id, newer.native_input_id);
+        assert.equal(terminals(f)[0].body.scope_generation, 0, "stale higher registration cannot rebind the newer candidate");
       }
       assert.equal(f.native.prompt.length, 0, `${writer}/${stale}: no old native replay`);
     } finally { gate.release(); await f.close(); }
@@ -1276,6 +1277,130 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
       assert.equal(terminals(f).length, 1, `${writer}: replacement flight can finish normally`);
       assert.equal(f.native.prompt.length, 0);
     } finally { oldWait.release(); newWait.release(); await f.close(); }
+  }
+  for (const writer of ["poll", "enroll"]) for (const bodyKind of ["null", "old-wake", "new-wake", "malformed"]) {
+    const turnGate = barrier(), captureGate = barrier(), original = snapshot({ admitted: true });
+    const nextScope = ["new-wake", "malformed"].includes(bodyKind) ? 3 : 1;
+    const replacement = { ...relaySession, scope_generation: nextScope };
+    const carried = bodyKind === "null" ? null : bodyKind === "old-wake" ? original : bodyKind === "malformed" ? {}
+      : snapshot({ scope_generation: nextScope, generation: 2, native_input_id: "msg_scope_reply" });
+    let registration = relaySession, backendWake = original, replace = false, registered = true;
+    let holdTurn = false, deliver = false, turns = 0, captures = 0;
+    const f = await callerFixture({ history: [sourceUser("msg_scope_source"), completedAssistant(), freshIdle()],
+      fetch: async (route, body) => {
+        if (route === "/relay/sessions") return jsonResponse([registration]);
+        if (route === "/items") {
+          const first = ++captures === 1;
+          return { ok: true, text: async () => { if (first) await captureGate.wait(); return JSON.stringify(captureReceipt); } };
+        }
+        if (route === "/relay/opencode/wake" && body.operation === "poll" && body.scope_generation === nextScope && !registered)
+          return { ok: false, status: 409, text: async () => JSON.stringify({ detail: "OpenCode registration is missing or stale" }), body: { cancel: async () => {} } };
+      },
+      response: async (route, body) => {
+        if (route === "/relay/turn") {
+          turns++;
+          const current = registration, batch = deliver ? [delivery] : [];
+          if (holdTurn) { holdTurn = false; await turnGate.wait(); }
+          return { session: current, deliveries: batch };
+        }
+        if (route === "/relay/deliveries/ack") return { delivery_id: body.delivery_id, state: "delivered", already_delivered: false };
+        if (route !== "/relay/opencode/wake") return;
+        if (replace && body.operation === writer) {
+          replace = false; registration = replacement; backendWake = null; registered = false;
+          return { session: replacement, wake: carried };
+        }
+        if (body.operation === "enroll" && body.scope_generation === nextScope) registered = true;
+        if (body.operation === "admitted") backendWake = { ...backendWake, admitted: true };
+        if (body.operation === "terminal") backendWake = { ...backendWake, terminal: true };
+        if (body.operation === "poll" && backendWake?.terminal) backendWake = null;
+        return { session: registration, wake: backendWake };
+      }, wait: async (history) => history.push({ type: "idle", id: "msg_scope_terminal", outcome: "succeeded" }) });
+    const oldCapture = f.hooks.compaction({ sessionID });
+    let running;
+    try {
+      await captureGate.entered;
+      const captureCall = f.calls.filter((c) => c.path === "/items").at(-1);
+      const user = natural("msg_scope_context"), before = structuredClone(user), initialTurns = turns;
+      deliver = true; holdTurn = true;
+      running = f.hooks.context({ sessionID, messages: [user] });
+      await turnGate.entered;
+      const turnCall = f.calls.filter((c) => c.path === "/relay/turn").at(-1);
+      replace = true;
+      if (writer === "poll") await f.tick();
+      else await f.emit({ type: "session.created", data: { sessionID } });
+      assert.equal(turnCall.signal.aborted, true, `${writer}/${bodyKind}: positive replacement retires old ordinary transport`);
+      assert.equal(captureCall.signal.aborted, true, `${writer}/${bodyKind}: positive replacement retires old capture transport`);
+      for (const wake of [original, carried].filter((w) => w?.native_input_id)) {
+        const input = { ...projectedWake(), id: wake.native_input_id,
+          metadata: { pallium_relay_wake: true, generation: wake.generation, delivery_id: wake.delivery_id } };
+        await assert.doesNotReject(() => f.hooks.context({ sessionID, messages: [input] }));
+      }
+      assert.equal(f.calls.filter((c) => c.body.operation === "context").length, 0, "replacement invalidates registration without accepting ANY carried wake body");
+      assert.equal(f.native.prompt.length, 0); assert.equal(terminals(f).length, 0);
+      assert.equal(f.calls.filter((c) => c.path === "/relay/deliveries/ack").length, 0);
+      await f.tick(); // New binding receives exact missing-registration409 and enrolls itself.
+      assert.equal(f.calls.filter((c) => c.body.operation === "poll").at(-1).body.scope_generation, nextScope);
+      assert.ok(f.calls.some((c) => c.body.operation === "enroll" && c.body.scope_generation === nextScope));
+      await f.hooks.compaction({ sessionID }); // Old capture reservation/cache cannot suppress current capture.
+      assert.equal(captures, 2);
+      await f.hooks.context({ sessionID, messages: [structuredClone(before)] }); // Same user ID needs a NEW claim after replacement.
+      assert.equal(turns, initialTurns + 2);
+      assert.equal(f.calls.filter((c) => c.path === "/relay/deliveries/ack").length, 1);
+      turnGate.release(); captureGate.release(); await Promise.all([running, oldCapture]);
+      assert.deepEqual(user, before, "old context cannot revive after newer claim commits");
+      await f.hooks.context({ sessionID, messages: [structuredClone(before)] });
+      await f.hooks.compaction({ sessionID });
+      assert.equal(turns, initialTurns + 2, "old response cannot erase successor claim cache");
+      assert.equal(captures, 2, "old capture finally/receipt cannot erase or complete successor capture state");
+      assert.equal(f.calls.filter((c) => c.path === "/relay/deliveries/ack").length, 1);
+      backendWake = snapshot({ scope_generation: nextScope, generation: 4, native_input_id: "msg_scope_recovered" });
+      await f.tick();
+      assert.deepEqual(f.native.prompt.map((p) => p.id), ["msg_scope_recovered"], "only a FRESH new-scope snapshot may start a new wake");
+      assert.equal(terminals(f).length, 1); assert.equal(terminals(f)[0].body.scope_generation, nextScope);
+      assert.equal(f.calls.filter((c) => c.body.operation === "admitted").length, 1);
+      await f.tick(); assert.equal(backendWake, null, "new-scope terminal release remains usable");
+    } finally { turnGate.release(); captureGate.release(); await running; await oldCapture; await f.close(); }
+  }
+  for (const writer of ["poll", "enroll"]) for (const fault of ["lower", "negative", "fraction", "string", "missing", "runtime", "session", "container", "endpoint", "state", "health"]) {
+    const gate = barrier(); let registration = relaySession, advance = false, invalid = false, hold = false;
+    const current = { ...relaySession, scope_generation: 1 }, bad = { ...relaySession, scope_generation: 2 };
+    if (fault === "lower") bad.scope_generation = 0;
+    if (fault === "negative") bad.scope_generation = -1;
+    if (fault === "fraction") bad.scope_generation = 1.5;
+    if (fault === "string") bad.scope_generation = "2";
+    if (fault === "missing") delete bad.scope_generation;
+    if (fault === "runtime") bad.runtime = "codex";
+    if (fault === "session") bad.session_ref = "ses_other";
+    if (fault === "container") bad.container_ref = "other";
+    if (fault === "endpoint") bad.endpoint_id += "f";
+    if (fault === "state") bad.state = "closed";
+    if (fault === "health") bad.destination_health = "inactive";
+    const f = await callerFixture({ fetch: async (route) => route === "/relay/sessions" ? jsonResponse([registration]) : undefined,
+      response: async (route, body) => {
+        if (route === "/relay/turn") { const session = registration; if (hold) { hold = false; await gate.wait(); } return { session, deliveries: [delivery] }; }
+        if (route === "/relay/deliveries/ack") return { delivery_id: body.delivery_id, state: "delivered", already_delivered: false };
+        if (route !== "/relay/opencode/wake") return;
+        if (advance && body.operation === "poll") { advance = false; registration = current; }
+        if (invalid && body.operation === writer) { invalid = false; return { session: bad, wake: null }; }
+        return { session: registration, wake: null };
+      } });
+    let running;
+    try {
+      advance = true; await f.tick();
+      hold = true;
+      const user = natural("msg_scope_reject"), before = structuredClone(user);
+      running = f.hooks.context({ sessionID, messages: [user] }); await gate.entered;
+      const call = f.calls.filter((c) => c.path === "/relay/turn").at(-1);
+      invalid = true;
+      if (writer === "poll") await f.tick(); else await f.emit({ type: "session.created", data: { sessionID } });
+      assert.equal(call.signal.aborted, false, `${writer}/${fault}: invalid/lower/foreign registration cannot reset the current lifetime`);
+      gate.release(); await running;
+      assert.notDeepEqual(user, before, `${writer}/${fault}: valid current claim remains usable`);
+      assert.equal(f.calls.filter((c) => c.path === "/relay/deliveries/ack").length, 1);
+      await f.tick();
+      assert.equal(f.calls.filter((c) => c.body.operation === "poll").at(-1).body.scope_generation, 1, `${writer}/${fault}: no binding downgrade`);
+      assert.equal(f.native.prompt.length, 0); assert.equal(terminals(f).length, 0);
+    } finally { gate.release(); await running; await f.close(); }
   }
   const first = snapshot({ admitted: true, terminal: true });
   let backend = first;
