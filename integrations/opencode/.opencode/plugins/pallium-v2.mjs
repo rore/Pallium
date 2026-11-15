@@ -111,9 +111,10 @@ export default {
     const wakeResponseContext = (id, item) => ({ signal: item.abort.signal, binding: base(id, item),
       revision: item.wakeRevision, witness: item.witness, flight: item.wakeBusy });
     const applyWakeResponse = (id, item, request, response) => {
-      if (!live(id, item, request.signal) || item.wakeRevision !== request.revision ||
+      if (!live(id, item, request.signal) ||
           !Object.entries(request.binding).every(([key, value]) => base(id, item)[key] === value)) return false;
       const reject = () => {
+        if (item.wakeRevision !== request.revision) return false;
         if (item.witness === request.witness) item.witness = null;
         // Cancel this flight, never a newer one started while HTTP was pending.
         if (item.wakeBusy === request.flight) item.wakeBusy = false;
@@ -124,10 +125,12 @@ export default {
           session.endpoint_id !== request.binding.endpoint_id || !Number.isInteger(session.scope_generation) ||
           session.scope_generation < request.binding.scope_generation ||
           session.state !== "recent" || session.destination_health !== "active") return reject();
+      // Cache progress cannot hide a valid registration replacement.
       if (session.scope_generation > request.binding.scope_generation) {
         remember(id, item, session); // Invalidate the old lifetime, never adopt this old request's wake body.
         return false;
       }
+      if (item.wakeRevision !== request.revision) return false;
       if (wake !== null) {
         if (!validInput(wake?.native_input_id) || !validDelivery(wake?.delivery_id) || !Number.isInteger(wake?.generation) || wake.generation < 1 ||
             wake.scope_generation !== request.binding.scope_generation || !sameLocation(wake.native_location, request.binding.native_location) ||
