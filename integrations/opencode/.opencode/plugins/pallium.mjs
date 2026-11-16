@@ -178,9 +178,11 @@ export default async ({ client, directory, worktree } = {}) => {
     const currentScope = () => live(id, life) && pallium.getPinnedContainer(id) === pinned;
     check(currentScope);
     const refs = structural ? await pallium.deriveGitRefs(cwd, signal) : null;
-    check(currentScope);
     const containerRef = orient || !pinned
       ? refs?.containerRef || await pallium.deriveContainerRef(cwd, signal) : pinned;
+    // A sibling may publish this same derived pin while Git awaits. The
+    // original live Map and every later container/actor check still apply.
+    if (pinned === null && pallium.getPinnedContainer(id) === containerRef) pinned = containerRef;
     check(currentScope);
     if (pin) {
       pallium.pinContainer(id, containerRef, undefined);

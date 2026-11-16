@@ -35,7 +35,7 @@
 
 **Approvals:** Approved by user 2026-11-16: "you have approval to drive this till end". This minimal task-authorization excerpt preserves the existing approval; its full context remains private. The manager assigned this existing issue, accepted the narrow H1 marker ceiling and released the conditional hosted envelope below. No local application execution/live changes/cleanup/old OC1 retry or unapproved cap/job changes.
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Assignment and preserved work
@@ -207,6 +207,13 @@ The single admitted [qualification run43970083380](https://github.com/rore/Palli
 
 Only the existing sanitized summary was downloaded and its archive digest verified. Runtime failure locators are missing in that summary. The references below are static source locations, not claimed runtime frames. Both campaign admissions are exhausted. The original observer finished normally and is not restarted or reused. No failed case is waived, skipped or called unrelated/flaky.
 
+| Failed case | Retained assertion evidence |
+|---|---|
+| V1 retries of one in-flight native message share one immutable Relay snapshot | Zero Relay turns observed where one was required |
+| V1 same-ID retry after ingestion failure reuses the captured turn snapshot | The two capture IDs include the preceding case's source instead of two intended retry sources |
+| V1 lifetime authority covers every first entry and keeps retired callbacks inert | Required nonempty system output was empty |
+| assistant ownership helper cannot mark a rebound lifetime as captured | Required successor-generation enrollment was not observed |
+
 ### Concrete static causes recorded before repair
 
 1. **V1 concurrent retry fixture and real matching-pin rejection.** The old retry test in `integrations/opencode/tests/plugin.test.mjs` waits one `setImmediate`, then assumes Git discovery has reached `/relay/turn`. Native asynchronous Git has no such scheduling guarantee. Its failed assertion exits without releasing/joining the two callbacks. `installFetch` replaces shared fetch state for the next test, so those old callbacks can write into that test's capture array. The observed foreign source ID in the next failed retry case is consistent with this exact leak path.
@@ -228,3 +235,13 @@ The same independent reviewer completed the immutable failed-result review: HOLD
 The local continuation will change only this Work Record, `integrations/opencode/tests/plugin.test.mjs`, `integrations/opencode/tests/v2-plugin.test.mjs` and `integrations/opencode/.opencode/plugins/pallium.mjs`. Cause record first, test-only commit next, then the necessary V1 helper change. Published bb9 remains frozen. Common/V2 production, OC1 proof/native/HTTP files, workflow, inventories and caps stay unchanged.
 
 Test-first repair authored: the original V1 concurrent retry case now waits for real Relay entry and always releases/joins both callbacks. Its cold and pinned modes retain one immutable claim, two identical captures and role/source assertions. Held real-Git modes exercise a sibling's matching pin and selected actor, conflicting discovery, pin removal and identical-pin successor retirement. The lifecycle case separately asserts retained no-ID duplicate abstention and model-bound scope, then uses fresh successor content for positive memory output. The V2 case waits for enrollment after the seed turn, arms only generation1 and observes successor enrollment before releasing the old capture. Existing case names and inventories stay unchanged. Syntax-only checks passed before this test-only commit; these cases have not been executed.
+
+### Local successor source and static verification
+
+Cause record39823b87 precedes test-first cd331eed and the additional held-child assertion ca319954. The V1 helper change follows those commits. It removes the premature strict-pin check between structural derivation and container selection. There is no second yield on that structural path: its already-resolved container is used directly. After either derivation path, only an original null pin that now equals the derived container is adopted locally. The existing live-Map check then runs before pin writes, actor resolution or HTTP. Originally nonnull pins still require equality, including removal rejection. All later actor selection/coherence checks remain exact.
+
+Static checks passed: syntax-only checks for the three edited JavaScript files; AST parsing of affected Python and the embedded exporter; exact functional baseline, privacy, case-name/order and four-path repair checks. Common/V2 production, every other V1 body, native/HTTP sources, OC1 proof/reservation code, workflow, strict4/all45/async18 inventories and caps match bb9. The held-child assertion requires the real child to remain live when its sibling publishes the pin, so autonomous child expiry cannot silently satisfy that control.
+
+Whole-change Workflow is clean0. Redline is GRAY/advisory1, zero boundary violations/checkpoints and no protected-test changes. Its unchanged graph evidence is the already authenticated reuse, not a new graph execution. The nine application trees and four graph inputs still match. The whole-change selector reports FULL and `python -m pytest tests/ -x -q`; that application command was not run. Local application imports/tests/collection/probes/native hosts and live operations remain prohibited.
+
+State is Blocked on exact successor SOURCE review by the same independent reviewer and the parent's new changed-candidate validation disposition. The minimum local repair is complete, not runtime-qualified. PR415 stays frozen at bb9, both original admissions remain spent and no push/rerun/label cycle occurred. The parent owns canonical roadmap reconciliation; its failed-result update at90cf676f remains authoritative. README still reports pending OC6 qualification. Preserve all checkouts and evidence for review; no cleanup is authorized.
