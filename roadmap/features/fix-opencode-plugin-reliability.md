@@ -359,8 +359,9 @@ auxiliary responses bypassing the primary gate, and executable checks of the act
 observer's negative and failure-safe cleanup paths. The API floor, explicit-title
 precondition and need for at most one fixture observer are supported.
 
-The owner must amend only those three points in the existing record and obtain
-the same architect's narrow closure. After exact PLAN GO, the manager's conditional
+The owner amended those three points in record-only `a0e9af4b` and requested
+the same architect's narrow closure; that disposition remains pending.
+After exact PLAN GO, the manager's conditional
 source-only release permits the existing README, qualification workflow, native
 fixture, workflow contracts and Work Record changes without another routine
 approval stop. Production plugin/helper/backend/API/package caller source stays
@@ -368,6 +369,24 @@ exact `f80df956`. Independent patch review still follows. No source edit is rele
 while PLAN HOLD remains, and no seventh run, publication, timeout increase,
 assertion weakening, diagnostic expansion or live change is authorized.
 Full recovery remains open.
+
+### Additional live empty-wake report (2026-11-16)
+
+A downstream session reported `Pallium internal wake has no current Relay work`.
+Read-only existing trace/status evidence confirms one delivery attempt and a
+durable ACK. The activation receipt was recorded later; that is not proof of
+native execution ordering or an exclusive overtaken-wake cause. Exact identifiers,
+scope and evidence remain private; no downstream project payload is copied here.
+
+The caller contract already expects this visible refusal for an empty committed
+wake and requires newer ordinary work to remain usable. Do not weaken that guard
+merely to remove the error. The user reports uncertain message recognition, not
+confirmed task interruption. The supplied status excerpt is only the final body
+page; it does not establish whether earlier pages were available or read.
+Receipt, complete body availability, understanding and task completion remain
+separate facts. Error-to-generation correlation, loaded identity and actual task
+effect are unresolved. No resend, manual receive/ACK, live change or expansion of
+the current fixture-only source scope is authorized by this report.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
