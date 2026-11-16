@@ -35,7 +35,7 @@
 
 **Approvals:** Approved by user 2026-11-16: "you have approval to drive this till end". This minimal task-authorization excerpt preserves the existing approval; its full context remains private. The manager assigned this existing issue, accepted the narrow H1 marker ceiling and released the conditional hosted envelope below. No local application execution/live changes/cleanup/old OC1 retry or unapproved cap/job changes.
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Assignment and preserved work
@@ -245,3 +245,11 @@ Static checks passed: syntax-only checks for the three edited JavaScript files; 
 Whole-change Workflow is clean0. Redline is GRAY/advisory1, zero boundary violations/checkpoints and no protected-test changes. Its unchanged graph evidence is the already authenticated reuse, not a new graph execution. The nine application trees and four graph inputs still match. The whole-change selector reports FULL and `python -m pytest tests/ -x -q`; that application command was not run. Local application imports/tests/collection/probes/native hosts and live operations remain prohibited.
 
 State is Blocked on exact successor SOURCE review by the same independent reviewer and the parent's new changed-candidate validation disposition. The minimum local repair is complete, not runtime-qualified. PR415 stays frozen at bb9, both original admissions remain spent and no push/rerun/label cycle occurred. The parent owns canonical roadmap reconciliation; its failed-result update at90cf676f remains authoritative. README still reports pending OC6 qualification. Preserve all checkouts and evidence for review; no cleanup is authorized.
+
+### Narrow readiness HOLD and local correction
+
+The same independent reviewer returned SOURCE HOLD on dc051787 for one P2 test-helper finding. The parent accepted it. The original V1 concurrent retry case awaits `gate.started` before creating its Relay-route watchdog. Shared `heldGit` resolves readiness only on stdout data. A missed interception, child error or close before output therefore leaves that await pending. The child's autonomous exit does not settle it, so release/join and built-in restoration can remain unreachable. This is a source-visible negative-path hole, not an observed runtime hang. No product or other-control finding was raised.
+
+Before further test edits, the exact minimum correction is recorded here: change only this Work Record and `integrations/opencode/tests/plugin.test.mjs`. Give the existing shared helper a cancellable readiness watchdog, named rejection for never-entered/error/close-before-output, immediate rejection handling for setup failure before await, and timer/listener disposal on every outcome. Preserve unconditional gate/turn release, both callback joins, owned-child close and built-in restoration. Add caller-driven never-entered/early-close/error controls and a setup-failure control inside the existing case, asserting named failure and cleanup/restoration. Keep every reviewed positive mode and child-still-alive proof. Do not increase sleeps, phase caps or inventories, add a runner, or alter any production/V2/common/OC1/native/HTTP/workflow source.
+
+Existing High/Moderate and plan authority cover this correction without another human or architecture gate. Preserve dc051787 and all earlier history. Local checks remain static-only; no runtime failure or successful correction is claimed. Exact successor review is limited to this readiness/negative-cleanup delta and verification that previously reviewed blobs remain unchanged. Both original admissions are still exhausted; no publication or execution envelope is released.
