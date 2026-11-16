@@ -21,7 +21,7 @@
 
 **Complexity:** Moderate
 
-**Reason:** High/Moderate retained for scope/actor pin authority and OC1 causal/lifetime boundaries. Independent PLAN/MAPPING and exact authored PATCH SOURCE reviews are GO. Empty retired marker cost is explicit O(deleted IDs), not globally bounded memory. Clean publication preparation changes only owning-record privacy/provenance and format. Runtime/result review and final parent safe-ancestry acceptance remain.
+**Reason:** High/Moderate retained for scope/actor pin authority and OC1 causal/lifetime boundaries. The first changed-source qualification failed four caller/package cases. The task owner authorized bounded static diagnosis and minimum local repair after recording concrete causes. Existing plan and assertions remain authoritative; exact successor source review and a new changed-candidate validation disposition are required before any further push or run.
 
 **Discovery:** Independent OC-6 source/caller inventory consumed and retained privately. Baseline common44 runs execFileSync; repository172/container193/actor207/resolve296-305 and orientation1150-1200 are affected. V1 orientation/assistant/tool/chat/deletion and V2 scope/base/current/restore/discovery/capture/context/natural turns reach them. V1/V2 and stable-actor embedded JS callers were inspected against9ab; no product drift from accepted9a. Windows work-reference discovery already avoids Git and stays unchanged. Discovery is source evidence, not measured live latency.
 
@@ -35,7 +35,7 @@
 
 **Approvals:** Approved by user 2026-11-16: "you have approval to drive this till end". This minimal task-authorization excerpt preserves the existing approval; its full context remains private. The manager assigned this existing issue, accepted the narrow H1 marker ceiling and released the conditional hosted envelope below. No local application execution/live changes/cleanup/old OC1 retry or unapproved cap/job changes.
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Assignment and preserved work
@@ -113,7 +113,7 @@ Reviewer explicitly accepts this ordered real-child/production-caller evidence a
 
 ## Current next action
 
-Clean publication snapshots and local static preflights are complete. Parent to finish final safe-ancestry acceptance of the immutable candidate, then proceed with the already-authorized single publication/ordinary cohort and conditional same-head qualification. Independent actual-result review and combined acceptance remain. No new plan, source or human approval gate is requested.
+Make only the bounded local repair recorded below: correct the V1 retry barrier/drain and no-ID dedup fixture, correct the generation-specific V2 rebound fence, and allow only a matching pin installed within the same original live V1 lifetime. Preserve all accepted assertions and rejection fences. Obtain exact successor source review and parent changed-candidate validation disposition. No further push, label cycle or run is authorized.
 
 Static pre-review checks PASS for exact baseline/context/relationships, first-step Workflow ordering, scope/privacy and unchanged product/test/workflow/README/old OC1 record against9ab. Current self confirmed unnamed; exact Minimap CLI tuple matches existing explicit feature association, reused without duplicate attachment. Intended-path Redline GRAY/no boundary/checkpoint/protected-path edit, with High judgment for authority/proof risk. Static Workflow initially blocks on the not-yet-committed new baseline and the intentionally pending High technical plan review; first record commit resolves only baseline provenance, not review. No application code imported or tests executed. Evidence stays ignored under build/oc6-plan-20261116/.
 
@@ -197,4 +197,32 @@ Actual whole-change Redline is GRAY/advisory1, with zero boundary violations and
 
 All six changed JavaScript modules and the inline H2 child pass syntax-only checks. Changed Python and embedded exporter AST checks pass. All qualification PowerShell blocks parse without execution. Original native/HTTP files and phases, original3/all44 plus strict4/all45, separate async18 inventory and original caps are verified unchanged or exactly mapped. Evidence is retained under ignored `build/oc6-publication-20261116/`.
 
-State is Blocked only on the parent's final safe-ancestry acceptance and the pending hosted runtime/result gates. No publication, ordinary cohort, qualification label/cycle, local application import/test/probe, native host or installed operation has occurred. The bounded hosted budget is unspent.
+At that publication-preparation checkpoint, State was Blocked on the parent's final safe-ancestry acceptance and hosted runtime/result gates. No publication or hosted admission had yet occurred. The later failure and consumed budgets are recorded below.
+
+## First qualification failure and bounded repair
+
+The publication and ordinary entry gates subsequently passed. [PR415](https://github.com/rore/Pallium/pull/415) remains at bb9c36d5761c0d66d56800f19a1a318ed4078565. Both ordinary Linux lanes completed with 9,190 passed, zero failures, 106 skipped and two expected failures. Each passed the affected actor lifecycle, 30 workflow checks and 19 protected checks unskipped. Windows smoke and fresh boundary/governance passed. The parent accepted this ordinary entry evidence, not Node/native qualification.
+
+The single admitted [qualification run43970083380](https://github.com/rore/Pallium/actions/runs/43970083380), job133659622916, failed. The observer reported 143 seconds from admission; the independent review found 126 seconds between API creation and completion. Actual strict4 expected RED and focused4 GREEN passed. The full package had237 cases:226 passed, four failed and seven existing skips. All45 required entries passed; the separate async18 inventory had17 passed and one failed. Native and HTTP phases were skipped and remain unqualified. Source11/binary bookends and normal/final drain passed. The source export hashes match the explicit Windows CRLF projection of the immutable Git blobs, not raw LF blob hashes.
+
+Only the existing sanitized summary was downloaded and its archive digest verified. Runtime failure locators are missing in that summary. The references below are static source locations, not claimed runtime frames. Both campaign admissions are exhausted. The original observer finished normally and is not restarted or reused. No failed case is waived, skipped or called unrelated/flaky.
+
+### Concrete static causes recorded before repair
+
+1. **V1 concurrent retry fixture and real matching-pin rejection.** The old retry test in `integrations/opencode/tests/plugin.test.mjs` waits one `setImmediate`, then assumes Git discovery has reached `/relay/turn`. Native asynchronous Git has no such scheduling guarantee. Its failed assertion exits without releasing/joining the two callbacks. `installFetch` replaces shared fetch state for the next test, so those old callbacks can write into that test's capture array. The observed foreign source ID in the next failed retry case is consistent with this exact leak path.
+
+   A separate product error is demonstrated by a permitted source interleaving in V1 `identity()`: two callbacks capture the same live Map L and a null pin; one finishes Git and pins C; the other's Git returns that same C, but the strict null-pin comparison rejects it. The original accepted two-capture/shared-snapshot contract is then lost even though lifetime and derived container agree. This is not proof that this interleaving caused the first runtime assertion; it is an independently established source defect that the repaired controlled caller case must exercise.
+
+   Minimum repair: use an actual Relay-entry barrier and unconditional release/join, preserve the original one-claim/two-capture/source/role assertions, and add a held real-Git subcase proving the null→matching-C transition while the same original L remains live. In the shared V1 helper only, allow that matching adoption after derivation. Reject different/removed pins and retired/recreated L as before. Retain all actor coherence checks. Do not add a cache, registry or per-turn process framework.
+
+2. **V1 same-ID failure retry contamination.** The immediately preceding test's unjoined callbacks can enter the next test's newly installed `/item-and-query` route, consume its first-failure response and add a foreign capture. The failed artifact contains that preceding source ID. Repair the owning test's drain instead of changing this retry test's original two-source/two-role/one-claim requirements. Later runtime evidence must still prove those requirements.
+
+3. **New V1 lifecycle fixture conflicts with unchanged no-ID dedup.** In the no-native-ID arm, the test reuses identical prompt content before and after deletion. The existing five-minute disk dedup survives deletion; the callback registers scope before dedup correctly abstains from another optional memory query. The test then incorrectly demands nonempty system memory output from that duplicate. Minimum repair: explicitly retain that duplicate abstention and use fresh successor content for the positive new-lifetime memory assertion. Do not delete dedup state or change its TTL/production semantics.
+
+4. **V2 rebound fixture can consume the wrong fence.** The test arms `rebindCheck` on every `/relay/turn`, including the fixture's initial source seeding. That initial turn starts an enrollment ownership lookup and can fulfill the one-shot `rebindOwned.entered` before the actual generation1 turn. The test then releases the wrong fence and treats completion of its two callbacks as completion of fire-and-forget enrollment. Minimum repair: finish seed enrollment, arm only the actual generation1 response and observe its exact enrollment before asserting it. Keep the original old-capture suppression, two capture attempts and identical source-ID assertions. No V2 product or OC1 proof change is needed by this trace.
+
+The task owner authorized these bounded local changes under existing bugfix authority after this cause record. No local application imports/tests/probes/native hosts or live operations are allowed. Existing independent failed-result review remains separate from successor source review. The repaired controls are authored/static-only until a new explicit changed-candidate validation envelope is released. Old failures, original authored/public history and all evidence remain preserved.
+
+The same independent reviewer completed the immutable failed-result review: HOLD / NOT QUALIFIED. Its bounded findings agree with the four traces above, require cold and pinned concurrency plus coherent pin-publication controls, and retain all native/HTTP requirements. That review does not clear successor source or runtime qualification. The parent accepted the minimum test-first repair direction under existing High/Moderate authority.
+
+The local continuation will change only this Work Record, `integrations/opencode/tests/plugin.test.mjs`, `integrations/opencode/tests/v2-plugin.test.mjs` and `integrations/opencode/.opencode/plugins/pallium.mjs`. Cause record first, test-only commit next, then the necessary V1 helper change. Published bb9 remains frozen. Common/V2 production, OC1 proof/native/HTTP files, workflow, inventories and caps stay unchanged.
