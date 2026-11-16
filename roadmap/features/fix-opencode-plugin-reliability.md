@@ -402,8 +402,25 @@ and manager acceptance still precede merge.
 This is a separate exact budget, not permission to retry any of the six failed
 campaigns. It adds no workflow job or source change, preserves all earlier evidence,
 and releases no eighth attempt, extra push/label cycle, local application execution,
-paid API, raw logs, live/environment change or local cleanup. No seventh result
-or recovery is claimed yet.
+paid API, raw logs, live/environment change or local cleanup.
+
+The owner now records candidate `5906044f` as FAILED / NOT QUALIFIED. Stage A
+passed both actual fixture controls in both Linux JUnits and the required ordinary
+checks. Stage B [43885769807](https://github.com/rore/Pallium/actions/runs/43885769807)
+passed package checks but failed the combined singleton-session/no-next-cursor
+precondition before Relay registration or send. The failed conjunct and cause are
+not established. No delivery or recovery journey was reached; qualification HTTP
+was skipped. Owned runs ended within caps. Independent actual-result review and
+manager acceptance remain pending. The seventh budget is closed; no eighth retry
+is released.
+
+The user's subsequent priority is local service reliability. The manager owns
+triage of the recurring context error and intermittent reachability separately
+from this fixture failure. Existing monitor evidence reports restored endpoint
+health and one successful summary with aged unacknowledged work, not caller
+recovery. Preserve the guard, queue and evidence. The user subsequently reaffirmed
+standing bug-fix approval; routine bounded diagnostics no longer wait on another
+approval request. No installed change is authorized by this diagnostic scope.
 
 ### Additional live empty-wake report (2026-11-16)
 
@@ -431,6 +448,109 @@ metadata did not identify the new failing generation; no project conversation or
 raw logs were retained. Separate monitor reachability failures do not establish
 this occurrence's cause. Keep the recurrence open without weakening the guard or
 interrupting the staged qualification. No candidate has been activated by this task.
+
+A further user-supplied recurrence now identifies another message and delivery
+(private evidence only). The screenshot shows a successful status-page tool read
+followed by the same context error. This supplied page has a non-null next cursor
+and is not the full message. Investigate post-tool context restoration, not only
+initial delivery. Source confirms that each wake context projection revalidates
+the delivery before using restored continuation; null transport results and empty
+or mismatched delivery responses share this error. Delivered-content restoration
+also requires a nonterminal wake, exact claim-attempt binding, safe rendering and
+sufficient current budget. The failing response, generation and loaded source
+remain unknown. No payload was retained or published and no live query was made.
+
+Subsequent authorized read-only diagnostics correlate that delivery to its native
+wake metadata and a failed native idle after a completed tool call. The server log
+records the exact guard at `pallium-v2.mjs:359:21`. This establishes an actual native
+execution failure, not merely uncertain reading of an ACKed message. Exact IDs
+stay private. Health, readiness and embedding checks passed in 76–110 ms at
+14:46 UTC; queue health returned HTTP 200, with no empty-queue inference. A later
+bounded log sample contains heavy slow wake/projection activity and three busy
+wake operations, all sampled durations below the shared six-second HTTP timeout.
+The sample is not a full-window census and does not identify the earlier failing
+context response. Its status/body, backend snapshot, loaded hash and root cause
+remain open. No replay, queue mutation, restart or installed edit was performed.
+
+### Shared restore-envelope sizing defect (2026-11-16)
+
+Source inspection found a concrete mismatch in both installed source and current
+main. Initial `claim_view()` supplies `claim_attempt` and `possible_redelivery`
+when `_delivery_text()` sizes the envelope. Restored `_delivery_view()` supplies
+`attempts` but not those derived fields. The same renderer therefore substitutes
+`unknown` for both fields on restoration. For attempt one, that adds eight
+characters relative to `1` and `false`. A truncated prefix that fitted the original
+budget can then fail the restoration budget and return empty deliveries.
+The plugin rejects that response at its existing guard. This is a source-supported
+failure mechanism, not yet an executed regression or the proven exclusive cause
+of the live incident.
+
+The existing developer explicitly accepted the distinct shared-rendering fix.
+The new branch and Work Record exist. The developer was idle on the architect
+prerequisite because the queued review had not started. The manager resumed that
+same architect through one normal queued native turn and verified actual review.
+The architect returned PLAN / PERSISTENCE GO at `87c17d33`; the manager read its
+full disposition. Developer2 resumed and authored 16 HTTP cases plus 29 renderer
+controls before the production change. Test-only PR412 at `3b4fa826` ran the
+ordinary RED cohort `43897548351`. The manager inspected both actual JUnits:
+Python 3.13 failed the new exact-budget reusable-envelope assertion at
+`tests/test_opencode_relay_wake_e2e.py:318`. Only the first short, claimed,
+first-attempt ASCII case executed; long, ACKed and redelivery RED coverage is
+unestablished because of fail-fast. Python 3.12 stopped earlier at the unchanged
+Claude durability assertion at `tests/test_claude_wake_durability.py:713`
+(claimed rather than delivered). This is not the target regression or a green
+lane; its cause and relation remain unknown. Windows and governance passed.
+
+The minimal shared normalization is committed locally at `677a4f80`, with tests
+frozen from the test-first checkpoint and all other storage code unchanged.
+The existing architect completed PATCH / PERSISTENCE GO at `677a4f80` with no
+blocking source finding and no demonstrated blocker from the unchanged 3.12
+failure. The manager resumed that review through one normal queued native turn,
+read its actual final disposition, and verified Developer2 resumed for the sole
+preauthorized GREEN round. No GREEN execution or pass is claimed yet.
+The user reaffirmed that out-of-scope failures without demonstrated relevant or
+critical risk must not block the fix. Preserve and assess the Claude observation
+in the planned GREEN result; do not add a separate repair campaign, extra RED run,
+unsupported flakiness claim or report failed required CI as green.
+It uses a new isolated branch and Work Record from main; PR410 and its closed
+seventh campaign remain frozen. Invoke Agent Workflow before code edits, review
+all renderer callers, obtain the existing architect's narrow plan review, then
+fix shared normalization rather than weakening the guard or increasing budgets.
+Test-first HTTP coverage must prove initial context → ACK → status-page read →
+same-budget restoration, repeated restoration without another claim or ACK,
+Unicode and tight-budget boundaries, while retaining existing authority, terminal
+and stale-state protections.
+
+The new bug-fix scope authorizes at most two existing ordinary hosted CI rounds:
+expected RED, then corrected GREEN with affected and full required checks. Each
+has a 15-minute cap and one existing owner observing sequentially. It authorizes
+no local application execution, workflow changes, native qualification retry,
+third round, live installation, restart, database mutation or replay. The user’s
+standing bug-fix approval carries forward without another routine approval loop.
+Independent review and manager acceptance remain required; no recovery is claimed.
+
+Both rounds are complete. Corrected PR412 head `a2e9b325` passed all 45 new
+controls once without skips and the full Python 3.12 suite: 9,165 passed,
+106 skipped and two xfails. Whole affected wake/envelope/exact-claim files,
+19 protected contracts, Windows smoke and governance passed. The manager parsed
+both actual JUnits and verified their hashes and candidate identity. Python 3.13
+failed earlier at unchanged `test_idempotent_send_schedules_one_codex_wake`
+(`tests/test_codex_wake.py:4438`, HTTP 200 then 503); none of the new cases executed
+there. Overall CI remains failed; no full Windows or installed recovery is claimed.
+
+Independent actual-result review returned ADEQUACY GO at exact `a2e9b325`.
+The earlier both-Linux/full-aggregate target was not met. Under the user's later
+explicit direction not to block disconnected or noncritical failures and to finish
+and merge the fix overnight, the manager accepts the bounded renderer correction
+on full 3.12, all changed-feature/affected coverage and independent review.
+The unchanged duplicate-send failure has no demonstrated relevant or critical
+regression from the read-only formatter change; its cause remains unresolved and
+stays a separate follow-up. This does not assert causal independence or flakiness.
+Fresh GitHub checks found no main protection or applicable branch rules requiring
+the failed status. No check is relabeled, test weakened or protection bypassed.
+The existing developer is released for normal exact-head merge after refreshing
+reviews, identity and main compatibility. No extra source push or rerun is needed.
+Installed activation remains separately gated.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
