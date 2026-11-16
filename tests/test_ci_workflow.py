@@ -437,6 +437,162 @@ def test_opencode_recovery_payload_oracle_rejects_extra_presentation() -> None:
     assert source.count("assert_no_original_presentation(requests)") == 2
 
 
+def test_opencode_primary_observer_actual_identity_and_lifecycle(tmp_path) -> None:
+    """Run the fixture's real embedded observer without importing the app or host."""
+    source = (Path(__file__).parents[1] / "tests/test_opencode_native_wake_e2e.py").read_text(encoding="utf-8")
+    observer = source.split("// FIRST_PRIMARY_OBSERVER_START\n", 1)[1].split("// FIRST_PRIMARY_OBSERVER_END", 1)[0]
+    node = shutil.which("node")
+    assert node, "Node is required for the actual fixture observer controls"
+    checks = r"""
+import assert from 'node:assert/strict';
+const session='ses_fixture', input='msg_original', delivery='relay-delivery-'+'a'.repeat(32);
+const args=()=>({sessionID:session,id:input,metadata:{delivery_id:delivery,generation:1}});
+const event=(id=input,sid=session)=>({sessionID:sid,messages:[{id,role:'user'}]});
+const request=(kind='primary',sid=session)=>({kind,sessionID:sid,request:new Request('http://fixture.invalid/v1',{
+ method:'POST',headers:{'x-existing':'kept'},body:'unchanged body'})});
+const header=e=>JSON.parse(e.request.headers.get('x-pallium-fixture'));
+const ready=()=>{const b=primaryBoundary('fixture-instance');b.prompt(args());const t=b.enter(event());b.complete(t,true);return b;};
+{
+ const b=ready(), e=request(), original=e.request;
+ for(const name of ['clone','text','json','arrayBuffer'])Object.defineProperty(e.request,name,{value(){throw Error('observer read body');}});
+ Object.defineProperty(e.request,'body',{get(){throw Error('observer accessed body');}});
+ b.observe(e);
+ const tag=header(e);assert.equal(tag.error,null);assert.equal(tag.completed,true);
+ assert.equal(tag.input,input);assert.deepEqual(tag.expected,{session,input,delivery,generation:1});
+ assert.equal(e.request,original);assert.equal(e.request.headers.get('x-existing'),'kept');assert.equal(e.request.bodyUsed,false);
+ assert.equal(await Request.prototype.text.call(e.request),'unchanged body');
+ const later=request();b.observe(later);assert.equal(header(later).prefix,false);
+}
+for(const kind of ['title','compaction','generate']){
+ const b=ready(), aux=request(kind);b.observe(aux);
+ assert.equal(header(aux).kind,kind);assert.equal(header(aux).prefix,undefined);
+ const primary=request();b.observe(primary);assert.equal(header(primary).error,null);
+}
+for(const fault of ['no-prompt','wrong-session','wrong-input','wrong-delivery','fraction','incomplete','throw','overlap','stale','second-prompt']){
+ const b=primaryBoundary('fixture-instance');
+ if(fault!=='no-prompt'){const a=args();if(fault==='wrong-delivery')a.metadata.delivery_id='bad';
+  if(fault==='fraction')a.metadata.generation=.5;b.prompt(a);}
+ const first=b.enter(event(fault==='wrong-input'?'msg_other':input,fault==='wrong-session'?'ses_other':session));
+ if(fault==='overlap'||fault==='stale'){
+  const next=b.enter(event());b.complete(next,true);b.complete(first,true);
+ }else if(fault!=='incomplete')b.complete(first,fault!=='throw');
+ if(fault==='second-prompt')b.prompt(args());
+ const e=request();b.observe(e);assert.ok(header(e).error,fault);
+ const next=b.enter(event());b.complete(next,true);const later=request();b.observe(later);
+ assert.equal(header(later).prefix,false,`${fault}: later good cannot republish first pairing`);
+}
+// Ordinary early return and an ACK-negative resolved callback are not success filters.
+for(const callback of [()=>undefined,()=>({success:false,error:'ack_failed'})]){
+ const b=primaryBoundary('fixture-instance');b.prompt(args());const t=b.enter(event());
+ await callback();b.complete(t,true);const e=request();b.observe(e);
+ assert.equal(header(e).completed,true);assert.equal(header(e).error,null);
+}
+{
+ const b=ready(), bad=request('primary','ses_other');b.observe(bad);assert.ok(header(bad).error);
+ const good=request();b.observe(good);assert.equal(header(good).prefix,false);
+}
+for(const fault of ['none','registration','setup','production-cleanup','observer-dispose','both-cleanups']){
+ const b=ready();let disposed=0,restored=0,cleaned=0,registered=0,callback;
+ const native={session:{hook:async(name,fn)=>{
+  assert.equal(name,'http.request');registered++;callback=fn;
+  if(fault==='registration')throw Error(fault);
+  return {dispose:async()=>{disposed++;if(['observer-dispose','both-cleanups'].includes(fault))throw Error(fault);}};
+ }}};
+ const setup=async()=>{if(fault==='setup')throw Error(fault);return async()=>{
+  cleaned++;const late=request();callback(late);assert.equal(late.request.headers.has('x-pallium-fixture'),false);
+  if(['production-cleanup','both-cleanups'].includes(fault))throw Error(fault);
+ };};
+ let cleanup;
+ if(['setup','registration'].includes(fault))await assert.rejects(b.attach(native,setup,()=>restored++));
+ else{
+  cleanup=await b.attach(native,setup,()=>restored++);
+  const closing=cleanup(); // Invalidates synchronously, before production cleanup can await.
+  const late=request();callback(late);assert.equal(late.request.headers.has('x-pallium-fixture'),false);
+  if(fault==='none')await closing;else await assert.rejects(closing);
+  assert.equal(cleanup(),closing);if(fault==='none')await cleanup();else await assert.rejects(cleanup());
+ }
+ assert.equal(registered,1);assert.equal(disposed,fault==='registration'?0:1);
+ assert.equal(restored,1);assert.equal(cleaned,['registration','setup'].includes(fault)?0:1);
+ const late=b.enter(event());b.complete(late,true);const e=request();b.observe(e);
+ assert.equal(e.request.headers.has('x-pallium-fixture'),false);
+}
+{
+ const b=primaryBoundary('fixture-instance');b.prompt(args());const t=b.enter(event());
+ b.retire();b.complete(t,true);const e=request();b.observe(e);assert.equal(e.request.headers.has('x-pallium-fixture'),false);
+}
+"""
+    result = subprocess.run([node, "--input-type=module", "--eval", observer + checks],
+                            cwd=tmp_path, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_opencode_primary_provider_actual_first_gate_and_public_oracle() -> None:
+    """Exercise the functions used by the real HTTP handler and main assertion."""
+    import ast
+    import threading
+
+    source = (Path(__file__).parents[1] / "tests/test_opencode_native_wake_e2e.py").read_text(encoding="utf-8")
+    functions = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+                 and node.name in ("_primary_gate", "_assert_first_primary")]
+    assert len(functions) == 2
+    namespace = {"json": json, "re": re}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), "<actual-primary-gate>", "exec"), namespace)
+    gate, oracle = namespace["_primary_gate"], namespace["_assert_first_primary"]
+    delivery = "relay-delivery-" + "a" * 32
+    expected = {"session": "ses_fixture", "input": "msg_original", "delivery": delivery, "generation": 1}
+    tag = {"version": 1, "instance": "fixture-instance", "kind": "primary", "session": "ses_fixture",
+           "prefix": True, "invocation": 1, "input": "msg_original", "expected": expected,
+           "completed": True, "error": None}
+    prompts = [{"sessionID": "ses_fixture", "inputID": "msg_original",
+                "metadata": {"delivery_id": delivery, "generation": 1}}]
+    def fresh():
+        return {"instance": "fixture-instance", "value": None}, threading.Event(), threading.Lock()
+    def headers(value):
+        return {"x-pallium-fixture": json.dumps(value)}
+    first, entered, lock = fresh()
+    for kind in ("title", "compaction", "generate"):
+        aux = {key: tag[key] for key in ("version", "instance", "session")}
+        aux["kind"] = kind
+        assert gate(headers(aux), "ses_fixture", first, entered, lock) is False
+        assert not entered.is_set() and first["value"] is None
+    assert gate(headers(tag), "ses_fixture", first, entered, lock) is True
+    assert entered.is_set()
+    oracle(first, "ses_fixture", delivery, prompts)
+    saved = json.dumps(first)
+    assert gate(headers({**tag, "prefix": False}), "ses_fixture", first, entered, lock) is True
+    assert json.dumps(first) == saved
+    for field, value in (("session", "ses_other"), ("input", "msg_wrong"), ("instance", "other"),
+                         ("invocation", None), ("completed", False), ("prefix", False),
+                         ("kind", "unknown"), ("expected", None), ("error", "context-threw")):
+        first, entered, lock = fresh()
+        assert gate(headers({**tag, field: value}), "ses_fixture", first, entered, lock) is False
+        assert entered.is_set()
+        with pytest.raises(AssertionError):
+            oracle(first, "ses_fixture", delivery, prompts)
+        saved = json.dumps(first)
+        gate(headers(tag), "ses_fixture", first, entered, lock)
+        assert json.dumps(first) == saved, "bad first must not filter to later good"
+    for malformed in ({}, {"x-pallium-fixture": "{"}, {"x-pallium-fixture": "[]"}):
+        first, entered, lock = fresh()
+        assert gate(malformed, "ses_fixture", first, entered, lock) is False
+        assert entered.is_set()
+        with pytest.raises(AssertionError):
+            oracle(first, "ses_fixture", delivery, prompts)
+    first, entered, lock = fresh()
+    gate(headers(tag), "ses_fixture", first, entered, lock)
+    for bad_delivery, bad_prompts in (("other", prompts), (delivery, []),
+                                      (delivery, [*prompts, *prompts]),
+                                      (delivery, [{**prompts[0], "inputID": "msg_other"}])):
+        with pytest.raises(AssertionError):
+            oracle(first, "ses_fixture", bad_delivery, bad_prompts)
+    # Correlation is independent of delivery success: the same immediate oracle still fails.
+    oracle(first, "ses_fixture", delivery, prompts)
+    with pytest.raises(AssertionError):
+        assert False, "public delivery is not delivered"
+    assert source.index("_assert_first_primary(first_primary,") < source.index("assert delivered(original)")
+    assert "if coalesced:" in source and 'before_sessions = api("GET", "/api/session")' in source
+
+
 def test_opencode_settlement_qualification_inventories_every_new_case_and_preserved_negative() -> None:
     import yaml
 
