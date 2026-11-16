@@ -2373,18 +2373,29 @@ test("assistant ownership helper cannot mark a rebound lifetime as captured", as
   }, fetch: async (route) => {
     if (route === "/items") { captureCheck = true; return jsonResponse(captureReceipt); }
   }, response: async (route) => {
-    if (route === "/relay/turn") { rebindCheck = true; return { session: { ...relaySession, scope_generation: generation }, deliveries: [] }; }
+    if (route === "/relay/turn") {
+      if (generation === 1) rebindCheck = true;
+      return { session: { ...relaySession, scope_generation: generation }, deliveries: [] };
+    }
     if (route === "/relay/opencode/wake") return { session: { ...relaySession, scope_generation: generation }, wake: null, deliveries: [] };
   } });
   let rebound;
-  const first = f.hooks.compaction({ sessionID });
+  let first;
   try {
+    const seedTurn = f.calls.findLastIndex((call) => call.path === "/relay/turn");
+    assert.ok(seedTurn >= 0, "fixture must seed its actual role-source turn");
+    await until(() => f.calls.slice(seedTurn + 1).some((call) =>
+      call.body.operation === "enroll" && call.body.scope_generation === 0),
+      "seed enrollment must finish before arming the generation1 fence");
+    first = f.hooks.compaction({ sessionID });
     await captureOwned.entered;
     generation = 1;
     rebound = f.hooks.context({ sessionID, messages: [natural("msg_helper_rebind")] });
     await rebindOwned.entered;
-    // Both helpers finish under the old lifetime; rebind resumes before capture.
+    // The actual generation1 enrollment, not seed startup, owns this fence.
     rebindOwned.release();
+    await until(() => f.calls.some((call) => call.body.operation === "enroll" && call.body.scope_generation === 1),
+      "wait for the actual successor enrollment before releasing the old capture");
     captureOwned.release();
     await Promise.all([rebound, first]);
     assert.ok(f.calls.some((call) => call.body.operation === "enroll" && call.body.scope_generation === 1),

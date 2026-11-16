@@ -155,34 +155,91 @@ test("V1 role history keeps the start-name snapshot and links delayed Stop by na
 });
 
 test("V1 retries of one in-flight native message share one immutable Relay snapshot", async () => {
-  let resolveTurn;
-  installFetch({
-    "/relay/turn": (body) => new Promise((resolve) => {
-      resolveTurn = () => resolve({
-        session: {
-          runtime: "opencode", session_ref: "sesRoleRetry", container_ref: body.container_ref,
-          alias: "planner",
-        },
-        deliveries: [],
-      });
-    }),
-    "/item-and-query": oneBlock,
-  });
-  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
-  const output = {
-    message: { sessionID: "sesRoleRetry", role: "user", id: "user-role-retry" },
-    parts: [{ type: "text", text: "retry the exact same native message without changing its turn snapshot" }],
+  const P = await import(pathToFileURL(path.join(process.cwd(), ".opencode", "plugins", "pallium-common.mjs")));
+  const previousActor = process.env.PALLIUM_HOOK_ACTOR_REF;
+  process.env.PALLIUM_HOOK_ACTOR_REF = "concurrent-actor";
+  const container = P.pathContainer(nonGitDir);
+  const run = async (mode, gate) => {
+    const sessionID = mode === "cold" ? "sesRoleRetry" : "sesRoleRetry_" + mode;
+    let enterTurn, releaseTurn, timer, first, second;
+    const entered = new Promise((resolve) => { enterTurn = resolve; });
+    const turn = new Promise((resolve) => { releaseTurn = resolve; });
+    installFetch({
+      "/relay/turn": async (body) => {
+        enterTurn();
+        await turn;
+        return { session: { runtime: "opencode", session_ref: sessionID,
+          container_ref: body.container_ref, alias: "planner" }, deliveries: [] };
+      },
+      "/item-and-query": oneBlock,
+      "/query": oneBlock,
+    });
+    const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+    const output = {
+      message: { sessionID, role: "user", id: "user-role-retry" },
+      parts: [{ type: "text", text: "retry the exact same native message without changing its turn snapshot" }],
+    };
+    try {
+      if (mode === "pinned" || mode === "removed") P.pinContainer(sessionID, container, undefined, "concurrent-actor");
+      first = hooks["chat.message"]({}, output);
+      if (gate) await gate.started;
+      second = hooks["chat.message"]({}, output);
+      await Promise.race([entered, new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${mode}: Relay turn was not reached`)), 5000);
+      })]);
+      assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/turn")).length, 1);
+      assert.equal(P.getPinnedContainer(sessionID), container, `${mode}: sibling published its actual derived pin`);
+      assert.equal(P.getPinnedActor(sessionID), "concurrent-actor");
+      if (mode === "removed") P.removeSessionPin(sessionID);
+      if (mode === "retired") {
+        await hooks.event({ event: { type: "session.deleted", properties: { sessionID } } });
+        await hooks.event({ event: { type: "session.created", properties: { sessionID } } });
+        assert.equal(P.getPinnedContainer(sessionID), container, "successor deliberately has the same pin");
+      }
+      gate?.release();
+      releaseTurn();
+      await Promise.all([first, second]);
+      const captures = fetchCalls.filter((call) => call.url.includes("/item-and-query"));
+      if (mode === "removed" || mode === "retired") {
+        assert.equal(captures.length, 0, `${mode}: old callbacks cannot capture or restore a removed pin`);
+        assert.equal(P.getPinnedContainer(sessionID), mode === "removed" ? null : container);
+        if (mode === "retired") assert.ok((await systemTransform(hooks, sessionID)).length > 0,
+          "retired callbacks cannot purge the successor's output");
+      } else if (mode === "conflicting") {
+        assert.equal(captures.length, 1, "held discovery of a different container cannot adopt the sibling's pin");
+        assert.equal(captures[0].body.container_ref, container);
+        assert.equal(captures[0].body.actor_ref, "concurrent-actor");
+        assert.equal(P.getPinnedContainer(sessionID), container);
+      } else {
+        assert.equal(captures.length, 2, `${mode}: both concurrent retries retain capture authority`);
+        assert.deepEqual(captures.map((call) => call.body.source_turn_id), ["user-role-retry", "user-role-retry"]);
+        assert.deepEqual(captures.map((call) => call.body.relay_name), ["planner", "planner"]);
+        assert.equal(captures[0].body.source_id, captures[1].body.source_id);
+        assert.ok(captures.every((call) => call.body.container_ref === container && call.body.actor_ref === "concurrent-actor"));
+      }
+      assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/turn")).length, 1);
+    } finally {
+      clearTimeout(timer);
+      gate?.release();
+      releaseTurn();
+      await Promise.allSettled([first, second]);
+      P.removeSessionPin(sessionID);
+    }
   };
-  const first = hooks["chat.message"]({}, output);
-  const second = hooks["chat.message"]({}, output);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/turn")).length, 1);
-  resolveTurn();
-  await Promise.all([first, second]);
-  const captures = fetchCalls.filter((call) => call.url.includes("/item-and-query"));
-  assert.equal(captures.length, 2);
-  assert.deepEqual(captures.map((call) => call.body.source_turn_id), ["user-role-retry", "user-role-retry"]);
-  assert.deepEqual(captures.map((call) => call.body.relay_name), ["planner", "planner"]);
+  try {
+    await run("cold");
+    await run("pinned");
+    for (const mode of ["matching", "conflicting", "removed", "retired"]) {
+      // A whitespace root has the same path fallback as the real non-repository
+      // sibling. A canonical remote instead derives a conflicting container.
+      await heldGit(mode === "conflicting" ? "remote get-url origin" : "rev-list --max-parents=0 HEAD",
+        mode === "conflicting" ? "https://git.example.test/Other/Repo.git" : "\n",
+        (gate) => run(mode, gate));
+    }
+  } finally {
+    if (previousActor === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
+    else process.env.PALLIUM_HOOK_ACTOR_REF = previousActor;
+  }
 });
 
 test("V1 same-ID retry after ingestion failure reuses the captured turn snapshot", async () => {
@@ -768,9 +825,9 @@ test("V1 lifetime authority covers every first entry and keeps retired callbacks
           parts: [{ type: "text", text: "completed ordinary work שלום" }] }];
       const hooks = await freshLoad({ client: makeClient(messages), directory: nonGitDir });
       const event = (type) => hooks.event({ event: { type, properties: { sessionID } } });
-      const chat = (withId) => hooks["chat.message"]({}, {
+      const chat = (withId, text = "substantial lifetime work without losing caller identity") => hooks["chat.message"]({}, {
         message: { sessionID, role: "user", ...(withId ? { id: "msg_life_start" } : {}) },
-        parts: [{ type: "text", text: "substantial lifetime work without losing caller identity" }],
+        parts: [{ type: "text", text }],
       });
       const tool = () => hooks["tool.execute.after"]({ sessionID, tool: "bash" },
         { output: "command failed", args: { command: "test" }, metadata: { error: true } });
@@ -788,7 +845,19 @@ test("V1 lifetime authority covers every first entry and keeps retired callbacks
         await event("session.deleted");
         assert.equal(fetchCalls.length, retired, `${first}: passive callbacks and duplicate close cannot reactivate a retired ID`);
         assert.deepEqual(await systemTransform(hooks, sessionID), [], `${first}: all retired payload is purged`);
-        await chat(false);
+        if (first === "chat-without-id") {
+          await chat(false);
+          assert.equal(fetchCalls.slice(retired).filter((c) => c.url.includes("/item-and-query")).length, 0,
+            "deletion does not erase the no-ID prompt's disk dedup window");
+          assert.deepEqual(await systemTransform(hooks, sessionID), [], "duplicate optional memory still abstains");
+          const pin = P.getPinnedContainer(sessionID);
+          assert.ok(pin, "duplicate no-ID chat publishes a successor pin without querying memory");
+          const model = await messagesTransform(hooks, { sessionID, role: "user" },
+            [{ type: "text", text: "duplicate prompt" }]);
+          assert.ok(model.parts[0].text.includes(pin),
+            "duplicate no-ID chat still activates a model-bound successor scope");
+        }
+        await chat(false, "fresh substantial successor work after retiring the original lifetime");
         assert.ok(fetchCalls.length > retired, `${first}: explicit no-ID chat starts a NEW live incarnation`);
         assert.ok((await systemTransform(hooks, sessionID)).length > 0);
       } finally { P.removeSessionPin(sessionID); }
