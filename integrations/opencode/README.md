@@ -41,7 +41,8 @@ routing or deliberate Session History search.
 
 - A running local Pallium service with the MCP endpoint enabled; see [Getting Started](../../docs/getting-started.md).
 - OpenCode and a stable checkout containing the complete plugin directory.
-- Choose V1 for passive normal-turn delivery or deliberately opt in to V2. Combined V2 coverage is isolated Windows OpenCode 2.0.24; other releases/platforms and global installation are unqualified.
+- Choose V1 for passive normal-turn delivery or deliberately opt in to V2. This V2 native-wake path requires the context-message metadata API introduced in OpenCode 2.3.0. Compatible later releases must retain that contract; they are not automatically runtime-qualified.
+- Historical combined V2 coverage is isolated Windows OpenCode 2.0.24. Earlier 2.2.7 evidence covers discovery only, not the recovery candidate below. Those scoped results and V1 passive delivery do not establish the current native-wake path on older hosts. Other platforms and global installation remain unqualified.
 - Provider credentials are needed by Pallium only for optional derived memory, not Relay or raw History.
 
 ## Setup
@@ -170,8 +171,10 @@ leases and can be collected by an existing turn or wake once eligible.
 
 ### Coalesced wake settlement (qualification pending)
 
-V2 preserves its ordinary same-input terminal correlation. An additional path
-uses the released 2.2.7 contract: native idle covers the whole busy period,
+V2 preserves its ordinary same-input terminal correlation. The candidate native
+wake path uses the OpenCode 2.3.0 metadata API floor. Exact CI archive/version pins
+make evidence reproducible; they do not require users to stay on one exact
+release. No 2.3.0 runtime qualification is claimed yet. Native idle covers the whole busy period,
 including ordinary inputs steered in before idle. After the native wait, fresh
 context must still contain the exact wake user ID, text, marker, generation and
 delivery. The first later idle must have a distinct valid ID and outcome exactly
@@ -210,11 +213,17 @@ Backend transactions fence backend changes; they do not create an atomic native
 snapshot or undo an already committed request. Claim/ACK, expiry, original
 delivery priority and continuation rules stay unchanged.
 
-These paths are source candidates, not runtime-qualified recovery. Three earlier
-qualification campaigns failed. The first two skipped native execution; only the
-third executed and failed native, with its failure predicate/cause still unknown.
+These paths are source candidates, not runtime-qualified recovery. All six
+qualification campaigns failed. The first two skipped native; the third failed
+native with its predicate/cause still unknown. The fourth and fifth failed the
+package and skipped native. The sixth passed the full package and ordinary CI
+but failed the original-delivery prerequisite before its required native journey.
+Its source follow-up found an uncorrelated provider-entry barrier and a 2.2.7
+context projection that omits stored wake metadata. These are distinct source
+concerns, not proof of the sixth run's exclusive cause. Historical failures and
+partial passes remain in the [result receipt](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488).
 Earlier 2.2.7 discovery-only evidence does not qualify settlement or recovery
-after compaction.
+after compaction. Minimum/current 2.3.0 qualification remains pending.
 The extended witness requires four distinct NEW sequential automatic wakes after
 recovery, not an earlier cumulative backlog latch or batched payload count.
 Full wake-anchor

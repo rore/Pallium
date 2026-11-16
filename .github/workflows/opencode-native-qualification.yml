@@ -14,7 +14,7 @@ concurrency:
 jobs:
   qualify:
     if: >-
-      github.event.label.name == 'qualify-opencode-2.2.7' &&
+      github.event.label.name == 'qualify-opencode-2.3.0' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.run_attempt == 1
     runs-on: windows-latest
@@ -22,7 +22,7 @@ jobs:
     env:
       CANDIDATE: ${{ github.event.pull_request.head.sha }}
       BASELINE: 93f497bf0eed29659630c277626d821d24964524
-      OPENCODE_ARCHIVE_SHA256: 91398e0e2c2bc72f6c93dbdae426a0710884ed3277a08558200753c7a995daa8
+      OPENCODE_ARCHIVE_SHA256: 2e14eee53f4abad803d55fdc472c1b12dc3802d687ae204f81e7908bd2ab1895
       PYTHONIOENCODING: utf-8
       PYTHONDONTWRITEBYTECODE: '1'
       NEW_CASES: |
@@ -142,8 +142,8 @@ jobs:
             python -m pip install --disable-pip-version-check -e '.[dev,mcp]' *> "$env:QUALIFICATION_ROOT/raw/setup.log"
             if ($LASTEXITCODE) { throw 'Dependency setup failed; later phases not run' }
             $archive = "$env:QUALIFICATION_ROOT/opencode.zip"
-            Invoke-WebRequest -Uri 'https://github.com/anomalyco/opencode/releases/download/v2.2.7/opencode-windows-x64.zip' -OutFile $archive
-            if ((Get-Item $archive).Length -ne 124794067 -or (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:OPENCODE_ARCHIVE_SHA256) { throw 'Official portable archive identity mismatch' }
+            Invoke-WebRequest -Uri 'https://github.com/anomalyco/opencode/releases/download/v2.3.0/opencode-windows-x64.zip' -OutFile $archive
+            if ((Get-Item $archive).Length -ne 124586665 -or (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:OPENCODE_ARCHIVE_SHA256) { throw 'Official portable archive identity mismatch' }
             Expand-Archive -LiteralPath $archive -DestinationPath "$env:QUALIFICATION_ROOT/host"
             $binary = @(Get-ChildItem "$env:QUALIFICATION_ROOT/host" -Recurse -Filter opencode.exe -File)
             if ($binary.Count -ne 1) { throw 'Expected exactly one portable executable' }
@@ -160,8 +160,8 @@ jobs:
             $versionExit = $LASTEXITCODE
             $versionExit | Set-Content "$env:QUALIFICATION_ROOT/raw/version-exit.txt" -Encoding utf8
             $version = [IO.File]::ReadAllText("$env:QUALIFICATION_ROOT/raw/version-stdout.txt", [Text.Encoding]::UTF8).Trim()
-            if ($versionExit -or $version -cne 'opencode v2.2.7') { throw 'Portable executable version mismatch' }
-            "PALLIUM_OPENCODE_BINARY_VERSION=2.2.7" >> $env:GITHUB_ENV
+            if ($versionExit -or $version -cne 'opencode v2.3.0') { throw 'Portable executable version mismatch' }
+            "PALLIUM_OPENCODE_BINARY_VERSION=2.3.0" >> $env:GITHUB_ENV
             "PALLIUM_OPENCODE_NATIVE_PLUGIN_DIR=$env:GITHUB_WORKSPACE/integrations/opencode/.opencode/plugins" >> $env:GITHUB_ENV
             "PALLIUM_OPENCODE_COALESCED_SUMMARY=$env:QUALIFICATION_ROOT/raw/native-summary.json" >> $env:GITHUB_ENV
             "npm_config_cache=$env:QUALIFICATION_ROOT/npm-cache" >> $env:GITHUB_ENV
@@ -453,7 +453,7 @@ jobs:
               'exit_code': int(version_exit.read_text(encoding='utf-8-sig').strip()) if version_exit.exists() else 'not_captured'}
           phases['setup']['exception'] = bounded_text('setup-exception.txt')
           summary = {'candidate': os.environ['CANDIDATE'], 'baseline': os.environ['BASELINE'],
-                     'expected_host_version': '2.2.7',
+                     'expected_host_version': '2.3.0',
                      'binary_reported_version': os.environ.get('PALLIUM_OPENCODE_BINARY_VERSION', 'not_verified'),
                      'archive_sha256': os.environ['OPENCODE_ARCHIVE_SHA256'],
                       'binary_sha256': os.environ.get('PALLIUM_OPENCODE_BINARY_SHA256', 'not_captured'),

@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -24,6 +25,56 @@ from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 pytestmark = pytest.mark.slow
+
+
+def _primary_gate(headers, target, first, entered, lock):
+    """Route the actual provider request, never its payload or delivery success."""
+    with lock:
+        try:
+            raw = headers.get("x-pallium-fixture", "")
+            assert 0 < len(raw) <= 4096
+            tag = json.loads(raw)
+            assert isinstance(tag, dict) and tag.get("version") == 1
+            assert isinstance(target, str) and tag.get("session") == target
+            assert isinstance(tag.get("instance"), str) and 0 < len(tag["instance"]) <= 64
+            if first["value"] is None:
+                assert tag["instance"] == first["instance"]
+            kind = tag.get("kind")
+            assert kind in ("primary", "title", "compaction", "generate")
+            if kind != "primary":
+                assert "prefix" not in tag
+                return False  # Auxiliary output must not wait for the primary it precedes.
+            if first["value"] is None:
+                first["value"] = {"tag": tag, "error": "invalid first primary identity"}
+                expected = tag.get("expected")
+                assert tag.get("prefix") is True and tag.get("completed") is True and tag.get("error") is None
+                assert type(tag.get("invocation")) is int and tag["invocation"] > 0
+                assert isinstance(expected, dict) and expected.get("session") == target
+                assert isinstance(tag.get("input"), str) and re.fullmatch(r"msg_[A-Za-z0-9_-]{1,508}", tag["input"])
+                assert expected.get("input") == tag["input"]
+                assert type(expected.get("generation")) is int and expected["generation"] >= 1
+                assert isinstance(expected.get("delivery"), str) and re.fullmatch(r"relay-delivery-[0-9a-f]{32}", expected["delivery"])
+                first["value"]["error"] = None
+            entered.set()  # FIRST is latched before gating; later requests cannot replace it.
+            return True
+        except (AssertionError, ValueError, TypeError, KeyError):
+            if first["value"] is None:
+                first["value"] = {"tag": None, "error": "invalid first request identity"}
+            entered.set()  # Wake Python main, not a handler-thread-only assertion/timeout.
+            return False
+
+
+def _assert_first_primary(first, target, delivery, prompts):
+    result = first["value"]
+    assert result is not None and result["error"] is None, result
+    tag = result["tag"]
+    assert tag["session"] == target and tag["prefix"] is True and tag["completed"] is True
+    assert len(prompts) == 1, "first prefix must have one independently observed wake.prompt"
+    prompt = prompts[0]
+    assert prompt["sessionID"] == target and prompt["inputID"] == tag["input"]
+    assert tag["expected"] == {"session": target, "input": prompt["inputID"], "delivery": delivery,
+                               "generation": prompt["metadata"]["generation"]}
+    assert prompt["metadata"]["delivery_id"] == delivery
 
 
 @pytest.mark.parametrize("existing,phase,retired", [
@@ -195,7 +246,7 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
 
     binary = os.environ.get("PALLIUM_OPENCODE_V2_BINARY")
     if not binary or not Path(binary).is_file():
-        pytest.skip("set PALLIUM_OPENCODE_V2_BINARY to the intended released executable (2.2.7 for coalesced qualification)")
+        pytest.skip("set PALLIUM_OPENCODE_V2_BINARY to the intended released executable (2.3.0 for coalesced qualification)")
     bootstrap_summary = {"host_version_verified": False, "startup_empty_settled": False, "restore_empty_settled": False,
                          "attached_before_ack": False, "provider_payload": False,
                          "exact_native_input": False, "native_settled": False,
@@ -218,6 +269,9 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
     subprocess.run(["git", "-C", str(foreign), "remote", "add", "origin", "https://example.test/team/foreign.git"], check=True)
     scope = {"container_ref": "git:example.test/team/relay"}
     requests = []
+    session = None
+    first_primary = {"instance": None, "value": None}
+    primary_lock = threading.Lock()
     release = threading.Event()
     release.set()
     entered = threading.Event()
@@ -329,8 +383,13 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             requests.append(body)
-            entered.set()
-            assert release.wait(40), "provider not released"
+            if coalesced:
+                primary = _primary_gate(self.headers, session, first_primary, entered, primary_lock)
+            else:
+                entered.set()
+                primary = True
+            if primary:
+                assert release.wait(40), "provider not released"
             tool = "IDLE_PAYLOAD_שלום" in json.dumps(body, ensure_ascii=False) and not tool_emitted.is_set()
             assistant_marker = f"NATIVE_ASSISTANT_שלום_{len(requests)}"
             if not tool:
@@ -408,11 +467,78 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
 import {appendFileSync} from 'node:fs';
 import {extractV2AssistantTurn,buildWorkTraceMetadata} from './pallium-common.mjs';
 import {randomUUID} from 'node:crypto';
+// FIRST_PRIMARY_OBSERVER_START
+function primaryBoundary(instance) {
+ let live=true,expected=null,slot=null,serial=0,consumed=false,fault=null;
+ const input=id=>typeof id==='string'&&id.length<=512&&/^msg_[A-Za-z0-9_-]+$/.test(id);
+ const invalidate=reason=>{fault??=reason;if(slot)slot.valid=false;};
+ const prompt=args=>{
+  if(!live||consumed)return;
+  if(expected){invalidate('duplicate first prompt');return;}
+  expected=Object.freeze({session:args.sessionID,input:args.id,delivery:args.metadata?.delivery_id,generation:args.metadata?.generation});
+  if(typeof expected.session!=='string'||!expected.session||!input(expected.input)||
+   typeof expected.delivery!=='string'||!/^relay-delivery-[0-9a-f]{32}$/.test(expected.delivery)||
+   !Number.isSafeInteger(expected.generation)||expected.generation<1)invalidate('invalid expected wake');
+ };
+ const enter=event=>{
+  if(!live||consumed)return null;
+  if(slot)invalidate('overlapping or superseded context');
+  slot={id:++serial,session:event.sessionID,input:event.messages?.findLast(m=>m?.role==='user'&&input(m.id))?.id,
+   completed:false,valid:true};
+  return slot;
+ };
+ const complete=(token,resolved)=>{
+  if(!token||!live||consumed)return;
+  if(slot!==token||!token.valid){invalidate('stale context completion');return;}
+  if(token.completed){invalidate('duplicate context completion');return;}
+  if(!resolved){invalidate('context threw');return;}
+  token.completed=true;
+ };
+ const observe=event=>{
+  if(!live)return;
+  const tag={version:1,instance,kind:event.kind,session:event.sessionID};
+  if(event.kind==='primary'){
+   tag.prefix=!consumed;
+   if(!consumed){
+    consumed=true; // FIRST primary, not first matching primary. No await before tagging.
+    const token=slot;slot=null;
+    Object.assign(tag,{invocation:token?.id,input:token?.input,expected,completed:token?.completed===true,
+     error:fault||(!expected?'missing expected wake':!token?.valid||!token.completed?'incomplete context':
+      token.session!==expected.session||event.sessionID!==expected.session||token.input!==expected.input?'wrong context identity':null)});
+    if(token)token.valid=false;
+   }
+  }
+  event.request.headers.set('x-pallium-fixture',JSON.stringify(tag)); // SAME Request; never inspect its body.
+ };
+ const retire=()=>{live=false;if(slot)slot.valid=false;slot=null;expected=null;};
+ const attach=async(ctx,setup,restore)=>{
+  let registration,cleanup,closing;
+  const close=()=>{
+   if(!closing){
+    retire(); // Invalidate before any cleanup await or reentrant callback.
+    closing=Promise.resolve().then(async()=>{
+     const errors=[];
+     for(const action of [cleanup,()=>registration?.dispose(),restore]){
+      try{await action?.();}catch(error){errors.push(error);}
+     }
+     if(errors.length)throw new AggregateError(errors,'fixture observer cleanup failed');
+    });
+   }
+   return closing;
+  };
+  try{registration=await ctx.session.hook('http.request',observe);cleanup=await setup();}
+  catch(error){try{await close();}catch(disposal){throw new AggregateError([error,disposal],'fixture setup and disposal failed');}throw error;}
+  return close;
+ };
+ return {prompt,enter,complete,observe,retire,attach};
+}
+// FIRST_PRIMARY_OBSERVER_END
 export default {...production,setup:async ctx=>{
   const instance=randomUUID(),directory=ctx.location.directory;
   const log=(kind,detail={})=>appendFileSync(process.env.PALLIUM_NATIVE_LIFECYCLE,JSON.stringify({kind,time:Date.now(),instance,directory,...detail})+'\\n');
   log('setup');
-   const bootstrap=process.env.PALLIUM_NATIVE_BOOTSTRAP==='1',coalesced=process.env.PALLIUM_NATIVE_COALESCED==='1',emptyReads=new Set();
+    const bootstrap=process.env.PALLIUM_NATIVE_BOOTSTRAP==='1',coalesced=process.env.PALLIUM_NATIVE_COALESCED==='1',emptyReads=new Set();
+   const primary=coalesced?primaryBoundary(instance):null;
   let activeContext;
   const originalFetch=globalThis.fetch;
   const observedFetch=async(input,init)=>{
@@ -448,7 +574,8 @@ export default {...production,setup:async ctx=>{
    log('capture.context',{sessionID:args.sessionID,messages,turn,workTrace:turn?buildWorkTraceMetadata(turn):null});
    return result;
    },prompt:async args=>{
-    if(coalesced)log('wake.prompt',{sessionID:args.sessionID,inputID:args.id,metadata:args.metadata});
+     primary?.prompt(args);
+     if(coalesced)log('wake.prompt',{sessionID:args.sessionID,inputID:args.id,metadata:args.metadata});
     return ctx.session.prompt(args);
    },wait:async args=>{
     const result=await ctx.session.wait(args);
@@ -467,16 +594,21 @@ export default {...production,setup:async ctx=>{
   },hook:(name,callback)=>ctx.session.hook(name,async event=>{
   const identity={sessionID:event?.sessionID,inputID:event?.messageID??event?.messages?.findLast(message=>message?.role==='user')?.id};
   log(name+'.enter',identity);
-    if((bootstrap||coalesced)&&name==='context')activeContext=event;
-   try{return await callback(event)}finally{
-     if((bootstrap||coalesced)&&name==='context')activeContext=undefined;
+     if((bootstrap||coalesced)&&name==='context')activeContext=event;
+    const invocation=name==='context'?primary?.enter(event):null;
+    let resolved=false;
+    try{const result=await callback(event);resolved=true;return result;}finally{
+      primary?.complete(invocation,resolved);
+      if((bootstrap||coalesced)&&name==='context')activeContext=undefined;
     log(name+'.done',identity)
    }
  })};
- const cleanup=await production.setup({...ctx,session});
-  return async()=>{log('cleanup.enter');await cleanup();
-    if((bootstrap||coalesced)&&globalThis.fetch===observedFetch)globalThis.fetch=originalFetch;
-   log('cleanup.done')};
+  const restore=()=>{if((bootstrap||coalesced)&&globalThis.fetch===observedFetch)globalThis.fetch=originalFetch;};
+  let cleanup;
+  try{cleanup=primary?await primary.attach(ctx,()=>production.setup({...ctx,session}),restore):
+   await production.setup({...ctx,session});}catch(error){restore();throw error;}
+  return async()=>{log('cleanup.enter');try{await cleanup?.();}finally{if(!primary)restore();}
+   log('cleanup.done');};
 }};
 """, encoding="utf-8")
     (plugin / "package.json").write_text('{"type":"module","main":"index.js"}')
@@ -580,7 +712,8 @@ export default {...production,setup:async ctx=>{
     try:
         process, url = start()
         if bootstrap or coalesced:
-            assert api("GET", "/api/info")["version"] == "2.2.7", "released host version mismatch"
+            expected_version = "2.3.0" if coalesced else "2.2.7"
+            assert api("GET", "/api/info")["version"] == expected_version, "released host version mismatch"
             bootstrap_summary["host_version_verified"] = True
             coalesced_summary["host_version_verified"] = True
         for directory in ([workspace] if bootstrap or coalesced else [workspace, *locations, foreign]):
@@ -591,9 +724,25 @@ export default {...production,setup:async ctx=>{
         if bootstrap:
             eventually(lambda: any(row["kind"] == "bootstrap.startup.empty.settled" for row in observations()))
             bootstrap_summary["startup_empty_settled"] = True
-        session = api("POST", "/api/session", {"location": {"directory": str(workspace).replace("\\", "/")}})["data"]["id"]
+        if coalesced:
+            before_sessions = api("GET", "/api/session")
+            assert before_sessions["data"] == [] and before_sessions.get("cursor", {}).get("next") is None
+            first_primary["instance"] = [row for row in observations() if row["kind"] == "setup"][-1]["instance"]
+        created = api("POST", "/api/session", {"location": {"directory": str(workspace).replace("\\", "/")},
+                     **({"title": "Wake lifecycle fixture"} if coalesced else {})})["data"]
+        session = created["id"]
         prefix = "/api/session/" + session
         if coalesced:
+            assert isinstance(session, str) and re.fullmatch(r"ses_[A-Za-z0-9_-]+", session)
+            assert created["title"] == "Wake lifecycle fixture" and not created.get("parentID")
+            assert os.path.normcase(os.path.realpath(created["location"]["directory"])) == os.path.normcase(os.path.realpath(workspace))
+            confirmed = api("GET", prefix)["data"]
+            assert confirmed["id"] == session and confirmed["title"] == created["title"] and not confirmed.get("parentID")
+            assert os.path.normcase(os.path.realpath(confirmed["location"]["directory"])) == os.path.normcase(os.path.realpath(workspace))
+            sole = api("GET", "/api/session")
+            assert [row["id"] for row in sole["data"]] == [session] and sole.get("cursor", {}).get("next") is None
+            assert api("GET", prefix + "/context")["data"] == []
+            assert api("GET", prefix + "/inbox")["data"] == []
             registered = client.post("/relay/turn", json={"runtime": "opencode", "session_ref": session, **scope})
             assert registered.status_code == 200, registered.text
             assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "sender", **scope}).status_code == 200
@@ -608,6 +757,8 @@ export default {...production,setup:async ctx=>{
             original = send("COALESCED_PAYLOAD_שלום")
             original_delivery = original["deliveries"][0]["delivery_id"]
             assert entered.wait(15), "automatic wake never reached the blocked provider"
+            _assert_first_primary(first_primary, session, original_delivery,
+                                  [row for row in observations() if row["kind"] == "wake.prompt"])
             assert delivered(original)
             eventually(lambda: wake_rows("admitted", original_delivery))
             admitted = api("POST", prefix + "/prompt", {"id": "msg_coalesced_ordinary",

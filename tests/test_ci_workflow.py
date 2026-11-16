@@ -272,11 +272,16 @@ def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_na
     assert job["runs-on"] == "windows-latest" and job["timeout-minutes"] == 15
     assert "continue-on-error" not in job
     assert "github.run_attempt == 1" in job["if"]
+    assert "github.event.label.name == 'qualify-opencode-2.3.0'" in job["if"]
     assert "github.event.pull_request.head.repo.full_name == github.repository" in job["if"]
     assert workflow["concurrency"]["cancel-in-progress"] is False
     assert workflow["permissions"] == {"contents": "read"}
     assert job["env"]["BASELINE"] == "93f497bf0eed29659630c277626d821d24964524"
     steps = {step["id"]: step for step in job["steps"] if "id" in step}
+    assert job["env"]["OPENCODE_ARCHIVE_SHA256"] == "2e14eee53f4abad803d55fdc472c1b12dc3802d687ae204f81e7908bd2ab1895"
+    assert "releases/download/v2.3.0/opencode-windows-x64.zip" in steps["setup"]["run"]
+    assert "Length -ne 124586665" in steps["setup"]["run"]
+    assert "opencode v2.3.0" in steps["setup"]["run"] and "PALLIUM_OPENCODE_BINARY_VERSION=2.3.0" in steps["setup"]["run"]
     assert list(steps) == ["setup", "baseline", "focused", "package", "native", "backend"]
     for phase in steps.values():
         assert "if" not in phase and "continue-on-error" not in phase
@@ -323,6 +328,7 @@ def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_na
     drain = next(step for step in job["steps"] if step.get("name") == "Verify owned drain and produce public-safe evidence")
     assert drain["if"] == "always()" and drain["timeout-minutes"] == 1
     evidence = drain["run"]
+    assert "'expected_host_version': '2.3.0'" in evidence
     for key in ("ordered_coalesced_outcome", "lost_terminal_reply_reconciled", "automatic_backlog_over_two",
                 "terminal_reload_safe", "missing_proof_compaction_hold", "missing_proof_reload_hold", "fresh_supersession_reload_recovery"):
         assert key in evidence
@@ -451,6 +457,7 @@ const event=(id=input,sid=session)=>({sessionID:sid,messages:[{id,role:'user'}]}
 const request=(kind='primary',sid=session)=>({kind,sessionID:sid,request:new Request('http://fixture.invalid/v1',{
  method:'POST',headers:{'x-existing':'kept'},body:'unchanged body'})});
 const header=e=>JSON.parse(e.request.headers.get('x-pallium-fixture'));
+const oracleTags=[];
 const ready=()=>{const b=primaryBoundary('fixture-instance');b.prompt(args());const t=b.enter(event());b.complete(t,true);return b;};
 {
  const b=ready(), e=request(), original=e.request;
@@ -468,7 +475,7 @@ for(const kind of ['title','compaction','generate']){
  assert.equal(header(aux).kind,kind);assert.equal(header(aux).prefix,undefined);
  const primary=request();b.observe(primary);assert.equal(header(primary).error,null);
 }
-for(const fault of ['no-prompt','wrong-session','wrong-input','wrong-delivery','fraction','incomplete','throw','overlap','stale','second-prompt']){
+for(const fault of ['no-prompt','wrong-session','wrong-input','wrong-delivery','fraction','incomplete','throw','overlap','stale','second-prompt','duplicate-completion']){
  const b=primaryBoundary('fixture-instance');
  if(fault!=='no-prompt'){const a=args();if(fault==='wrong-delivery')a.metadata.delivery_id='bad';
   if(fault==='fraction')a.metadata.generation=.5;b.prompt(a);}
@@ -476,6 +483,7 @@ for(const fault of ['no-prompt','wrong-session','wrong-input','wrong-delivery','
  if(fault==='overlap'||fault==='stale'){
   const next=b.enter(event());b.complete(next,true);b.complete(first,true);
  }else if(fault!=='incomplete')b.complete(first,fault!=='throw');
+ if(fault==='duplicate-completion')b.complete(first,true);
  if(fault==='second-prompt')b.prompt(args());
  const e=request();b.observe(e);assert.ok(header(e).error,fault);
  const next=b.enter(event());b.complete(next,true);const later=request();b.observe(later);
@@ -486,13 +494,18 @@ for(const callback of [()=>undefined,()=>({success:false,error:'ack_failed'})]){
  const b=primaryBoundary('fixture-instance');b.prompt(args());const t=b.enter(event());
  await callback();b.complete(t,true);const e=request();b.observe(e);
  assert.equal(header(e).completed,true);assert.equal(header(e).error,null);
+ oracleTags.push(header(e));
 }
 {
  const b=ready(), bad=request('primary','ses_other');b.observe(bad);assert.ok(header(bad).error);
  const good=request();b.observe(good);assert.equal(header(good).prefix,false);
 }
-for(const fault of ['none','registration','setup','production-cleanup','observer-dispose','both-cleanups']){
+for(const fault of ['none','registration','setup','production-cleanup','observer-dispose','both-cleanups','foreign-fetch']){
  const b=ready();let disposed=0,restored=0,cleaned=0,registered=0,callback;
+ const savedFetch=globalThis.fetch,originalFetch=()=>1,observedFetch=()=>2,foreignFetch=()=>3,bootstrap=false,coalesced=true;
+ globalThis.fetch=fault==='foreign-fetch'?foreignFetch:observedFetch;
+ /* ACTUAL_OWNED_FETCH_RESTORE */
+ const restoreAndCount=()=>{restored++;restore();};
  const native={session:{hook:async(name,fn)=>{
   assert.equal(name,'http.request');registered++;callback=fn;
   if(fault==='registration')throw Error(fault);
@@ -503,16 +516,18 @@ for(const fault of ['none','registration','setup','production-cleanup','observer
   if(['production-cleanup','both-cleanups'].includes(fault))throw Error(fault);
  };};
  let cleanup;
- if(['setup','registration'].includes(fault))await assert.rejects(b.attach(native,setup,()=>restored++));
+ if(['setup','registration'].includes(fault))await assert.rejects(b.attach(native,setup,restoreAndCount));
  else{
-  cleanup=await b.attach(native,setup,()=>restored++);
+  cleanup=await b.attach(native,setup,restoreAndCount);
   const closing=cleanup(); // Invalidates synchronously, before production cleanup can await.
   const late=request();callback(late);assert.equal(late.request.headers.has('x-pallium-fixture'),false);
-  if(fault==='none')await closing;else await assert.rejects(closing);
-  assert.equal(cleanup(),closing);if(fault==='none')await cleanup();else await assert.rejects(cleanup());
+  if(['none','foreign-fetch'].includes(fault))await closing;else await assert.rejects(closing);
+  assert.equal(cleanup(),closing);if(['none','foreign-fetch'].includes(fault))await cleanup();else await assert.rejects(cleanup());
  }
  assert.equal(registered,1);assert.equal(disposed,fault==='registration'?0:1);
  assert.equal(restored,1);assert.equal(cleaned,['registration','setup'].includes(fault)?0:1);
+ assert.equal(globalThis.fetch,fault==='foreign-fetch'?foreignFetch:originalFetch);
+ globalThis.fetch=savedFetch;
  const late=b.enter(event());b.complete(late,true);const e=request();b.observe(e);
  assert.equal(e.request.headers.has('x-pallium-fixture'),false);
 }
@@ -520,16 +535,46 @@ for(const fault of ['none','registration','setup','production-cleanup','observer
  const b=primaryBoundary('fixture-instance');b.prompt(args());const t=b.enter(event());
  b.retire();b.complete(t,true);const e=request();b.observe(e);assert.equal(e.request.headers.has('x-pallium-fixture'),false);
 }
+console.log(JSON.stringify(oracleTags));
 """
+    restore = "const restore=" + source.split("  const restore=", 1)[1].split("\n", 1)[0]
+    checks = checks.replace("/* ACTUAL_OWNED_FETCH_RESTORE */", restore)
     result = subprocess.run([node, "--input-type=module", "--eval", observer + checks],
                             cwd=tmp_path, capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stdout + result.stderr
+    import ast
+    import threading
+    from types import SimpleNamespace
+
+    calls = []
+    def get_status(path, params):
+        calls.append((path, params))
+        return SimpleNamespace(status_code=200, text="", json=lambda: {"deliveries": [{"state": "pending"}]})
+    namespace = {"json": json, "re": re, "client": SimpleNamespace(get=get_status), "scope": {}}
+    functions = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.FunctionDef)
+                 and node.name in ("_primary_gate", "_assert_first_primary", "delivered")]
+    assert len(functions) == 3
+    exec(compile(ast.Module(body=functions, type_ignores=[]), "<actual-public-oracle>", "exec"), namespace)
+    tags = json.loads(result.stdout)
+    assert len(tags) == 2
+    for tag in tags:
+        first = {"instance": tag["instance"], "value": None}
+        assert namespace["_primary_gate"]({"x-pallium-fixture": json.dumps(tag)}, "ses_fixture",
+                                          first, threading.Event(), threading.Lock()) is True
+        namespace["_assert_first_primary"](first, "ses_fixture", "relay-delivery-" + "a" * 32,
+            [{"sessionID": "ses_fixture", "inputID": "msg_original",
+              "metadata": {"delivery_id": "relay-delivery-" + "a" * 32, "generation": 1}}])
+        with pytest.raises(AssertionError):
+            assert namespace["delivered"]({"message_id": "relay-message-original"})
+    assert len(calls) == 2, "early/ACK-negative completion must reach the real public read oracle"
 
 
 def test_opencode_primary_provider_actual_first_gate_and_public_oracle() -> None:
     """Exercise the functions used by the real HTTP handler and main assertion."""
     import ast
+    import io
     import threading
+    from types import SimpleNamespace
 
     source = (Path(__file__).parents[1] / "tests/test_opencode_native_wake_e2e.py").read_text(encoding="utf-8")
     functions = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
@@ -561,6 +606,14 @@ def test_opencode_primary_provider_actual_first_gate_and_public_oracle() -> None
     saved = json.dumps(first)
     assert gate(headers({**tag, "prefix": False}), "ses_fixture", first, entered, lock) is True
     assert json.dumps(first) == saved
+    # Later reload instances retain routing, but cannot create a replacement FIRST result.
+    for kind in ("compaction", "primary"):
+        later = {key: tag[key] for key in ("version", "session")}
+        later.update(instance="reloaded-instance", kind=kind)
+        if kind == "primary":
+            later["prefix"] = False
+        assert gate(headers(later), "ses_fixture", first, entered, lock) is (kind == "primary")
+        assert json.dumps(first) == saved
     for field, value in (("session", "ses_other"), ("input", "msg_wrong"), ("instance", "other"),
                          ("invocation", None), ("completed", False), ("prefix", False),
                          ("kind", "unknown"), ("expected", None), ("error", "context-threw")):
@@ -591,6 +644,33 @@ def test_opencode_primary_provider_actual_first_gate_and_public_oracle() -> None
         assert False, "public delivery is not delivered"
     assert source.index("_assert_first_primary(first_primary,") < source.index("assert delivered(original)")
     assert "if coalesced:" in source and 'before_sessions = api("GET", "/api/session")' in source
+    # Execute the ACTUAL HTTP handler, including its wait/response routing, without a server.
+    provider = next(node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ClassDef) and node.name == "Provider")
+    post = next(node for node in provider.body if isinstance(node, ast.FunctionDef) and node.name == "do_POST")
+    exec(compile(ast.Module(body=[post], type_ignores=[]), "<actual-provider>", "exec"), namespace)
+    for coalesced, kind in ((True, "title"), (True, "compaction"), (True, "generate"),
+                            (True, "primary"), (True, "unknown"), (False, "title")):
+        first, entered, lock = fresh()
+        waits = []
+        def wait(timeout):
+            waits.append(timeout)
+            assert not coalesced or kind == "primary", "auxiliary/invalid request waited on closed primary gate"
+            return True
+        namespace.update(coalesced=coalesced, requests=[], session="ses_fixture", first_primary=first,
+                         entered=entered, primary_lock=lock, release=SimpleNamespace(wait=wait),
+                         tool_emitted=threading.Event(), assistant_outputs=[])
+        actual_tag = tag if kind == "primary" else {**{key: tag[key] for key in ("version", "instance", "session")}, "kind": kind}
+        output = io.BytesIO()
+        handler = SimpleNamespace(headers={"Content-Length": "2", **headers(actual_tag)}, rfile=io.BytesIO(b"{}"),
+                                  wfile=output, send_response=lambda *_: None, send_header=lambda *_: None,
+                                  end_headers=lambda: None)
+        namespace["do_POST"](handler)
+        assert namespace["requests"] == [{}] and b"NATIVE_ASSISTANT_" in output.getvalue()
+        assert bool(waits) == (not coalesced or kind == "primary")
+        assert entered.is_set() == (not coalesced or kind in ("primary", "unknown"))
+        if coalesced and kind == "unknown":
+            with pytest.raises(AssertionError):
+                oracle(first, "ses_fixture", delivery, prompts)
 
 
 def test_opencode_settlement_qualification_inventories_every_new_case_and_preserved_negative() -> None:
