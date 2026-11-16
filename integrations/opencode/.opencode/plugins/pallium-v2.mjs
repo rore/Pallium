@@ -38,18 +38,20 @@ export default {
     let disposed = false;
     let cleanup;
     let retirement = 0;
+    let freshWitnessEnabled = true;
 
     const log = (message) => { try { ctx.app?.log?.({ service: "pallium", level: "warn", message }); } catch {} };
     const state = (id) => {
       if (disposed) return null;
       let item = sessions.get(id);
       if (!item) { item = { busy: false, wakeBusy: false, seen: new Set(), captures: new Set(), completedCaptures: new Set(), lastAssistant: null,
-        roleTurns: new Map(), naturalClaims: new Map(), abort: new AbortController() }; sessions.set(id, item); }
+        roleTurns: new Map(), naturalClaims: new Map(), wakeRevision: {}, abort: new AbortController() }; sessions.set(id, item); }
       return item;
     };
     const live = (id, item, signal = item?.abort.signal) => !disposed && item &&
       sessions.get(id) === item && item.abort.signal === signal && !signal.aborted;
     const retire = (id, item) => {
+      if (item) item.witness = null;
       item?.abort.abort();
       if (sessions.get(id) === item) {
         sessions.delete(id);
@@ -70,6 +72,7 @@ export default {
           session.state !== "recent" || session.destination_health !== "active" ||
           typeof session.endpoint_id !== "string" || !Number.isInteger(session.scope_generation)) return false;
       if (item.endpointId && (item.endpointId !== session.endpoint_id || item.scopeGeneration !== session.scope_generation)) {
+        item.witness = null;
         item.abort.abort();
         item.abort = new AbortController();
         item.captures = new Set();
@@ -82,6 +85,7 @@ export default {
         item.naturalClaims = new Map();
         item.memory = null;
         item.wake = null;
+        item.wakeRevision = {};
       }
       item.endpointId = session.endpoint_id;
       item.scopeGeneration = session.scope_generation;
@@ -93,7 +97,9 @@ export default {
         (!sessions.has(id) || live(id, sessions.get(id))));
       try {
         if (!current()) return false;
+        const witness = item?.witness;
         const session = await ctx.session.get({ sessionID: id });
+        if (witness && item.witness === witness && (session?.id !== id || session.revert != null)) item.witness = null;
         return current() && sameLocation(session?.location?.directory, cwd);
       } catch { return false; }
     };
@@ -102,14 +108,49 @@ export default {
       retire(id, item);
       if (!disposed && payload) await pallium.relayRequest("POST", "/relay/opencode/wake", payload, 500, abort.signal);
     };
+    const wakeResponseContext = (id, item) => ({ signal: item.abort.signal, binding: base(id, item),
+      revision: item.wakeRevision, witness: item.witness, flight: item.wakeBusy });
+    const applyWakeResponse = (id, item, request, response) => {
+      if (!live(id, item, request.signal) ||
+          !Object.entries(request.binding).every(([key, value]) => base(id, item)[key] === value)) return false;
+      const reject = () => {
+        if (item.wakeRevision !== request.revision) return false;
+        if (item.witness === request.witness) item.witness = null;
+        // Cancel this flight, never a newer one started while HTTP was pending.
+        if (item.wakeBusy === request.flight) item.wakeBusy = false;
+        return false;
+      };
+      const session = response?.session, wake = response?.wake, known = item.wake;
+      if (session?.runtime !== "opencode" || session.session_ref !== id || session.container_ref !== request.binding.container_ref ||
+          session.endpoint_id !== request.binding.endpoint_id || !Number.isInteger(session.scope_generation) ||
+          session.scope_generation < request.binding.scope_generation ||
+          session.state !== "recent" || session.destination_health !== "active") return reject();
+      // Cache progress cannot hide a valid registration replacement.
+      if (session.scope_generation > request.binding.scope_generation) {
+        remember(id, item, session); // Invalidate the old lifetime, never adopt this old request's wake body.
+        return false;
+      }
+      if (item.wakeRevision !== request.revision) return false;
+      if (wake !== null) {
+        if (!validInput(wake?.native_input_id) || !validDelivery(wake?.delivery_id) || !Number.isInteger(wake?.generation) || wake.generation < 1 ||
+            wake.scope_generation !== request.binding.scope_generation || !sameLocation(wake.native_location, request.binding.native_location) ||
+            typeof wake.admitted !== "boolean" || typeof wake.terminal !== "boolean") return reject();
+        if (known && (wake.generation < known.generation ||
+            wake.generation > known.generation && wake.native_input_id === known.native_input_id ||
+            wake.generation === known.generation && (wake.delivery_id !== known.delivery_id || wake.native_input_id !== known.native_input_id ||
+              known.admitted && !wake.admitted || known.terminal && !wake.terminal))) return reject();
+      }
+      if (item.witness && !sameWake(item.witness.wake, wake)) item.witness = null;
+      item.wake = wake;
+      item.wakeRevision = {}; // Null releases also advance freshness; null itself can recur.
+      return true;
+    };
     const enroll = async (id, item) => {
       const signal = item?.abort.signal;
       if (!live(id, item, signal) || !item.endpointId || !await owned(id, item, signal)) return;
+      const request = wakeResponseContext(id, item);
       const response = await wakeRequest(id, item, "enroll");
-      if (!live(id, item, signal)) return;
-      if (response?.session) remember(id, item, response.session);
-      if (response) item.wake = response.wake;
-      return response;
+      if (applyWakeResponse(id, item, request, response)) return response;
     };
     const terminalAfter = (messages, inputId) => {
       const index = messages.findIndex((m) => m?.type === "user" && m.id === inputId);
@@ -119,54 +160,150 @@ export default {
       const idle = messages.slice(index + 1, end).find((m) => m?.type === "idle" && validInput(m.id));
       return idle?.id || null;
     };
+    const coalescedTerminalAfter = (messages, wake) => {
+      const index = messages.findIndex((m) => m?.type === "user" && m.id === wake.native_input_id &&
+        m.text === WAKE_TEXT && m.metadata?.pallium_relay_wake === true &&
+        m.metadata.generation === wake.generation && m.metadata.delivery_id === wake.delivery_id);
+      if (index < 0) return null;
+      // Native idle covers the entire busy period, including steered inputs.
+      const idle = messages.slice(index + 1).find((m) => m?.type === "idle");
+      return validInput(idle?.id) && idle.id !== wake.native_input_id &&
+        ["succeeded", "failed", "interrupted"].includes(idle.outcome) ? idle.id : null;
+    };
+    const sameWake = (a, b) => a && b &&
+      ["generation", "delivery_id", "native_input_id", "scope_generation", "admitted", "terminal"].every((key) => a[key] === b[key]) &&
+      sameLocation(a.native_location, b.native_location);
+    const settleFreshWitness = async (id, item) => {
+      const proof = item.witness;
+      if (!proof) return;
+      const current = () => freshWitnessEnabled && item.witness === proof && live(id, item, proof.signal) &&
+        Object.entries(proof.binding).every(([key, value]) => base(id, item)[key] === value) && sameWake(proof.wake, item.wake);
+      let notReady = false;
+      try {
+        const nativeGet = async () => {
+          if (!current()) throw new Error("fresh witness binding changed");
+          const session = await ctx.session.get({ sessionID: id });
+          if (!current() || session?.id !== id || !sameLocation(session?.location?.directory, cwd) || session.revert != null)
+            throw new Error("fresh witness native owner changed");
+        };
+        const raw = async () => {
+          if (!current()) throw new Error("fresh witness binding changed");
+          const response = await ctx.session.context({ sessionID: id });
+          const messages = Array.isArray(response) ? response : response?.data;
+          if (!current() || !Array.isArray(messages) || messages.some((m) => !m || typeof m.type !== "string"))
+            throw new Error("fresh witness raw context unavailable");
+          return messages;
+        };
+        const userIndex = (messages) => {
+          const matches = messages.filter((m) => m.id === proof.inputId);
+          if (!matches.length) return -1;
+          const user = matches[0], index = messages.indexOf(user);
+          if (matches.length !== 1 || user.type !== "user" || typeof user.text !== "string" ||
+              user.metadata?.pallium_relay_wake === true || user.text === WAKE_TEXT ||
+              createHash("sha256").update(user.text).digest("hex") !== proof.inputHash ||
+              messages.slice(index + 1).some((m) => m.type === "user")) throw new Error("fresh witness user changed");
+          return index;
+        };
+        const terminal = (messages) => {
+          const index = userIndex(messages);
+          const idle = index < 0 ? null : messages.slice(index + 1).find((m) => m.type === "idle");
+          if (!validInput(idle?.id) || idle.id === proof.inputId || idle.id === proof.wake.native_input_id ||
+              !["succeeded", "failed", "interrupted"].includes(idle.outcome)) throw new Error("fresh witness terminal unavailable");
+          return { id: idle.id, outcome: idle.outcome };
+        };
+        // Certified admitted G predates first observation of U. Neither queued U
+        // nor an old context row can create this ephemeral causal relationship.
+        await nativeGet();
+        const before = await raw();
+        if (userIndex(before) < 0) {
+          if (proof.promoted) throw new Error("promoted fresh witness disappeared");
+          notReady = true; // Same frozen candidate; runWake releases wakeBusy.
+          return;
+        }
+        proof.promoted = true;
+        await ctx.session.wait({ sessionID: id });
+        await nativeGet();
+        const selected = terminal(await raw());
+        if (!current()) return;
+        const response = await wakeRequest(id, item, "poll");
+        const session = response?.session;
+        if (!current() || !sameWake(proof.wake, response?.wake) || session?.runtime !== "opencode" ||
+            session.session_ref !== id || session.container_ref !== proof.binding.container_ref ||
+            session.endpoint_id !== proof.binding.endpoint_id || session.scope_generation !== proof.binding.scope_generation ||
+            session.state !== "recent" || session.destination_health !== "active") return;
+        await nativeGet();
+        const final = terminal(await raw());
+        if (!current() || final.id !== selected.id || final.outcome !== selected.outcome) return;
+        // No unrelated await after final raw proof/full guard. Backend commit
+        // fences backend changes, not an atomic native/backend snapshot.
+        item.witness = null;
+        await wakeRequest(id, item, "terminal", { generation: proof.wake.generation,
+          delivery_id: proof.wake.delivery_id, native_input_id: proof.wake.native_input_id,
+          terminal_message_id: selected.id });
+      } catch (error) { log(`V2 fresh witness deferred: ${String(error)}`); }
+      finally { if (!notReady && item.witness === proof) item.witness = null; }
+    };
     const runWake = async (id, item, wake) => {
       const signal = item?.abort.signal;
       if (!live(id, item, signal) || item.wakeBusy || !validInput(wake?.native_input_id) || !validDelivery(wake?.delivery_id) || !Number.isInteger(wake?.generation)) return;
-      item.wakeBusy = true;
+      const fields = { generation: wake.generation, delivery_id: wake.delivery_id, native_input_id: wake.native_input_id };
+      const endpointId = item.endpointId, scopeGeneration = item.scopeGeneration, container = scope(id), nativeLocation = wake.native_location;
+      const flight = {};
+      const current = () => live(id, item, signal) && item.wakeBusy === flight && item.endpointId === endpointId && item.scopeGeneration === scopeGeneration &&
+        scope(id) === container && sameWake(item.wake, wake) && item.wake?.scope_generation === scopeGeneration &&
+        sameLocation(item.wake?.native_location, nativeLocation) && sameLocation(nativeLocation, cwd);
+      item.wakeBusy = flight;
+      const witness = item.witness;
+      const discardWitness = () => { if (item.witness === witness) item.witness = null; };
       try {
-        if (!await owned(id, item, signal)) return;
-        const fields = { generation: wake.generation, delivery_id: wake.delivery_id, native_input_id: wake.native_input_id };
+        if (!await owned(id, item, signal) || !current()) { discardWitness(); return; }
         const history = rows(await ctx.session.context({ sessionID: id }));
-        if (!await owned(id, item, signal)) return;
-        const observed = (messages) => messages.some((m) => m?.type === "user" && m.id === wake.native_input_id &&
+        if (!await owned(id, item, signal) || !current()) { discardWitness(); return; }
+        const observed = (messages) => messages.some((m) => m?.type === "user" && m.id === fields.native_input_id &&
           m.text === WAKE_TEXT && m.metadata?.pallium_relay_wake === true &&
-          m.metadata.generation === wake.generation && m.metadata.delivery_id === wake.delivery_id);
+          m.metadata.generation === fields.generation && m.metadata.delivery_id === fields.delivery_id);
         if (!observed(history)) {
-          if (wake.admitted) return; // A compacted or missing input cannot prove a new admission.
+          if (wake.admitted) { await settleFreshWitness(id, item); return; } // Never replay a missing admitted input.
           // The stable native ID makes a lost prompt response safe to retry.
-          await ctx.session.prompt({ sessionID: id, id: wake.native_input_id, text: WAKE_TEXT, delivery: "queue",
-            metadata: { pallium_relay_wake: true, generation: wake.generation, delivery_id: wake.delivery_id } });
+          await ctx.session.prompt({ sessionID: id, id: fields.native_input_id, text: WAKE_TEXT, delivery: "queue",
+            metadata: { pallium_relay_wake: true, generation: fields.generation, delivery_id: fields.delivery_id } });
         }
-        if (!await owned(id, item, signal)) return;
+        if (!await owned(id, item, signal) || !current()) return;
         if (!observed(rows(await ctx.session.context({ sessionID: id })))) return;
-        if (!await owned(id, item, signal)) return;
-        await wakeRequest(id, item, "admitted", fields);
-        if (!live(id, item, signal)) return;
+        if (!await owned(id, item, signal) || !current()) return;
+        if (wake.admitted !== true) await wakeRequest(id, item, "admitted", fields);
+        if (!await owned(id, item, signal) || !current()) return;
         await ctx.session.wait({ sessionID: id });
-        if (!await owned(id, item, signal)) return;
+        if (!await owned(id, item, signal) || !current()) return;
         const after = rows(await ctx.session.context({ sessionID: id }));
-        if (!await owned(id, item, signal)) return;
-        const terminalId = terminalAfter(after, wake.native_input_id);
+        if (!await owned(id, item, signal) || !current()) return;
+        const terminalId = terminalAfter(after, fields.native_input_id) || coalescedTerminalAfter(after, fields);
         if (terminalId) await wakeRequest(id, item, "terminal", { ...fields, terminal_message_id: terminalId });
-      } catch (error) { log(`V2 wake deferred: ${String(error)}`); }
-      finally { if (live(id, item, signal)) item.wakeBusy = false; }
+      } catch (error) { discardWitness(); log(`V2 wake deferred: ${String(error)}`); }
+      finally { if (live(id, item, signal) && item.wakeBusy === flight) item.wakeBusy = false; }
     };
     const poll = async (id) => {
       const item = sessions.get(id);
       const signal = item?.abort.signal;
+      const witness = item?.witness;
       if (!live(id, item, signal) || item.busy || !item.endpointId) return;
       item.busy = true;
       try {
         if (!await owned(id, item, signal)) { if (live(id, item, signal)) await detach(id, item); return; }
+        const request = wakeResponseContext(id, item);
         let registrationMissing = false;
         let response = await wakeRequest(id, item, "poll", {}, (status, error) => {
           registrationMissing = status === 409 && error?.detail === "OpenCode registration is missing or stale";
         });
         if (!live(id, item, signal)) return;
         // Only an explicit registration conflict warrants another enrollment write.
-        if (!response && registrationMissing) response = await enroll(id, item);
-        if (!await owned(id, item, signal) || !response?.session || !remember(id, item, response.session)) return;
-        item.wake = response.wake;
+        let applied = false;
+        if (!response && registrationMissing) { response = await enroll(id, item); applied = !!response; }
+        if (!await owned(id, item, signal) || !response) {
+          if (item.witness === witness) item.witness = null;
+          return;
+        }
+        if (applied ? item.wake !== response.wake : !applyWakeResponse(id, item, request, response)) return;
         if (response.wake && !response.wake.terminal && sameLocation(response.wake.native_location, cwd))
           void runWake(id, item, response.wake);
       } finally { if (live(id, item, signal)) item.busy = false; }
@@ -281,7 +418,28 @@ export default {
       if (!id || !validInput(event.messageID) || disposed) return;
       const item = state(id);
       const signal = item.abort.signal;
-      if (!await owned(id, item, signal)) return;
+      // Reserve before any await: delayed enrollment/history retries must never
+      // retrofit a prompt first observed without a known promoted generation.
+      const ordinary = event.metadata?.pallium_relay_wake !== true && typeof event.prompt?.text === "string" &&
+        event.prompt.text !== WAKE_TEXT && pallium.stripIdeContext(event.prompt.text).trim() &&
+        !pallium.stripIdeContext(event.prompt.text).startsWith("/");
+      if (ordinary) {
+        const fresh = !item.roleTurns.has(event.messageID) && !item.naturalClaims.has(event.messageID) && !item.seen.has(event.messageID);
+        if (fresh) item.roleTurns.set(event.messageID, null);
+        item.witness = null;
+        const wake = item.wake;
+        if (fresh && freshWitnessEnabled && live(id, item, signal) && item.endpointId && Number.isInteger(item.scopeGeneration) &&
+            wake?.admitted === true && wake.terminal === false && validInput(wake.native_input_id) && validDelivery(wake.delivery_id) &&
+            Number.isInteger(wake.generation) && wake.generation >= 1 && wake.scope_generation === item.scopeGeneration &&
+            sameLocation(wake.native_location, cwd) && wake.native_input_id !== event.messageID)
+          item.witness = { signal, binding: Object.freeze(base(id, item)), wake: Object.freeze({ ...wake }),
+            inputId: event.messageID, inputHash: createHash("sha256").update(event.prompt.text).digest("hex"), promoted: false };
+      }
+      const firstWitness = item.witness;
+      if (!await owned(id, item, signal)) {
+        if (item.witness === firstWitness) item.witness = null;
+        return;
+      }
       if (event.metadata?.pallium_relay_wake === true && event.prompt?.text === WAKE_TEXT) {
         if (!item.endpointId) await restore(id);
         if (!live(id, item, signal)) return;
@@ -410,6 +568,8 @@ export default {
     }));
 
     registrations.push(await ctx.session.hook("compaction", async (event) => {
+      const item = sessions.get(event?.sessionID);
+      if (item) item.witness = null;
       if (event?.sessionID) await ingestAssistant(event.sessionID);
     }));
 
@@ -427,8 +587,17 @@ export default {
     const events = (async () => {
       try {
         for await (const event of ctx.event.subscribe({ signal: abort.signal })) {
-          if (disposed || !event?.data?.sessionID || (event.location?.directory && !sameLocation(event.location.directory, cwd))) continue;
+          if (disposed || !event?.data?.sessionID) continue;
           const id = event.data.sessionID;
+          // Cancel known proof BEFORE filtering a move's new location. This does
+          // not broaden the existing detach/claim/close authority below.
+          if (["session.deleted", "session.archived", "session.moved", "session.revert.staged", "session.revert.cleared", "session.revert.committed"].includes(event.type) ||
+              event.type?.startsWith("session.compaction.") ||
+              event.type === "session.execution.interrupted" && event.data.reason === "shutdown") {
+            const item = sessions.get(id);
+            if (item) item.witness = null;
+          }
+          if (event.location?.directory && !sameLocation(event.location.directory, cwd)) continue;
           if (event.type === "session.deleted") {
             const item = sessions.get(id);
             await detach(id, item);
@@ -444,6 +613,10 @@ export default {
           }
         }
       } catch (error) { if (!disposed) log(`V2 event stream failed: ${String(error)}`); }
+      finally {
+        freshWitnessEnabled = false;
+        for (const item of sessions.values()) item.witness = null;
+      }
     })();
     let discoveryNeeded = true;
     let discovering = false;

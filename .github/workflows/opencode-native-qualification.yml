@@ -1,4 +1,4 @@
-name: OpenCode bootstrap qualification
+name: OpenCode wake settlement qualification
 
 on:
   pull_request:
@@ -14,27 +14,88 @@ concurrency:
 jobs:
   qualify:
     if: >-
-      github.event.label.name == 'qualify-opencode-2.2.7' &&
+      github.event.label.name == 'qualify-opencode-2.3.0' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.run_attempt == 1
     runs-on: windows-latest
     timeout-minutes: 15
     env:
       CANDIDATE: ${{ github.event.pull_request.head.sha }}
-      BASELINE: b80647da458cac165b47ebf06e30adcf7b94b656
-      OPENCODE_ARCHIVE_SHA256: 91398e0e2c2bc72f6c93dbdae426a0710884ed3277a08558200753c7a995daa8
+      BASELINE: 93f497bf0eed29659630c277626d821d24964524
+      OPENCODE_ARCHIVE_SHA256: 2e14eee53f4abad803d55fdc472c1b12dc3802d687ae204f81e7908bd2ab1895
       PYTHONIOENCODING: utf-8
       PYTHONDONTWRITEBYTECODE: '1'
       NEW_CASES: |
-        startup empty discovery recovers without a recipient prompt: empty then eligible
-        startup empty discovery recovers without a recipient prompt: error and repeated empty then eligible
-        startup nonempty discovery enrolls once and only polls thereafter
-        startup empty discovery does not overlap an in-flight empty response
-        startup empty discovery does not overlap an in-flight eligible response
-        startup empty discovery fences a retired empty response after dispose
-        startup empty discovery fences a retired eligible response after dispose
-        startup empty discovery fences a retired empty response after delete
-        startup empty discovery fences a retired eligible response after delete
+        missing admitted input and unrelated idle cannot settle or issue a new native ID
+        coalesced native wake settles from exact outcome-bearing idle: succeeded
+        coalesced native wake settles from exact outcome-bearing idle: failed
+        coalesced native wake settles from exact outcome-bearing idle: interrupted
+        coalesced native wake rejects unproven after-wait evidence: missing-id
+        coalesced native wake rejects unproven after-wait evidence: invalid-id
+        coalesced native wake rejects unproven after-wait evidence: same-id
+        coalesced native wake rejects unproven after-wait evidence: outcomeless
+        coalesced native wake rejects unproven after-wait evidence: unknown-outcome
+        coalesced native wake rejects unproven after-wait evidence: nonstring-outcome
+        coalesced native wake rejects unproven after-wait evidence: before-input
+        coalesced native wake rejects unproven after-wait evidence: compacted
+        coalesced native wake rejects unproven after-wait evidence: wrong-input
+        coalesced native wake rejects unproven after-wait evidence: wrong-text
+        coalesced native wake rejects unproven after-wait evidence: wrong-marker
+        coalesced native wake rejects unproven after-wait evidence: wrong-generation
+        coalesced native wake rejects unproven after-wait evidence: wrong-delivery
+        coalesced native wake rejects unproven after-wait evidence: uncertain-first-idle
+        coalesced native wake waits for settlement and successor work
+        coalesced native wake fences changed binding after wait: dispose
+        coalesced native wake fences changed binding after wait: location
+        coalesced native wake fences changed binding after wait: endpoint
+        coalesced native wake fences changed binding after wait: scope
+        coalesced native wake fences changed binding after wait: wake-generation
+        coalesced native wake fences changed binding after wait: wake-delivery
+        coalesced native wake fences changed binding after wait: wake-input
+        coalesced native wake fences changed binding after wait: wake-location
+        coalesced native wake keeps uncertainty without replay: wait
+        coalesced native wake keeps uncertainty without replay: context
+        coalesced native wake keeps uncertainty without replay: terminal-rejected
+        coalesced native wake keeps uncertainty without replay: terminal-reply-lost
+        fresh supersession settles exact frozen generation: succeeded
+        fresh supersession settles exact frozen generation: failed
+        fresh supersession settles exact frozen generation: interrupted
+        fresh supersession retains unpromoted candidate: prompt-await
+        fresh supersession retains unpromoted candidate: queued
+        fresh supersession requires observed producer promotion before admission
+        fresh supersession keeps native ID and ordinary input boundaries
+        fresh supersession never retrofits duplicate or historical observations
+        fresh supersession rejects malformed or lost promoted proof
+        fresh supersession rechecks raw evidence across final asynchronous fences
+        fresh supersession fences lifecycle and backend changes during settlement
+        fresh supersession consumes uncertain terminal without stale follow-up
+        known admitted wake reentry preserves admission and uncertainty
+      HTTP_CASES: |
+        test_activation_settlement_preserves_original_authority_before_backlog[semantic-delivered]
+        test_activation_settlement_preserves_original_authority_before_backlog[semantic-pending]
+        test_activation_settlement_preserves_original_authority_before_backlog[semantic-claimed]
+        test_activation_settlement_preserves_original_authority_before_backlog[semantic-expired]
+        test_stale_or_wrong_binding_is_rejected[semantic-poll-overrides0-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-poll-overrides1-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-poll-overrides2-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-poll-overrides3-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-poll-overrides4-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-poll-overrides5-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-poll-overrides6-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-admitted-overrides0-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-admitted-overrides1-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-admitted-overrides2-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-admitted-overrides3-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-admitted-overrides4-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-admitted-overrides5-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-admitted-overrides6-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-terminal-overrides0-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-terminal-overrides1-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-terminal-overrides2-404]
+        test_stale_or_wrong_binding_is_rejected[semantic-terminal-overrides3-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-terminal-overrides4-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-terminal-overrides5-409]
+        test_stale_or_wrong_binding_is_rejected[semantic-terminal-overrides6-404]
     steps:
       - name: Establish disposable job and evidence budgets
         timeout-minutes: 1
@@ -75,15 +136,15 @@ jobs:
             $elapsed = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START
             if ($elapsed -ge 600 -or (git rev-parse HEAD).Trim() -cne $env:CANDIDATE) { throw 'Setup budget or candidate mismatch' }
             $before = @{}
-            foreach ($path in @('integrations/opencode/.opencode/plugins/pallium-v2.mjs', 'integrations/opencode/.opencode/plugins/pallium-common.mjs', 'integrations/opencode/tests/v2-plugin.test.mjs', 'tests/test_opencode_native_wake_e2e.py', '.github/workflows/opencode-native-qualification.yml')) {
+            foreach ($path in @('integrations/opencode/.opencode/plugins/pallium-v2.mjs', 'integrations/opencode/.opencode/plugins/pallium-common.mjs', 'integrations/opencode/tests/v2-plugin.test.mjs', 'tests/test_opencode_native_wake_e2e.py', 'tests/test_opencode_relay_wake_e2e.py', 'tests/test_ci_workflow.py', '.github/workflows/opencode-native-qualification.yml')) {
               $before[$path] = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
             }
             $before | ConvertTo-Json | Set-Content "$env:QUALIFICATION_ROOT/raw/source-before.json" -Encoding utf8
             python -m pip install --disable-pip-version-check -e '.[dev,mcp]' *> "$env:QUALIFICATION_ROOT/raw/setup.log"
             if ($LASTEXITCODE) { throw 'Dependency setup failed; later phases not run' }
             $archive = "$env:QUALIFICATION_ROOT/opencode.zip"
-            Invoke-WebRequest -Uri 'https://github.com/anomalyco/opencode/releases/download/v2.2.7/opencode-windows-x64.zip' -OutFile $archive
-            if ((Get-Item $archive).Length -ne 124794067 -or (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:OPENCODE_ARCHIVE_SHA256) { throw 'Official portable archive identity mismatch' }
+            Invoke-WebRequest -Uri 'https://github.com/anomalyco/opencode/releases/download/v2.3.0/opencode-windows-x64.zip' -OutFile $archive
+            if ((Get-Item $archive).Length -ne 124586665 -or (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:OPENCODE_ARCHIVE_SHA256) { throw 'Official portable archive identity mismatch' }
             Expand-Archive -LiteralPath $archive -DestinationPath "$env:QUALIFICATION_ROOT/host"
             $binary = @(Get-ChildItem "$env:QUALIFICATION_ROOT/host" -Recurse -Filter opencode.exe -File)
             if ($binary.Count -ne 1) { throw 'Expected exactly one portable executable' }
@@ -100,10 +161,10 @@ jobs:
             $versionExit = $LASTEXITCODE
             $versionExit | Set-Content "$env:QUALIFICATION_ROOT/raw/version-exit.txt" -Encoding utf8
             $version = [IO.File]::ReadAllText("$env:QUALIFICATION_ROOT/raw/version-stdout.txt", [Text.Encoding]::UTF8).Trim()
-            if ($versionExit -or $version -cne 'opencode v2.2.7') { throw 'Portable executable version mismatch' }
-            "PALLIUM_OPENCODE_BINARY_VERSION=2.2.7" >> $env:GITHUB_ENV
+            if ($versionExit -or $version -cne 'opencode v2.3.0') { throw 'Portable executable version mismatch' }
+            "PALLIUM_OPENCODE_BINARY_VERSION=2.3.0" >> $env:GITHUB_ENV
             "PALLIUM_OPENCODE_NATIVE_PLUGIN_DIR=$env:GITHUB_WORKSPACE/integrations/opencode/.opencode/plugins" >> $env:GITHUB_ENV
-            "PALLIUM_OPENCODE_BOOTSTRAP_SUMMARY=$env:QUALIFICATION_ROOT/raw/native-summary.json" >> $env:GITHUB_ENV
+            "PALLIUM_OPENCODE_COALESCED_SUMMARY=$env:QUALIFICATION_ROOT/raw/native-summary.json" >> $env:GITHUB_ENV
             "npm_config_cache=$env:QUALIFICATION_ROOT/npm-cache" >> $env:GITHUB_ENV
             $elapsed = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START
             if ($elapsed -gt 480) { throw 'Setup exceeded execution-and-cleanup reserve' }
@@ -125,13 +186,24 @@ jobs:
           Copy-Item 'integrations/opencode/tests/v2-plugin.test.mjs' "$baseline/integrations/opencode/tests/v2-plugin.test.mjs"
           Push-Location $baseline
           try {
-            node --test --test-name-pattern='^startup empty discovery recovers without a recipient prompt: empty then eligible$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/baseline.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/baseline.log"
+            # BASELINE is immutable pre-fix93f497bf, not the published040f source base.
+            node --test --test-name-pattern='^(coalesced native wake settles from exact outcome-bearing idle: succeeded|fresh supersession settles exact frozen generation: succeeded|known admitted wake reentry preserves admission and uncertainty)$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/baseline.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/baseline.log"
             $exit = $LASTEXITCODE
           } finally { Pop-Location }
           "BASELINE_EXIT=$exit" >> $env:GITHUB_ENV
           [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/baseline.xml" -Raw
           $failed = @($xml.SelectNodes('//testcase[failure]'))
-          if ($exit -ne 1 -or $failed.Count -ne 1 -or $failed[0].name -cne 'startup empty discovery recovers without a recipient prompt: empty then eligible' -or $failed[0].failure.InnerText -notmatch 'a later eligible endpoint must enroll without a recipient turn') { throw 'Unexpected baseline outcome; all later phases stop' }
+          $selected = @($xml.SelectNodes('//testcase[not(skipped)]'))
+          if ($exit -ne 1 -or $selected.Count -ne 3 -or $failed.Count -ne 3 -or $xml.SelectNodes('//testcase[error]').Count) { throw 'Unexpected baseline outcome; all later phases stop' }
+          $expected = @{
+            'coalesced native wake settles from exact outcome-bearing idle: succeeded' = 'coalesced exact wake must settle activation without replay'
+            'fresh supersession settles exact frozen generation: succeeded' = 'fresh promoted ordinary work must release the missing admitted anchor'
+            'known admitted wake reentry preserves admission and uncertainty' = 'known admitted wake must not rewrite admission'
+          }
+          foreach ($name in $expected.Keys) {
+            $case = @($selected | Where-Object { $_.name -ceq $name })
+            if ($case.Count -ne 1 -or -not $case[0].failure -or $case[0].failure.InnerText -notmatch [regex]::Escape($expected[$name])) { throw "Unexpected baseline assertion: $name; all later phases stop" }
+          }
           exit 0 # Expected RED validated; do not propagate its native exit 1 through the Actions shell.
 
       - name: Verify the corrected focused regression
@@ -141,12 +213,16 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START -gt 480) { throw 'Insufficient remaining qualification budget' }
-          node --test --test-name-pattern='^startup empty discovery recovers without a recipient prompt: empty then eligible$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/focused.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/focused.log"
+          node --test --test-name-pattern='^(coalesced native wake settles from exact outcome-bearing idle: succeeded|fresh supersession settles exact frozen generation: succeeded|known admitted wake reentry preserves admission and uncertainty)$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/focused.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/focused.log"
           $exit = $LASTEXITCODE
           "FOCUSED_EXIT=$exit" >> $env:GITHUB_ENV
           [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/focused.xml" -Raw
           $selected = @($xml.SelectNodes('//testcase[not(skipped)]'))
-          if ($exit -ne 0 -or $selected.Count -ne 1 -or $selected[0].name -cne 'startup empty discovery recovers without a recipient prompt: empty then eligible' -or $selected[0].failure -or $selected[0].error) { throw 'Corrected focused regression did not pass exactly once' }
+          if ($exit -ne 0 -or $selected.Count -ne 3 -or $xml.SelectNodes('//testcase[failure or error]').Count) { throw 'Corrected focused regressions did not all pass' }
+          foreach ($name in @('coalesced native wake settles from exact outcome-bearing idle: succeeded', 'fresh supersession settles exact frozen generation: succeeded', 'known admitted wake reentry preserves admission and uncertainty')) {
+            $case = @($selected | Where-Object { $_.name -ceq $name })
+            if ($case.Count -ne 1) { throw "Corrected focused regression did not pass exactly once: $name" }
+          }
 
       - name: Validate the affected package once
         id: package
@@ -155,32 +231,68 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START -gt 540) { throw 'Insufficient remaining package/native/cleanup budget' }
+          # Exercise the ACTUAL embedded extractor and native assertion before
+          # paying for native execution, within this existing package phase/cap.
+          python -m pytest tests/test_ci_workflow.py::test_opencode_qualification_executes_embedded_failure_locator tests/test_ci_workflow.py::test_opencode_recovery_payload_oracle_rejects_extra_presentation --noconftest -q -n 0 --tb=short --junitxml="$env:QUALIFICATION_ROOT/raw/package-contracts.xml" *> "$env:QUALIFICATION_ROOT/raw/package.log"
+          $exit = $LASTEXITCODE
+          "PACKAGE_EXIT=$exit" >> $env:GITHUB_ENV
+          if ($exit) { throw 'Extractor/oracle preflight failed; native witness not run' }
+          [xml]$contractXml = Get-Content "$env:QUALIFICATION_ROOT/raw/package-contracts.xml" -Raw
+          $checks = @($contractXml.SelectNodes('//testcase'))
+          if ($checks.Count -ne 2 -or $contractXml.SelectNodes('//testcase[skipped or failure or error]').Count) {
+            "PACKAGE_EXIT=1" >> $env:GITHUB_ENV
+            throw 'Extractor/oracle preflight did not execute exactly two passing checks'
+          }
+          foreach ($name in @('test_opencode_qualification_executes_embedded_failure_locator', 'test_opencode_recovery_payload_oracle_rejects_extra_presentation')) {
+            $check = @($checks | Where-Object { $_.name -ceq $name })
+            if ($check.Count -ne 1) { "PACKAGE_EXIT=1" >> $env:GITHUB_ENV; throw "Required extractor/oracle preflight missing or duplicated: $name" }
+          }
           # npm's node-options config affects lifecycle scripts, not npm itself.
-          npm --prefix integrations/opencode --node-options="--test-reporter=junit --test-reporter-destination=$env:QUALIFICATION_ROOT/raw/package.xml" test *> "$env:QUALIFICATION_ROOT/raw/package.log"
+          npm --prefix integrations/opencode --node-options="--test-reporter=junit --test-reporter-destination=$env:QUALIFICATION_ROOT/raw/package.xml" test *>> "$env:QUALIFICATION_ROOT/raw/package.log"
           $exit = $LASTEXITCODE
           "PACKAGE_EXIT=$exit" >> $env:GITHUB_ENV
           if ($exit) { throw 'Package validation failed; native witness not run' }
           [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/package.xml" -Raw
           foreach ($name in ($env:NEW_CASES -split "\r?\n" | Where-Object { $_ })) {
             $selected = @($xml.SelectNodes('//testcase') | Where-Object { $_.name -ceq $name })
-            if ($selected.Count -ne 1 -or $selected[0].skipped -or $selected[0].failure -or $selected[0].error) { throw "New discovery case missing, skipped or failed: $name" }
+            if ($selected.Count -ne 1 -or $selected[0].skipped -or $selected[0].failure -or $selected[0].error) { throw "Required settlement case missing, skipped or failed: $name" }
           }
 
-      - name: Qualify the released native bootstrap journey once
+      - name: Qualify released native coalescing and automatic backlog once
         id: native
         timeout-minutes: 2
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          if ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START -gt 660) { throw 'Insufficient native and cleanup reserve' }
-          python -m pytest tests/test_opencode_native_wake_e2e.py::test_released_native_empty_discovery_recovers_without_natural_prompt -m slow -q -n 0 --basetemp "$env:QUALIFICATION_ROOT/raw/native" --junitxml="$env:QUALIFICATION_ROOT/raw/native.xml" *> "$env:QUALIFICATION_ROOT/raw/native.log"
+          if ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START -gt 540) { throw 'Insufficient native/HTTP/cleanup reserve' }
+          python -m pytest tests/test_opencode_native_wake_e2e.py::test_released_native_coalesced_settlement_and_automatic_backlog -m slow -q -n 0 --tb=short --basetemp "$env:QUALIFICATION_ROOT/raw/native" --junitxml="$env:QUALIFICATION_ROOT/raw/native.xml" *> "$env:QUALIFICATION_ROOT/raw/native.log"
           $exit = $LASTEXITCODE
           "NATIVE_EXIT=$exit" >> $env:GITHUB_ENV
           [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/native.xml" -Raw
           $cases = @($xml.SelectNodes('//testcase'))
           if ($exit -ne 0 -or $cases.Count -ne 1 -or $cases[0].skipped -or $cases[0].failure -or $cases[0].error) { throw 'Native witness failed or did not execute' }
-          $summary = Get-Content $env:PALLIUM_OPENCODE_BOOTSTRAP_SUMMARY -Raw | ConvertFrom-Json
-          if (@($summary.PSObject.Properties | Where-Object { $_.Value -cne $true }).Count) { throw 'Native bootstrap evidence or owned drain incomplete' }
+          $summary = Get-Content $env:PALLIUM_OPENCODE_COALESCED_SUMMARY -Raw | ConvertFrom-Json
+          if (@($summary.PSObject.Properties).Count -ne 13 -or $summary.fresh_supersession_reload_recovery -cne $true -or @($summary.PSObject.Properties | Where-Object { $_.Value -cne $true }).Count) { throw 'Native settlement evidence or owned drain incomplete' }
+
+      - name: Verify affected HTTP contracts once
+        id: backend
+        timeout-minutes: 1
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START -gt 660) { throw 'Insufficient HTTP/cleanup reserve' }
+          python -u -m pytest tests/test_opencode_relay_wake_e2e.py::test_activation_settlement_preserves_original_authority_before_backlog tests/test_opencode_relay_wake_e2e.py::test_stale_or_wrong_binding_is_rejected -vv -n 0 --junitxml="$env:QUALIFICATION_ROOT/raw/backend.xml" *> "$env:QUALIFICATION_ROOT/raw/backend.log"
+          $exit = $LASTEXITCODE
+          "BACKEND_EXIT=$exit" >> $env:GITHUB_ENV
+          [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/backend.xml" -Raw
+          $cases = @($xml.SelectNodes('//testcase'))
+          if ($exit -ne 0 -or $cases.Count -ne 25 -or $xml.SelectNodes('//testcase[skipped or failure or error]').Count) { throw 'HTTP contracts failed or did not execute exactly 25 cases' }
+          $states = @($cases | Where-Object { $_.name -like 'test_activation_settlement_preserves_original_authority_before_backlog*' })
+          if ($states.Count -ne 4) { throw 'Original-state matrix did not execute exactly four cases' }
+          foreach ($name in ($env:HTTP_CASES -split "\r?\n" | Where-Object { $_ })) {
+            $selected = @($cases | Where-Object { $_.name -ceq $name })
+            if ($selected.Count -ne 1) { throw "Required HTTP case missing or duplicated: $name" }
+          }
 
       - name: Verify owned drain and produce public-safe evidence
         if: always()
@@ -191,6 +303,7 @@ jobs:
           BASELINE_OUTCOME: ${{ steps.baseline.outcome }}
           FOCUSED_OUTCOME: ${{ steps.focused.outcome }}
           PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+          BACKEND_OUTCOME: ${{ steps.backend.outcome }}
           NATIVE_OUTCOME: ${{ steps.native.outcome }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -241,7 +354,40 @@ jobs:
                       'captured_bytes': len(raw), 'encoding': 'utf-8/backslashreplace',
                       'truncated': path.stat().st_size > len(raw) or len(text) > 4096,
                       'redacted': safe != text}
+          def failure_locator(value, checkout_root):
+              allowed = ('tests/test_opencode_native_wake_e2e.py', 'tests/test_opencode_relay_wake_e2e.py')
+              classes = ('AssertionError', 'RuntimeError', 'TimeoutError', 'ValueError', 'TypeError', 'OSError', 'Failed')
+              kinds = '|'.join(classes)
+              checkout = checkout_root.replace('\\', '/').rstrip('/')
+              frames, exceptions = [], []
+              total = 0
+              candidate = unknown_exception = False
+              for line in str(value).splitlines():
+                  candidate = candidate or '.py:' in line
+                  match = re.fullmatch(r'(.+\.py):([1-9][0-9]{0,8}): (?:in [A-Za-z_][A-Za-z0-9_]*|(' + kinds + '))', line)
+                  if match:
+                      path = match[1].replace('\\', '/')
+                      if checkout and path.startswith(checkout + '/'):
+                          path = path[len(checkout) + 1:]
+                      if path in allowed:
+                          total += 1
+                          frames.append({'file': path, 'line': int(match[2]), 'kind': 'footer' if match[3] else 'frame'})
+                          frames = frames[-8:]
+                          if match[3] and match[3] not in exceptions:
+                              exceptions.append(match[3])
+                  # Copy only a fixed class token, never the E-line message or values.
+                  error = re.fullmatch(r'E[ \t]+(' + kinds + r')(?::.*)?', line)
+                  if error and error[1] not in exceptions:
+                      exceptions.append(error[1])
+                  elif re.match(r'E[ \t]+[A-Za-z_][A-Za-z0-9_]*(?::|$)', line) and not error:
+                      unknown_exception = True
+              return {'state': 'captured' if frames else 'unparseable' if candidate else 'missing',
+                      'frames': frames, 'order': 'observed_tail', 'frames_truncated': total > 8,
+                      'frames_omitted_prefix': max(0, total - 8),
+                      'exception_state': 'captured' if exceptions else 'unparseable' if unknown_exception else 'missing',
+                      'exception_classes': exceptions}
           def failure_details(value):
+              locator = failure_locator(value, os.environ.get('GITHUB_WORKSPACE', ''))
               # Retain meaningful assertions/errors, never arbitrary provider/body dumps.
               lines = str(value).splitlines()
               selected = []
@@ -250,10 +396,10 @@ jobs:
                       continue
                   if re.search(r'(?i)assert|error|fail|expected|actual|timeout|status|version|mismatch|unexpected|not allowed', line):
                       selected.append(sanitize(line))
-              return {'lines': selected[:24], 'truncated': len(selected) > 24,
+              return {'locator': locator, 'lines': selected[:24], 'truncated': len(selected) > 24,
                       'raw_lines': len(lines), 'note': 'paths/identities/secrets and provider-body lines omitted'}
           phases = {}
-          for name in ('setup', 'baseline', 'focused', 'package', 'native'):
+          for name in ('setup', 'baseline', 'focused', 'package', 'backend', 'native'):
               item = {'outcome': os.environ.get(name.upper() + '_OUTCOME', 'not_run')}
               raw_exit = os.environ.get(name.upper() + '_EXIT')
               if raw_exit is not None:
@@ -274,14 +420,15 @@ jobs:
                       if failed:
                           item['failures'] = failed[:12]
                           item['failures_truncated'] = len(failed) > 12
-                      if name == 'package':
-                          item['new_cases'] = {}
-                          for expected in os.environ['NEW_CASES'].splitlines():
+                      if name in ('package', 'backend'):
+                          inventory_key = 'new_cases' if name == 'package' else 'required_cases'
+                          item[inventory_key] = {}
+                          for expected in os.environ['NEW_CASES' if name == 'package' else 'HTTP_CASES'].splitlines():
                               if not expected:
                                   continue
                               found = [c for c in cases if c.get('name') == expected]
                               state = 'missing' if not found else 'duplicate' if len(found) != 1 else 'skipped' if found[0].find('skipped') is not None else 'failed' if found[0].find('failure') is not None or found[0].find('error') is not None else 'passed'
-                              item['new_cases'][expected] = state
+                              item[inventory_key][expected] = state
                   except ET.ParseError:
                       item['report'] = 'incomplete_or_malformed'
               if item['outcome'] not in ('success', 'skipped', 'not_run'):
@@ -290,6 +437,16 @@ jobs:
                       with log.open(encoding='utf-8', errors='replace') as stream:
                           tail = stream.read(1024 * 1024)
                       item['failure_log'] = failure_details(tail)
+                      if name == 'backend':
+                          progress = []
+                          for line in tail.splitlines():
+                              for expected in os.environ['HTTP_CASES'].splitlines():
+                                  node = 'tests/test_opencode_relay_wake_e2e.py::' + expected
+                                  if expected and line.startswith(node):
+                                      words = line[len(node):].split()
+                                      state = words[0] if words and words[0] in ('PASSED', 'FAILED', 'ERROR', 'SKIPPED') else 'started'
+                                      progress.append({'case': sanitize(expected), 'state': state})
+                          item['progress'] = progress[-25:]
               phases[name] = item
           version_exit = root / 'raw' / 'version-exit.txt'
           phases['setup']['version_command'] = {
@@ -298,7 +455,7 @@ jobs:
               'exit_code': int(version_exit.read_text(encoding='utf-8-sig').strip()) if version_exit.exists() else 'not_captured'}
           phases['setup']['exception'] = bounded_text('setup-exception.txt')
           summary = {'candidate': os.environ['CANDIDATE'], 'baseline': os.environ['BASELINE'],
-                     'expected_host_version': '2.2.7',
+                     'expected_host_version': '2.3.0',
                      'binary_reported_version': os.environ.get('PALLIUM_OPENCODE_BINARY_VERSION', 'not_verified'),
                      'archive_sha256': os.environ['OPENCODE_ARCHIVE_SHA256'],
                       'binary_sha256': os.environ.get('PALLIUM_OPENCODE_BINARY_SHA256', 'not_captured'),
@@ -307,8 +464,10 @@ jobs:
                      'owned_drain_final': os.environ['OWNED_DRAIN_FINAL'] == 'True',
                      'limits': 'one job; no automatic retry; raw synthetic evidence not uploaded'}
           native = root / 'raw' / 'native-summary.json'
-          keys = ('host_version_verified', 'startup_empty_settled', 'restore_empty_settled', 'attached_before_ack', 'provider_payload',
-                  'exact_native_input', 'native_settled', 'public_delivered_once', 'owned_drain')
+          keys = ('host_version_verified', 'ordered_coalesced_outcome', 'attached_before_ack', 'lost_terminal_reply_reconciled',
+                  'automatic_backlog_over_two', 'unique_native_admissions', 'provider_payloads', 'terminal_reload_safe',
+                  'missing_proof_compaction_hold', 'missing_proof_reload_hold', 'no_interrupt', 'owned_drain',
+                  'fresh_supersession_reload_recovery')
           if native.exists():
               data = json.loads(native.read_text(encoding='utf-8'))
               summary['native_checks'] = {key: data.get(key) is True for key in keys}

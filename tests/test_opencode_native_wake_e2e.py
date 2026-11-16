@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -24,6 +25,65 @@ from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 pytestmark = pytest.mark.slow
+
+
+def _assert_session_list(page, expected):
+    """An unfiltered limit=2 short page proves zero or one session at this read."""
+    assert isinstance(page, dict) and isinstance(page.get("data"), list)
+    rows = page["data"]
+    assert len(rows) < 2, "full session page cannot prove a sole fresh session"
+    assert all(isinstance(row, dict) and isinstance(row.get("id"), str) for row in rows)
+    assert [row["id"] for row in rows] == expected
+
+
+def _primary_gate(headers, target, first, entered, lock):
+    """Route the actual provider request, never its payload or delivery success."""
+    with lock:
+        try:
+            raw = headers.get("x-pallium-fixture", "")
+            assert 0 < len(raw) <= 4096
+            tag = json.loads(raw)
+            assert isinstance(tag, dict) and tag.get("version") == 1
+            assert isinstance(target, str) and tag.get("session") == target
+            assert isinstance(tag.get("instance"), str) and 0 < len(tag["instance"]) <= 64
+            if first["value"] is None:
+                assert tag["instance"] == first["instance"]
+            kind = tag.get("kind")
+            assert kind in ("primary", "title", "compaction", "generate")
+            if kind != "primary":
+                assert "prefix" not in tag
+                return False  # Auxiliary output must not wait for the primary it precedes.
+            if first["value"] is None:
+                first["value"] = {"tag": tag, "error": "invalid first primary identity"}
+                expected = tag.get("expected")
+                assert tag.get("prefix") is True and tag.get("completed") is True and tag.get("error") is None
+                assert type(tag.get("invocation")) is int and tag["invocation"] > 0
+                assert isinstance(expected, dict) and expected.get("session") == target
+                assert isinstance(tag.get("input"), str) and re.fullmatch(r"msg_[A-Za-z0-9_-]{1,508}", tag["input"])
+                assert expected.get("input") == tag["input"]
+                assert type(expected.get("generation")) is int and expected["generation"] >= 1
+                assert isinstance(expected.get("delivery"), str) and re.fullmatch(r"relay-delivery-[0-9a-f]{32}", expected["delivery"])
+                first["value"]["error"] = None
+            entered.set()  # FIRST is latched before gating; later requests cannot replace it.
+            return True
+        except (AssertionError, ValueError, TypeError, KeyError):
+            if first["value"] is None:
+                first["value"] = {"tag": None, "error": "invalid first request identity"}
+            entered.set()  # Wake Python main, not a handler-thread-only assertion/timeout.
+            return False
+
+
+def _assert_first_primary(first, target, delivery, prompts):
+    result = first["value"]
+    assert result is not None and result["error"] is None, result
+    tag = result["tag"]
+    assert tag["session"] == target and tag["prefix"] is True and tag["completed"] is True
+    assert len(prompts) == 1, "first prefix must have one independently observed wake.prompt"
+    prompt = prompts[0]
+    assert prompt["sessionID"] == target and prompt["inputID"] == tag["input"]
+    assert tag["expected"] == {"session": target, "input": prompt["inputID"], "delivery": delivery,
+                               "generation": prompt["metadata"]["generation"]}
+    assert prompt["metadata"]["delivery_id"] == delivery
 
 
 @pytest.mark.parametrize("existing,phase,retired", [
@@ -186,16 +246,24 @@ def test_released_native_empty_discovery_recovers_without_natural_prompt(client,
     _released_native_journey(client, tmp_path, test_db_url, monkeypatch, bootstrap=True)
 
 
-def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, bootstrap=False):
+def test_released_native_coalesced_settlement_and_automatic_backlog(client, tmp_path, test_db_url, monkeypatch):
+    _released_native_journey(client, tmp_path, test_db_url, monkeypatch, coalesced=True)
+
+
+def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, bootstrap=False, coalesced=False):
     import hashlib
 
     binary = os.environ.get("PALLIUM_OPENCODE_V2_BINARY")
     if not binary or not Path(binary).is_file():
-        pytest.skip("set PALLIUM_OPENCODE_V2_BINARY to the released 2.0.22 executable")
+        pytest.skip("set PALLIUM_OPENCODE_V2_BINARY to the intended released executable (2.3.0 for coalesced qualification)")
     bootstrap_summary = {"host_version_verified": False, "startup_empty_settled": False, "restore_empty_settled": False,
                          "attached_before_ack": False, "provider_payload": False,
                          "exact_native_input": False, "native_settled": False,
-                         "public_delivered_once": False, "owned_drain": False}
+                          "public_delivered_once": False, "owned_drain": False}
+    coalesced_summary = dict.fromkeys(("host_version_verified", "ordered_coalesced_outcome", "attached_before_ack",
+        "lost_terminal_reply_reconciled", "automatic_backlog_over_two", "unique_native_admissions",
+        "provider_payloads", "terminal_reload_safe", "missing_proof_compaction_hold", "missing_proof_reload_hold",
+        "no_interrupt", "owned_drain", "fresh_supersession_reload_recovery"), False)
     root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -210,6 +278,9 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
     subprocess.run(["git", "-C", str(foreign), "remote", "add", "origin", "https://example.test/team/foreign.git"], check=True)
     scope = {"container_ref": "git:example.test/team/relay"}
     requests = []
+    session = None
+    first_primary = {"instance": None, "value": None}
+    primary_lock = threading.Lock()
     release = threading.Event()
     release.set()
     entered = threading.Event()
@@ -230,6 +301,17 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
     retirement_resumed = threading.Event()
     retirement_acks = []
     capture_evidence = {}
+    wake_responses = []
+    terminal_reply_lost = threading.Event()
+    if coalesced:
+        terminal_reply_lost.set()
+    lost_terminals = []
+    proof_hold = threading.Event()
+    proof_held = threading.Event()
+    proof_release = threading.Event()
+    terminal_reload_hold = threading.Event()
+    terminal_reload_ready = threading.Event()
+    terminal_reload_release = threading.Event()
 
     class RelayHTTP(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -237,11 +319,25 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
 
         def forward(self):
             raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            if coalesced and self.path == "/fixture/wake-wait":
+                # Only the plugin's outside-hook wait is gated. Native context,
+                # compaction and all settlement evidence still come from the host.
+                if proof_hold.is_set():
+                    proof_hold.clear()
+                    proof_held.set()
+                    assert proof_release.wait(30), "after-wait compaction gate not released"
+                self.send_response(200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"{}")
+                return
             if service_unavailable.is_set():
                 self.send_error(503, "isolated test outage")
                 return
             if self.path == "/relay/opencode/wake" and raw:
                 body = json.loads(raw)
+                if coalesced and body["operation"] == "poll" and terminal_reload_hold.is_set() and terminal_reload_ready.is_set():
+                    assert terminal_reload_release.wait(30), "already-terminal reload gate not released"
                 if body["operation"] == "context" and fail_context.is_set():
                     fail_context.clear()
                     failed_contexts.append(body)
@@ -251,6 +347,16 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
                 retirement_acks.append(json.loads(raw))
             response = relay_client[0].request(self.command, self.path, content=raw or None,
                                       headers={"Content-Type": "application/json"})
+            if coalesced and self.path == "/relay/opencode/wake":
+                body = json.loads(raw)
+                wake_responses.append({"request": body, "status": response.status_code, "response": response.json()})
+                if body["operation"] == "terminal" and response.is_success and terminal_reload_hold.is_set():
+                    terminal_reload_ready.set()
+                if body["operation"] == "terminal" and response.is_success and terminal_reply_lost.is_set():
+                    terminal_reply_lost.clear()
+                    lost_terminals.append(body)
+                    self.close_connection = True
+                    return
             if self.path in ("/items", "/item-and-query") and response.is_success:
                 body = json.loads(raw)
                 result = response.json()
@@ -286,8 +392,13 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             requests.append(body)
-            entered.set()
-            assert release.wait(40), "provider not released"
+            if coalesced:
+                primary = _primary_gate(self.headers, session, first_primary, entered, primary_lock)
+            else:
+                entered.set()
+                primary = True
+            if primary:
+                assert release.wait(40), "provider not released"
             tool = "IDLE_PAYLOAD_שלום" in json.dumps(body, ensure_ascii=False) and not tool_emitted.is_set()
             assistant_marker = f"NATIVE_ASSISTANT_שלום_{len(requests)}"
             if not tool:
@@ -365,20 +476,89 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
 import {appendFileSync} from 'node:fs';
 import {extractV2AssistantTurn,buildWorkTraceMetadata} from './pallium-common.mjs';
 import {randomUUID} from 'node:crypto';
+// FIRST_PRIMARY_OBSERVER_START
+function primaryBoundary(instance) {
+ let live=true,expected=null,slot=null,serial=0,consumed=false,fault=null;
+ const input=id=>typeof id==='string'&&id.length<=512&&/^msg_[A-Za-z0-9_-]+$/.test(id);
+ const invalidate=reason=>{fault??=reason;if(slot)slot.valid=false;};
+ const prompt=args=>{
+  if(!live||consumed)return;
+  if(expected){invalidate('duplicate first prompt');return;}
+  expected=Object.freeze({session:args.sessionID,input:args.id,delivery:args.metadata?.delivery_id,generation:args.metadata?.generation});
+  if(typeof expected.session!=='string'||!expected.session||!input(expected.input)||
+   typeof expected.delivery!=='string'||!/^relay-delivery-[0-9a-f]{32}$/.test(expected.delivery)||
+   !Number.isSafeInteger(expected.generation)||expected.generation<1)invalidate('invalid expected wake');
+ };
+ const enter=event=>{
+  if(!live||consumed)return null;
+  if(slot)invalidate('overlapping or superseded context');
+  slot={id:++serial,session:event.sessionID,input:event.messages?.findLast(m=>m?.role==='user'&&input(m.id))?.id,
+   completed:false,valid:true};
+  return slot;
+ };
+ const complete=(token,resolved)=>{
+  if(!token||!live||consumed)return;
+  if(slot!==token||!token.valid){invalidate('stale context completion');return;}
+  if(token.completed){invalidate('duplicate context completion');return;}
+  if(!resolved){invalidate('context threw');return;}
+  token.completed=true;
+ };
+ const observe=event=>{
+  if(!live)return;
+  const tag={version:1,instance,kind:event.kind,session:event.sessionID};
+  if(event.kind==='primary'){
+   tag.prefix=!consumed;
+   if(!consumed){
+    consumed=true; // FIRST primary, not first matching primary. No await before tagging.
+    const token=slot;slot=null;
+    Object.assign(tag,{invocation:token?.id,input:token?.input,expected,completed:token?.completed===true,
+     error:fault||(!expected?'missing expected wake':!token?.valid||!token.completed?'incomplete context':
+      token.session!==expected.session||event.sessionID!==expected.session||token.input!==expected.input?'wrong context identity':null)});
+    if(token)token.valid=false;
+   }
+  }
+  event.request.headers.set('x-pallium-fixture',JSON.stringify(tag)); // SAME Request; never inspect its body.
+ };
+ const retire=()=>{live=false;if(slot)slot.valid=false;slot=null;expected=null;};
+ const attach=async(ctx,setup,restore)=>{
+  let registration,cleanup,closing;
+  const close=()=>{
+   if(!closing){
+    retire(); // Invalidate before any cleanup await or reentrant callback.
+    closing=Promise.resolve().then(async()=>{
+     const errors=[];
+     for(const action of [cleanup,()=>registration?.dispose(),restore]){
+      try{await action?.();}catch(error){errors.push(error);}
+     }
+     if(errors.length)throw new AggregateError(errors,'fixture observer cleanup failed');
+    });
+   }
+   return closing;
+  };
+  try{registration=await ctx.session.hook('http.request',observe);cleanup=await setup();}
+  catch(error){try{await close();}catch(disposal){throw new AggregateError([error,disposal],'fixture setup and disposal failed');}throw error;}
+  return close;
+ };
+ return {prompt,enter,complete,observe,retire,attach};
+}
+// FIRST_PRIMARY_OBSERVER_END
 export default {...production,setup:async ctx=>{
   const instance=randomUUID(),directory=ctx.location.directory;
   const log=(kind,detail={})=>appendFileSync(process.env.PALLIUM_NATIVE_LIFECYCLE,JSON.stringify({kind,time:Date.now(),instance,directory,...detail})+'\\n');
   log('setup');
-  const bootstrap=process.env.PALLIUM_NATIVE_BOOTSTRAP==='1',emptyReads=new Set();
+    const bootstrap=process.env.PALLIUM_NATIVE_BOOTSTRAP==='1',coalesced=process.env.PALLIUM_NATIVE_COALESCED==='1',emptyReads=new Set();
+   const primary=coalesced?primaryBoundary(instance):null;
   let activeContext;
   const originalFetch=globalThis.fetch;
   const observedFetch=async(input,init)=>{
    const url=new URL(input?.url??input);
    if(url.port!==process.env.PALLIUM_PORT)return originalFetch(input,init);
-   if(url.pathname==='/relay/deliveries/ack'){
-    const body=JSON.parse(init.body),text=JSON.stringify(activeContext?.messages||[]);
-    log('bootstrap.ack',{attached:text.includes('BOOTSTRAP_PAYLOAD_שלום')&&
-     text.includes('Lower-authority context')&&text.includes(body.delivery_id)});
+    if(url.pathname==='/relay/deliveries/ack'){
+     const body=JSON.parse(init.body),text=JSON.stringify(activeContext?.messages||[]);
+     log('bootstrap.ack',{attached:text.includes('BOOTSTRAP_PAYLOAD_שלום')&&
+      text.includes('Lower-authority context')&&text.includes(body.delivery_id)});
+     if(coalesced)log('wake.ack',{deliveryID:body.delivery_id,
+      attached:text.includes('Lower-authority context')&&text.includes(body.delivery_id)});
    }
    const response=await originalFetch(input,init);
    if(url.pathname==='/relay/sessions'&&response.ok){
@@ -395,13 +575,24 @@ export default {...production,setup:async ctx=>{
    }
    return response;
   };
-  if(bootstrap)globalThis.fetch=observedFetch;
-  const session={...ctx.session,context:async args=>{
+   if(bootstrap||coalesced)globalThis.fetch=observedFetch;
+   const session={...ctx.session,context:async args=>{
   const result=await ctx.session.context(args);
   const messages=Array.isArray(result)?result:result.data;
   const turn=extractV2AssistantTurn(messages);
-  log('capture.context',{sessionID:args.sessionID,messages,turn,workTrace:turn?buildWorkTraceMetadata(turn):null});
-  return result;
+   log('capture.context',{sessionID:args.sessionID,messages,turn,workTrace:turn?buildWorkTraceMetadata(turn):null});
+   return result;
+   },prompt:async args=>{
+     primary?.prompt(args);
+     if(coalesced)log('wake.prompt',{sessionID:args.sessionID,inputID:args.id,metadata:args.metadata});
+    return ctx.session.prompt(args);
+   },wait:async args=>{
+    const result=await ctx.session.wait(args);
+    if(coalesced)await originalFetch('http://localhost:'+process.env.PALLIUM_PORT+'/fixture/wake-wait');
+    return result;
+   },interrupt:async args=>{
+    if(coalesced)log('wake.interrupt',{sessionID:args.sessionID});
+    return ctx.session.interrupt(args);
   },get:async args=>{
    const result=await ctx.session.get(args);
    if(bootstrap&&emptyReads.delete(args.sessionID)&&result?.location?.directory===directory)
@@ -412,16 +603,21 @@ export default {...production,setup:async ctx=>{
   },hook:(name,callback)=>ctx.session.hook(name,async event=>{
   const identity={sessionID:event?.sessionID,inputID:event?.messageID??event?.messages?.findLast(message=>message?.role==='user')?.id};
   log(name+'.enter',identity);
-   if(bootstrap&&name==='context')activeContext=event;
-   try{return await callback(event)}finally{
-    if(bootstrap&&name==='context')activeContext=undefined;
+     if((bootstrap||coalesced)&&name==='context')activeContext=event;
+    const invocation=name==='context'?primary?.enter(event):null;
+    let resolved=false;
+    try{const result=await callback(event);resolved=true;return result;}finally{
+      primary?.complete(invocation,resolved);
+      if((bootstrap||coalesced)&&name==='context')activeContext=undefined;
     log(name+'.done',identity)
    }
  })};
- const cleanup=await production.setup({...ctx,session});
-  return async()=>{log('cleanup.enter');await cleanup();
-   if(bootstrap&&globalThis.fetch===observedFetch)globalThis.fetch=originalFetch;
-   log('cleanup.done')};
+  const restore=()=>{if((bootstrap||coalesced)&&globalThis.fetch===observedFetch)globalThis.fetch=originalFetch;};
+  let cleanup;
+  try{cleanup=primary?await primary.attach(ctx,()=>production.setup({...ctx,session}),restore):
+   await production.setup({...ctx,session});}catch(error){restore();throw error;}
+  return async()=>{log('cleanup.enter');try{await cleanup?.();}finally{if(!primary)restore();}
+   log('cleanup.done');};
 }};
 """, encoding="utf-8")
     (plugin / "package.json").write_text('{"type":"module","main":"index.js"}')
@@ -445,6 +641,8 @@ export default {...production,setup:async ctx=>{
             ("CONFIG", "config"), ("DATA", "data"), ("CACHE", "cache"), ("STATE", "state"))}})
     if bootstrap:
         env["PALLIUM_NATIVE_BOOTSTRAP"] = "1"
+    if coalesced:
+        env["PALLIUM_NATIVE_COALESCED"] = "1"
     processes = []
     logs = []
 
@@ -474,6 +672,8 @@ export default {...production,setup:async ctx=>{
         pytest.fail("native server did not start: " + str(logs[-15:]))
 
     def api(method, path, body=None, headers=None):
+        if coalesced and method == "GET" and path == "/api/session":
+            path += "?limit=2"
         auth = base64.b64encode(b"opencode:local-test").decode()
         request = Request(url + path, method=method, data=None if body is None else json.dumps(body).encode(),
                           headers={"Authorization": "Basic " + auth, "Content-Type": "application/json", **(headers or {})})
@@ -522,10 +722,12 @@ export default {...production,setup:async ctx=>{
 
     try:
         process, url = start()
-        if bootstrap:
-            assert api("GET", "/api/info")["version"] == "2.2.7", "released host version mismatch"
+        if bootstrap or coalesced:
+            expected_version = "2.3.0" if coalesced else "2.2.7"
+            assert api("GET", "/api/info")["version"] == expected_version, "released host version mismatch"
             bootstrap_summary["host_version_verified"] = True
-        for directory in ([workspace] if bootstrap else [workspace, *locations, foreign]):
+            coalesced_summary["host_version_verified"] = True
+        for directory in ([workspace] if bootstrap or coalesced else [workspace, *locations, foreign]):
             eventually(lambda: activate_plugin(directory))
         def observations():
             return [json.loads(line) for line in lifecycle.read_text(encoding="utf-8").splitlines()]
@@ -533,8 +735,252 @@ export default {...production,setup:async ctx=>{
         if bootstrap:
             eventually(lambda: any(row["kind"] == "bootstrap.startup.empty.settled" for row in observations()))
             bootstrap_summary["startup_empty_settled"] = True
-        session = api("POST", "/api/session", {"location": {"directory": str(workspace).replace("\\", "/")}})["data"]["id"]
+        if coalesced:
+            before_sessions = api("GET", "/api/session")
+            _assert_session_list(before_sessions, [])
+            first_primary["instance"] = [row for row in observations() if row["kind"] == "setup"][-1]["instance"]
+        created = api("POST", "/api/session", {"location": {"directory": str(workspace).replace("\\", "/")},
+                     **({"title": "Wake lifecycle fixture"} if coalesced else {})})["data"]
+        session = created["id"]
         prefix = "/api/session/" + session
+        if coalesced:
+            assert isinstance(session, str) and re.fullmatch(r"ses_[A-Za-z0-9_-]+", session)
+            assert created["title"] == "Wake lifecycle fixture" and not created.get("parentID")
+            assert os.path.normcase(os.path.realpath(created["location"]["directory"])) == os.path.normcase(os.path.realpath(workspace))
+            confirmed = api("GET", prefix)["data"]
+            assert confirmed["id"] == session and confirmed["title"] == created["title"] and not confirmed.get("parentID")
+            assert os.path.normcase(os.path.realpath(confirmed["location"]["directory"])) == os.path.normcase(os.path.realpath(workspace))
+            sole = api("GET", "/api/session")
+            _assert_session_list(sole, [session])
+            assert api("GET", prefix + "/context")["data"] == []
+            assert api("GET", prefix + "/inbox")["data"] == []
+            registered = client.post("/relay/turn", json={"runtime": "opencode", "session_ref": session, **scope})
+            assert registered.status_code == 200, registered.text
+            assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "sender", **scope}).status_code == 200
+
+            def wake_rows(operation, delivery=None):
+                return [row for row in wake_responses if row["status"] == 200
+                        and row["request"]["operation"] == operation
+                        and (delivery is None or row["request"].get("delivery_id") == delivery)]
+
+            entered.clear()
+            release.clear()
+            original = send("COALESCED_PAYLOAD_שלום")
+            original_delivery = original["deliveries"][0]["delivery_id"]
+            assert entered.wait(15), "automatic wake never reached the blocked provider"
+            _assert_first_primary(first_primary, session, original_delivery,
+                                  [row for row in observations() if row["kind"] == "wake.prompt"])
+            assert delivered(original)
+            eventually(lambda: wake_rows("admitted", original_delivery))
+            admitted = api("POST", prefix + "/prompt", {"id": "msg_coalesced_ordinary",
+                "text": "ordinary work שלום 😀", "delivery": "steer"})
+            admitted = admitted.get("data", admitted)
+            assert admitted["id"] == "msg_coalesced_ordinary"
+            release.set()
+            api("POST", "/api/experimental/session/" + session + "/wait")
+            terminal = eventually(lambda: wake_rows("terminal", original_delivery))[0]["request"]
+            context = api("GET", prefix + "/context")["data"]
+            start = next(i for i, row in enumerate(context) if row.get("id") == terminal["native_input_id"])
+            ordinary = next(i for i, row in enumerate(context) if row.get("id") == "msg_coalesced_ordinary")
+            end = next(i for i in range(start + 1, len(context)) if context[i].get("type") == "idle")
+            wake_user = context[start]
+            assert wake_user["text"] == "[Pallium Relay wake: check the lower-authority Relay context before acting.]"
+            assert wake_user["metadata"] == {"pallium_relay_wake": True, "generation": terminal["generation"],
+                                              "delivery_id": original_delivery}
+            assert start < ordinary < end, "ordinary input was not coalesced before the wake's outcome-idle"
+            assert context[end]["id"] == terminal["terminal_message_id"] and context[end]["outcome"] == "succeeded"
+            coalesced_summary["ordered_coalesced_outcome"] = True
+            assert len(lost_terminals) == 1
+            terminal_boundary = next(i for i, row in enumerate(wake_responses)
+                                     if row["request"] is terminal) + 1
+            eventually(lambda: any(row["request"]["operation"] == "poll" and row["status"] == 200
+                                   and row["response"].get("wake") is None for row in wake_responses[terminal_boundary:]))
+            coalesced_summary["lost_terminal_reply_reconciled"] = True
+
+            # More than two pending messages, with no further ordinary prompt.
+            backlog = [send(f"AUTOMATIC_BACKLOG_{index}_界") for index in range(4)]
+            for sent in backlog:
+                eventually(lambda sent=sent: delivered(sent))
+            api("POST", "/api/experimental/session/" + session + "/wait")
+            # Wait for a fresh empty poll, not an earlier pre-backlog observation.
+            poll_boundary = len(wake_responses)
+            eventually(lambda: any(row["request"]["operation"] == "poll" and row["status"] == 200
+                                   and row["response"].get("wake") is None for row in wake_responses[poll_boundary:]))
+            prompts = [row for row in observations() if row["kind"] == "wake.prompt"]
+            ids = [row["inputID"] for row in prompts]
+            assert len(ids) == len(set(ids)) >= 3, "automatic chain must span more than two native wakes"
+            assert len(wake_rows("admitted", original_delivery)) == len(wake_rows("terminal", original_delivery)) == 1
+            coalesced_summary["automatic_backlog_over_two"] = True
+            coalesced_summary["unique_native_admissions"] = True
+            for sent in [original, *backlog]:
+                delivery_id = sent["deliveries"][0]["delivery_id"]
+                acks = [row for row in observations() if row["kind"] == "wake.ack" and row["deliveryID"] == delivery_id]
+                assert len(acks) == 1 and acks[0]["attached"] is True
+                state = client.get("/relay/messages/" + sent["message_id"], params=scope).json()["deliveries"][0]
+                assert state["state"] == "delivered" and state["attempts"] == 1
+            assert all(any(marker in json.dumps(body, ensure_ascii=False) for body in requests)
+                       for marker in ["COALESCED_PAYLOAD_שלום", *[f"AUTOMATIC_BACKLOG_{i}_界" for i in range(4)]])
+            coalesced_summary["attached_before_ack"] = coalesced_summary["provider_payloads"] = True
+
+            def reload_plugin():
+                before = observations()
+                instance = [row for row in before if row["kind"] == "setup"][-1]["instance"]
+                with wrapper.open("a", encoding="utf-8") as stream:
+                    stream.write("\n// isolated settlement lifecycle reload\n")
+                eventually(lambda: any(row["kind"] == "cleanup.done" and row["instance"] == instance for row in observations()))
+                eventually(lambda: any(row["kind"] == "setup" and row["instance"] != instance for row in observations()[len(before):]))
+
+            # Hold retirement polls, not proof: the new owner must read the same
+            # already-terminal anchor through normal enrollment after reload.
+            terminal_reload_hold.set()
+            reload_anchor = send("TERMINAL_RELOAD_ANCHOR_é")
+            anchor_delivery = reload_anchor["deliveries"][0]["delivery_id"]
+            anchor_terminal = eventually(lambda: wake_rows("terminal", anchor_delivery))[-1]["request"]
+            enroll_boundary = len(wake_responses)
+            reload_plugin()
+            restored = eventually(lambda: [row for row in wake_responses[enroll_boundary:]
+                if row["status"] == 200 and row["request"]["operation"] == "enroll"
+                and row["request"]["owner_id"] != anchor_terminal["owner_id"]])[-1]["response"]["wake"]
+            assert restored["terminal"] is True and restored["native_input_id"] == anchor_terminal["native_input_id"]
+            terminal_reload_hold.clear()
+            terminal_reload_release.set()
+            reloaded = send("AFTER_TERMINAL_RELOAD_é")
+            eventually(lambda: delivered(reloaded))
+            eventually(lambda: wake_rows("terminal", reloaded["deliveries"][0]["delivery_id"]))
+            assert [row["inputID"] for row in observations() if row["kind"] == "wake.prompt"][:len(ids)] == ids
+            coalesced_summary["terminal_reload_safe"] = True
+
+            # Hold only the plugin's outside-hook wait continuation while a real
+            # native compaction removes its exact input. Never substitute context.
+            proof_hold.set()
+            missing = send("MISSING_PROOF_PAYLOAD_שלום")
+            assert proof_held.wait(15), "outside-hook native wait did not reach the compaction gate"
+            missing_delivery = missing["deliveries"][0]["delivery_id"]
+            missing_wake = eventually(lambda: wake_rows("admitted", missing_delivery))[-1]["request"]
+            assert delivered(missing)
+            assert any("MISSING_PROOF_PAYLOAD_שלום" in json.dumps(body, ensure_ascii=False) for body in requests)
+            api("POST", prefix + "/compact", {"id": "msg_missing_proof_compaction", "delivery": "queue"})
+            api("POST", "/api/experimental/session/" + session + "/wait")
+            compacted = api("GET", prefix + "/context")["data"]
+            assert any(row.get("id") == "msg_missing_proof_compaction" and row.get("status") == "completed" for row in compacted)
+            assert not any(row.get("id") == missing_wake["native_input_id"] for row in compacted)
+            held_backlog = send("HELD_BACKLOG_界")
+            proof_release.set()
+
+            def held_polls_since(boundary):
+                polls = [row for row in wake_responses[boundary:] if row["status"] == 200 and row["request"]["operation"] == "poll"]
+                return len(polls) >= 2 and all((row["response"].get("wake") or {}).get("native_input_id") == missing_wake["native_input_id"]
+                    and row["response"]["wake"]["admitted"] is True and row["response"]["wake"]["terminal"] is False for row in polls)
+
+            boundary = len(wake_responses)
+            eventually(lambda: held_polls_since(boundary))
+            assert not wake_rows("terminal", missing_delivery) and not delivered(held_backlog)
+            coalesced_summary["missing_proof_compaction_hold"] = True
+            reload_plugin()
+            boundary = len(wake_responses)
+            eventually(lambda: held_polls_since(boundary))
+            assert not wake_rows("terminal", missing_delivery) and not delivered(held_backlog)
+            all_ids = [row["inputID"] for row in observations() if row["kind"] == "wake.prompt"]
+            assert len(all_ids) == len(set(all_ids)) and all_ids.count(missing_wake["native_input_id"]) == 1
+            assert not any(row["kind"] == "wake.interrupt" for row in observations())
+            coalesced_summary["missing_proof_reload_hold"] = coalesced_summary["no_interrupt"] = True
+
+            # Prospective proof only: the restored owner must know this promoted
+            # nonterminal G BEFORE a genuinely new ordinary prompt is observed.
+            current_owner = [row for row in wake_responses[boundary:] if row["status"] == 200
+                             and row["request"]["operation"] == "poll"][-1]["request"]["owner_id"]
+            assert current_owner != missing_wake["owner_id"]
+            root_acks = len([row for row in observations() if row["kind"] == "wake.ack"
+                             and row["deliveryID"] == missing_delivery])
+            root_admissions = len(wake_rows("admitted", missing_delivery))
+            root_prompts = all_ids.count(missing_wake["native_input_id"])
+            root_attempts = client.get("/relay/messages/" + missing["message_id"], params=scope).json()["deliveries"][0]["attempts"]
+            assert root_acks == root_admissions == root_prompts == root_attempts == 1
+            original_payload = "MISSING_PROOF_PAYLOAD_שלום"
+            recovery_context = api("GET", prefix + "/context")["data"]
+            assert original_payload not in json.dumps(recovery_context, ensure_ascii=False), "fixture compaction must remove the original payload, not retain it as ordinary history"
+            # Original no-replay baseline is BEFORE U, unlike the new automatic
+            # suffix boundary below. Recovery itself must not inflate this count.
+            root_payload_count = sum(original_payload in json.dumps(body, ensure_ascii=False) for body in requests)
+
+            def assert_no_original_presentation(bodies):
+                assert sum(original_payload in json.dumps(body, ensure_ascii=False) for body in bodies) == root_payload_count, "original payload re-presented during recovery or automatic suffix"
+
+            # Negative control changes provider evidence only: no extra ACK,
+            # admission, prompt or claim attempt can help detect this replay.
+            replay = {"messages": [{"role": "user", "content": original_payload}],
+                      "fixture_input_id": "msg_fresh_recovery_ordinary"}
+            with pytest.raises(AssertionError, match="original payload re-presented"):
+                assert_no_original_presentation([*requests, replay])
+            api("POST", prefix + "/prompt", {"id": "msg_fresh_recovery_ordinary",
+                "text": "fresh ordinary work 界 😀", "delivery": "queue"})
+            api("POST", "/api/experimental/session/" + session + "/wait")
+            root_terminal = eventually(lambda: wake_rows("terminal", missing_delivery))[-1]["request"]
+            assert_no_original_presentation(requests)
+            assert root_terminal["owner_id"] == current_owner
+            assert root_terminal["native_input_id"] == missing_wake["native_input_id"]
+            assert root_terminal["generation"] == missing_wake["generation"]
+            context = api("GET", prefix + "/context")["data"]
+            users = [row for row in context if row.get("type") == "user"]
+            assert users[-1]["id"] == "msg_fresh_recovery_ordinary"
+            u = next(i for i, row in enumerate(context) if row.get("id") == users[-1]["id"])
+            t = next(row for row in context[u + 1:] if row.get("type") == "idle")
+            assert t["id"] == root_terminal["terminal_message_id"] and t["outcome"] == "succeeded"
+            assert not any(row.get("id") == missing_wake["native_input_id"] for row in context)
+            eventually(lambda: delivered(held_backlog))  # Manual fallback is NOT suffix evidence.
+
+            # Freeze AFTER root G/T. No earlier latch/backlog/admission may count.
+            wake_boundary, observation_boundary, request_boundary = len(wake_responses), len(observations()), len(requests)
+            earlier_ids = {row["inputID"] for row in observations() if row["kind"] == "wake.prompt"}
+            earlier_generations = {row["request"]["generation"] for row in wake_rows("admitted")}
+            ack_boundary = len(retirement_acks)
+            suffix_ids, suffix_generations, suffix_terminals = [], [], []
+            for index in range(4):
+                # Sequential enqueue forces four distinct automatic activations,
+                # rather than four payloads batched into one max_messages=3 claim.
+                marker = f"FRESH_AUTOMATIC_SUFFIX_{index}_界"
+                sent = send(marker)
+                delivery_id = sent["deliveries"][0]["delivery_id"]
+                eventually(lambda sent=sent: delivered(sent))
+                terminal = eventually(lambda: wake_rows("terminal", delivery_id))[-1]["request"]
+                api("POST", "/api/experimental/session/" + session + "/wait")
+                admitted = wake_rows("admitted", delivery_id)
+                assert len(admitted) == len(wake_rows("terminal", delivery_id)) == 1
+                assert admitted[0]["request"]["native_input_id"] == terminal["native_input_id"]
+                assert terminal["native_input_id"] not in earlier_ids
+                assert terminal["generation"] not in earlier_generations
+                assert any(row["request"] is terminal for row in wake_responses[wake_boundary:])
+                prompts = [row for row in observations()[observation_boundary:] if row["kind"] == "wake.prompt"
+                           and row["inputID"] == terminal["native_input_id"]]
+                acks = [row for row in observations()[observation_boundary:] if row["kind"] == "wake.ack"
+                        and row["deliveryID"] == delivery_id]
+                assert len(prompts) == len(acks) == 1 and acks[0]["attached"] is True
+                assert len([ack for ack in retirement_acks[ack_boundary:] if ack["delivery_id"] == delivery_id]) == 1
+                assert any(marker in json.dumps(body, ensure_ascii=False) for body in requests[request_boundary:])
+                native_context = api("GET", prefix + "/context")["data"]
+                start = next(i for i, row in enumerate(native_context) if row.get("id") == terminal["native_input_id"])
+                end = next(row for row in native_context[start + 1:] if row.get("type") == "idle")
+                assert end["id"] == terminal["terminal_message_id"] and end["outcome"] == "succeeded"
+                for _ in range(2):
+                    state = client.get("/relay/messages/" + sent["message_id"], params=scope).json()["deliveries"][0]
+                    assert state["state"] == "delivered" and state["attempts"] == 1
+                suffix_ids.append(terminal["native_input_id"])
+                suffix_generations.append(terminal["generation"])
+                suffix_terminals.append(terminal["terminal_message_id"])
+            assert len(set(suffix_ids)) == len(set(suffix_generations)) == len(set(suffix_terminals)) == 4
+            assert len([row for row in observations()[observation_boundary:] if row["kind"] == "wake.prompt"]) == 4
+            assert len([row for row in observations() if row["kind"] == "wake.ack" and row["deliveryID"] == missing_delivery]) == root_acks
+            assert len(wake_rows("admitted", missing_delivery)) == root_admissions
+            assert len([row for row in observations() if row["kind"] == "wake.prompt" and row["inputID"] == missing_wake["native_input_id"]]) == root_prompts
+            assert client.get("/relay/messages/" + missing["message_id"], params=scope).json()["deliveries"][0]["attempts"] == root_attempts
+            assert len(wake_rows("terminal", missing_delivery)) == 1
+            assert_no_original_presentation(requests)
+            assert not any(row["kind"] == "wake.interrupt" for row in observations())
+            coalesced_summary["fresh_supersession_reload_recovery"] = True
+            api("DELETE", prefix)
+            eventually(lambda: client.get("/relay/sessions", params={"runtime": "opencode", **scope,
+                "include_inactive": True}).json()[0]["state"] == "closed")
+            return
         if bootstrap:
             eventually(lambda: any(row["kind"] == "bootstrap.restore.empty.settled" and row.get("sessionID") == session
                                    for row in observations()))
@@ -775,6 +1221,8 @@ export default {...production,setup:async ctx=>{
         eventually(lambda: client.get("/relay/sessions", params={"runtime": "opencode", **scope, "include_inactive": True}).json()[0]["state"] == "closed")
     finally:
         release.set()
+        proof_release.set()
+        terminal_reload_release.set()
         retirement_release.set()
         (tmp_path / "native.log").write_text("".join(logs), encoding="utf-8")
         (tmp_path / "capture-evidence.json").write_text(json.dumps(capture_evidence, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -791,6 +1239,13 @@ export default {...production,setup:async ctx=>{
             if summary:
                 Path(summary).write_text(json.dumps(bootstrap_summary), encoding="utf-8")
             assert bootstrap_summary["owned_drain"], "owned native host did not drain"
+        if coalesced:
+            coalesced_summary["owned_drain"] = all(process.poll() is not None for process in processes)
+            (tmp_path / "settlement-evidence.json").write_text(json.dumps(wake_responses, ensure_ascii=False, indent=2), encoding="utf-8")
+            summary = os.environ.get("PALLIUM_OPENCODE_COALESCED_SUMMARY")
+            if summary:
+                Path(summary).write_text(json.dumps(coalesced_summary), encoding="utf-8")
+            assert coalesced_summary["owned_drain"], "owned native host did not drain"
 
 
 def test_capture_callbacks_retry_through_real_http_and_history(client, tmp_path):

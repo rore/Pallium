@@ -41,7 +41,8 @@ routing or deliberate Session History search.
 
 - A running local Pallium service with the MCP endpoint enabled; see [Getting Started](../../docs/getting-started.md).
 - OpenCode and a stable checkout containing the complete plugin directory.
-- Choose V1 for passive normal-turn delivery or deliberately opt in to V2. Combined V2 coverage is isolated Windows OpenCode 2.0.24; other releases/platforms and global installation are unqualified.
+- Choose V1 for passive normal-turn delivery or deliberately opt in to V2. This V2 native-wake path requires the context-message metadata API introduced in OpenCode 2.3.0. Compatible later releases must retain that contract; they are not automatically runtime-qualified.
+- Historical combined V2 coverage is isolated Windows OpenCode 2.0.24. Earlier 2.2.7 evidence covers discovery only, not the recovery candidate below. Those scoped results and V1 passive delivery do not establish the current native-wake path on older hosts. Other platforms and global installation remain unqualified.
 - Provider credentials are needed by Pallium only for optional derived memory, not Relay or raw History.
 
 ## Setup
@@ -167,6 +168,82 @@ V2 can attach up to three deliveries in a wake, with the reserved trigger first
 and a separate ACK for each attached message. If the claim response is lost,
 continuation restores only the trigger. Unobserved siblings keep their original
 leases and can be collected by an existing turn or wake once eligible.
+
+### Coalesced wake settlement (qualification pending)
+
+V2 preserves its ordinary same-input terminal correlation. The candidate native
+wake path uses the OpenCode 2.3.0 metadata API floor. Exact CI archive/version pins
+make evidence reproducible; they do not require users to stay on one exact
+release. No 2.3.0 runtime qualification is claimed yet. Native idle covers the whole busy period,
+including ordinary inputs steered in before idle. After the native wait, fresh
+context must still contain the exact wake user ID, text, marker, generation and
+delivery. The first later idle must have a distinct valid ID and outcome exactly
+`succeeded`, `failed` or `interrupted`. The plugin rechecks its current session,
+location, endpoint, container and generations before the existing terminal
+request. The backend still checks the current owner and exact wake binding.
+If the validated current snapshot already says `admitted: true`, the candidate
+skips the redundant admission write but still waits and proves terminal state.
+A sent or lost response never sets that flag locally. An unresolved false
+snapshot keeps the existing admission path; this is not global one-shot deduplication.
+
+This settles activation, not the requested business task. Failed or interrupted
+work is not reported as successful. ACK, wait alone, elapsed time, an unknown or
+outcomeless idle, and a missing wake input do not authorize this extra path.
+No transcript or proof is stored. The plugin never prompts again merely to
+reconstruct missing proof. A separate fresh-witness path can settle an absent
+admitted anchor after compaction/reload, but only prospectively:
+
+- The certified producer must have observed the exact native wake promoted
+  before setting `admitted`. Queue acceptance alone is not admission proof.
+- That admitted generation must already be known when a genuinely new ordinary
+  prompt is first observed. The plugin freezes one session-lifetime relationship
+  before awaits; delayed enrollment or an old manual/context row cannot create it.
+- Until that SAME ordinary input is observed promoted, its absence means not
+  ready. The existing poll rechecks the same candidate, without another prompt.
+  After promotion, missing, changed or nonlatest input invalidates it.
+- Outside hooks, native wait must finish through successors. Fresh raw context
+  must show the same latest ordinary input and a later valid outcome-idle.
+  After a fresh exact-generation backend poll and final native ownership read,
+  a final raw read must confirm that SAME input and SAME selected idle before
+  the existing fenced terminal request. It cannot select replacement evidence.
+
+This witness is ephemeral. Compaction, reload, shutdown, move, revert, disposal,
+duplicate input, binding changes or verification errors discard it. Loss of the
+event subscription disables this path for that plugin lifetime. Old completed
+manual turns cannot be blessed retrospectively. With no eligible fresh witness,
+the anchor stays held even if a normal turn collects backlog. A lost terminal
+reply is reconciled by normal polling, never by replaying the old payload.
+Backend transactions fence backend changes; they do not create an atomic native
+snapshot or undo an already committed request. Claim/ACK, expiry, original
+delivery priority and continuation rules stay unchanged.
+
+These paths are source candidates, not runtime-qualified recovery. All eight
+qualification campaigns failed. The first two skipped native; the third failed
+native with its predicate/cause still unknown. The fourth and fifth failed the
+package and skipped native. The sixth passed the full package and ordinary CI
+but failed the original-delivery prerequisite before its required native journey.
+Its source follow-up found an uncorrelated provider-entry barrier and a 2.2.7
+context projection that omits stored wake metadata. These are distinct source
+concerns, not proof of the sixth run's exclusive cause. The seventh passed the
+full package and ordinary controls but failed a session-list precondition before
+Relay registration or the first send. Its exact failing conjunct/cursor value
+remains unknown. Official 2.3.0 source shows that a next cursor is a resume token,
+even on the final singleton page. The corrected fixture uses an unfiltered,
+bounded short page instead. The eighth passed both full Linux lanes, Windows
+smoke, controls and package, then failed the unchanged native admission-count
+assertion: two successful admitted requests versus one terminal for the original
+delivery. That does not prove duplicate native prompts or payload replay.
+Later ACK/payload, reload/compaction, pre-U non-replay and four NEW wake checks
+were not reached. The candidate now guards known admission at the shared caller;
+new regression execution and native recovery qualification are still pending.
+Historical failures and
+partial passes remain in the [result receipt](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488).
+Earlier 2.2.7 discovery-only evidence does not qualify settlement or recovery
+after compaction. Minimum/current 2.3.0 qualification remains pending.
+The extended witness requires four distinct NEW sequential automatic wakes after
+recovery, not an earlier cumulative backlog latch or batched payload count.
+Full wake-anchor
+recovery remains open in the [reliability feature](../../roadmap/features/fix-opencode-plugin-reliability.md).
 
 V2 owns a short server lease and renews it while polling. Disposal retires local
 hooks and the event stream, cancels ordinary integration requests, and fences

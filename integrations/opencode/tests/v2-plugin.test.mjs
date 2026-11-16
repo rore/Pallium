@@ -229,6 +229,7 @@ async function callerFixture(options = {}) {
   const previousInterval = globalThis.setInterval;
   const previousClear = globalThis.clearInterval;
   const calls = [];
+  const trace = [];
   const native = { prompt: [], wait: 0, interrupt: 0 };
   const hooks = {};
   const history = options.history || [];
@@ -244,6 +245,7 @@ async function callerFixture(options = {}) {
     const path = new URL(url).pathname;
     const body = init?.body ? JSON.parse(init.body) : {};
     calls.push({ path, body, signal: init?.signal });
+    if (body.operation) trace.push(body.operation);
     const intercepted = options.fetch ? await options.fetch(path, body, init) : undefined;
     if (intercepted !== undefined) return intercepted;
     if (path === "/relay/sessions") {
@@ -266,21 +268,26 @@ async function callerFixture(options = {}) {
     location: { directory: location }, app: { log() {} },
     session: {
       hook: async (name, fn) => { hooks[name] = fn; return { dispose: () => { retired.push(name); return options.dispose?.(name); } }; },
-      get: async (input) => options.get ? options.get(input) : ({ location: { directory: location } }),
-      context: async (input) => options.context ? options.context(input, history) : ({ data: history }),
+      get: async (input) => { trace.push("get"); return options.get ? options.get(input) : ({ id: input.sessionID, location: { directory: location } }); },
+      context: async (input) => { trace.push("raw"); return options.context ? options.context(input, history) : ({ data: history }); },
       prompt: async (input) => {
         native.prompt.push(input);
         history.push({ type: "user", id: input.id, text: input.text, metadata: input.metadata });
         if (options.prompt) return options.prompt(input);
         return { id: input.id };
       },
-      wait: async () => { native.wait++; if (options.wait) await options.wait(history, hooks); },
+      wait: async () => { trace.push("wait"); native.wait++; if (options.wait) await options.wait(history, hooks); },
       interrupt: async () => { native.interrupt++; },
     },
     event: { subscribe: async function* ({ signal }) {
       try {
       while (!signal.aborted) {
-        if (events.length) { const event = events.shift(); yield event; options.afterEvent?.(event); continue; }
+        if (events.length) {
+          const event = events.shift();
+          if (event.fixtureEnd) return;
+          if (event.fixtureError) throw new Error("subscription failed");
+          yield event; options.afterEvent?.(event); continue;
+        }
         await new Promise((resolve) => {
           eventReady = resolve;
           signal.addEventListener("abort", resolve, { once: true });
@@ -311,7 +318,7 @@ async function callerFixture(options = {}) {
     }
   }
   return {
-    calls, native, hooks, history, retired, dispose, listed: () => listed, eventRetired: () => eventRetired,
+    calls, trace, native, hooks, history, retired, dispose, listed: () => listed, eventRetired: () => eventRetired,
     emit: async (event) => { events.push(event); eventReady?.(); await pause(); },
     tick: async () => { interval(); await pause(); },
     close: async () => {
@@ -427,6 +434,108 @@ test("lost native admission reply retries the same ID after durable readback", a
   } finally { await f.close(); }
 });
 
+test("known admitted wake reentry preserves admission and uncertainty", async () => {
+  for (const scenario of ["known", "fresh", "rejected-wait", "flag-reentry", "reload",
+    "lost-admitted-committed", "lost-admitted-uncommitted", "lost-terminal"]) {
+    const startsFalse = ["fresh", "flag-reentry", "lost-admitted-committed", "lost-admitted-uncommitted"].includes(scenario);
+    const projected = projectedWake();
+    const history = startsFalse ? [] : [{ type: "user", id: nativeID,
+      text: projected.content[0].text, metadata: projected.metadata }];
+    let backend = snapshot({ admitted: !startsFalse });
+    let admissions = 0, waits = 0, terminals = 0;
+    const firstWait = barrier(), replacementWait = barrier();
+    const options = {
+      history,
+      response: async (route, body) => {
+        if (route !== "/relay/opencode/wake") return;
+        if (body.operation === "admitted") {
+          admissions++;
+          if (scenario === "lost-admitted-uncommitted" && admissions === 1) return null;
+          backend = { ...backend, admitted: true };
+          if (scenario.startsWith("lost-admitted") && admissions === 1) return null;
+        }
+        if (body.operation === "terminal") {
+          terminals++;
+          backend = { ...backend, terminal: true };
+          if (scenario === "lost-terminal") return null;
+        }
+        return { session: relaySession, wake: { ...backend }, deliveries: [] };
+      },
+      wait: async (rows) => {
+        waits++;
+        if (scenario === "rejected-wait" && waits === 1) throw new Error("settlement unavailable");
+        if (scenario === "flag-reentry") {
+          if (waits === 1) await firstWait.wait();
+          else { await replacementWait.wait(); rows.push({ type: "idle", id: "msg_reentry_terminal", outcome: "succeeded" }); }
+        }
+      },
+    };
+    let f = await callerFixture(options);
+    const writes = () => f.calls.filter((c) => c.body.operation === "admitted");
+    try {
+      await f.tick();
+      assert.equal(writes().length, startsFalse ? 1 : 0, "known admitted wake must not rewrite admission");
+      assert.equal(terminals, 0, `${scenario}: admission/wait alone is not terminal proof`);
+      assert.deepEqual(f.native.prompt.map((p) => p.id), startsFalse ? [nativeID] : []);
+      if (scenario === "flag-reentry") {
+        await firstWait.entered;
+        await f.tick(); // Authoritative false -> true readback while the old wait is pending.
+        assert.equal(f.native.wait, 1, "in-flight poll cannot overlap the old flight");
+        firstWait.release(); await pause();
+        assert.equal(terminals, 0, "changed admitted flag fences the old false-snapshot flight");
+        await f.tick(); await replacementWait.entered;
+        assert.equal(writes().length, 1, "true-snapshot replacement must not repeat the first admission");
+        await f.tick();
+        assert.equal(f.native.wait, 2, "replacement flight retains its busy reservation");
+        replacementWait.release(); await pause();
+        assert.equal(terminals, 1, "replacement settles only after its own terminal proof");
+      } else {
+        if (scenario === "reload") {
+          await f.close();
+          f = await callerFixture(options); // No adapter-local admission history survives setup.
+        }
+        await f.tick();
+        const expected = scenario === "lost-admitted-uncommitted" ? 2 : startsFalse ? 1 : 0;
+        assert.equal(writes().length, expected, `${scenario}: only authoritative true can suppress admission`);
+        assert.equal(terminals, 0, `${scenario}: repeated polls cannot invent terminal evidence`);
+        await f.tick();
+        assert.equal(writes().length, expected, `${scenario}: genuine true readback prevents further writes`);
+        assert.equal(terminals, 0);
+        history.push({ type: "idle", id: "msg_reentry_terminal", outcome: "succeeded" });
+        await f.tick();
+        assert.equal(terminals, 1, `${scenario}: exact later terminal still progresses`);
+        assert.equal(writes().length, expected);
+      }
+      const settledWaits = f.native.wait;
+      await f.tick(); await f.tick(); // Includes reconciliation of a committed-but-lost terminal reply.
+      assert.equal(terminals, 1, `${scenario}: terminal readback suppresses stale follow-up`);
+      assert.equal(f.native.wait, settledWaits);
+      assert.equal(admissions, scenario === "lost-admitted-uncommitted" ? 2 : startsFalse ? 1 : 0);
+      assert.equal(f.native.interrupt, 0);
+      assert.equal(f.native.prompt.length, scenario === "reload" ? 0 : startsFalse ? 1 : 0);
+      for (const call of f.calls.filter((c) => ["admitted", "terminal"].includes(c.body.operation))) {
+        assert.deepEqual([call.body.endpoint_id, call.body.scope_generation, call.body.generation,
+          call.body.delivery_id, call.body.native_input_id], [endpointID, 0, 1, deliveryID, nativeID]);
+      }
+      if (scenario === "fresh") {
+        backend = snapshot({ generation: 2, native_input_id: "msg_reentry_next",
+          delivery_id: "relay-delivery-" + "e".repeat(32) });
+        await f.tick();
+        assert.equal(admissions, 2, "a fresh false generation still requires its own admission");
+        assert.equal(terminals, 1);
+        assert.deepEqual(f.native.prompt.map((p) => p.id), [nativeID, "msg_reentry_next"]);
+        history.push({ type: "idle", id: "msg_reentry_next_terminal", outcome: "succeeded" });
+        await f.tick();
+        assert.equal(admissions, 2, "new generation's true readback also suppresses redundant admission");
+        assert.equal(terminals, 2);
+        const last = f.calls.filter((c) => c.body.operation === "terminal").at(-1);
+        assert.deepEqual([last.body.generation, last.body.delivery_id, last.body.native_input_id,
+          last.body.terminal_message_id], [2, backend.delivery_id, "msg_reentry_next", "msg_reentry_next_terminal"]);
+      }
+    } finally { firstWait.release(); replacementWait.release(); await f.close(); }
+  }
+});
+
 test("missing admitted input and unrelated idle cannot settle or issue a new native ID", async () => {
   const compacted = await callerFixture({ wake: snapshot({ admitted: true }), history: [{ type: "idle", id: "msg_unrelated" }] });
   try {
@@ -443,6 +552,167 @@ test("missing admitted input and unrelated idle cannot settle or issue a new nat
     assert.deepEqual(overtaken.native.prompt.map((p) => p.id), [nativeID]);
   } finally { await overtaken.close(); }
 });
+
+for (const outcome of ["succeeded", "failed", "interrupted"]) {
+  test(`coalesced native wake settles from exact outcome-bearing idle: ${outcome}`, async () => {
+    const f = await callerFixture({ wake: snapshot(), wait: async (history) => {
+      history.push({ type: "user", id: "msg_ordinary_unicode", text: "ordinary work שלום 😀" },
+        { type: "user", id: "msg_later_ordinary", text: "more work" },
+        { type: "idle", id: "msg_coalesced_terminal", outcome });
+    } });
+    try {
+      await f.tick();
+      const terminal = f.calls.filter((c) => c.body.operation === "terminal");
+      assert.equal(terminal.length, 1, "coalesced exact wake must settle activation without replay");
+      assert.equal(terminal[0].body.terminal_message_id, "msg_coalesced_terminal");
+      assert.deepEqual([terminal[0].body.generation, terminal[0].body.delivery_id, terminal[0].body.native_input_id],
+        [1, deliveryID, nativeID]);
+      assert.deepEqual(f.native.prompt.map((p) => p.id), [nativeID]);
+      assert.equal(f.native.wait, 1);
+      assert.equal(f.calls.filter((c) => c.body.operation === "admitted").length, 1);
+      assert.equal(f.calls.filter((c) => c.path === "/relay/deliveries/ack").length, 0);
+      assert.equal(f.native.interrupt, 0);
+    } finally { await f.close(); }
+  });
+}
+
+for (const fault of ["missing-id", "invalid-id", "same-id", "outcomeless", "unknown-outcome", "nonstring-outcome",
+  "before-input", "compacted", "wrong-input", "wrong-text", "wrong-marker", "wrong-generation", "wrong-delivery",
+  "uncertain-first-idle"]) {
+  test(`coalesced native wake rejects unproven after-wait evidence: ${fault}`, async () => {
+    const f = await callerFixture({ wake: snapshot(), wait: async (history) => {
+      const input = history[0];
+      const idle = { type: "idle", id: "msg_coalesced_terminal", outcome: "succeeded" };
+      history.push({ type: "user", id: "msg_newer", text: "ordinary work" });
+      if (fault === "missing-id") delete idle.id;
+      if (fault === "invalid-id") idle.id = "not-a-native-id";
+      if (fault === "same-id") idle.id = nativeID;
+      if (fault === "outcomeless") delete idle.outcome;
+      if (fault === "unknown-outcome") idle.outcome = "completed";
+      if (fault === "nonstring-outcome") idle.outcome = true;
+      if (fault === "wrong-input") input.id = "msg_other_input";
+      if (fault === "wrong-text") input.text = "not the exact native wake";
+      if (fault === "wrong-marker") input.metadata.pallium_relay_wake = false;
+      if (fault === "wrong-generation") input.metadata.generation++;
+      if (fault === "wrong-delivery") input.metadata.delivery_id = "relay-delivery-" + "f".repeat(32);
+      if (fault === "compacted") history.splice(0, 1);
+      if (fault === "before-input") history.unshift(idle);
+      else if (fault === "uncertain-first-idle") history.push(
+        { type: "idle", id: "msg_unknown_terminal" }, idle);
+      else history.push(idle);
+    } });
+    try {
+      await f.tick();
+      assert.equal(f.calls.filter((c) => c.body.operation === "admitted").length, 1);
+      assert.equal(f.calls.filter((c) => c.body.operation === "terminal").length, 0);
+      assert.deepEqual(f.native.prompt.map((p) => p.id), [nativeID]);
+      assert.equal(f.native.wait, 1);
+    } finally { await f.close(); }
+  });
+}
+
+test("coalesced native wake waits for settlement and successor work", async () => {
+  const gate = barrier();
+  const f = await callerFixture({ wake: snapshot(), wait: async (history) => {
+    history.push({ type: "user", id: "msg_successor_work", text: "ordinary work" });
+    await gate.wait();
+    history.push({ type: "idle", id: "msg_successor_terminal", outcome: "succeeded" });
+  } });
+  try {
+    await f.tick();
+    await gate.entered;
+    await f.tick();
+    assert.equal(f.calls.filter((c) => c.body.operation === "terminal").length, 0);
+    assert.equal(f.native.wait, 1);
+    gate.release();
+    await pause();
+    assert.equal(f.calls.filter((c) => c.body.operation === "terminal").length, 1);
+    assert.deepEqual(f.native.prompt.map((p) => p.id), [nativeID]);
+  } finally { gate.release(); await f.close(); }
+});
+
+for (const change of ["dispose", "location", "endpoint", "scope", "wake-generation", "wake-delivery", "wake-input", "wake-location"]) {
+  test(`coalesced native wake fences changed binding after wait: ${change}`, async () => {
+    const gate = barrier();
+    let moved = false;
+    let polled = false;
+    const original = snapshot();
+    const changed = { ...original };
+    const f = await callerFixture({ wake: original,
+      get: async () => ({ location: { directory: moved ? location + "/other" : location } }),
+      response: async (route, body) => {
+        if (route !== "/relay/opencode/wake" || body.operation !== "poll") return;
+        if (!polled) { polled = true; return { session: relaySession, wake: original, deliveries: [] }; }
+        const session = { ...relaySession };
+        if (change === "endpoint") session.endpoint_id = "relay-session-" + "f".repeat(32);
+        if (change === "scope") session.scope_generation++;
+        return { session, wake: ["endpoint", "scope"].includes(change) ? null : changed, deliveries: [] };
+      },
+      wait: async (history) => {
+        history.push({ type: "user", id: "msg_coalesced_ordinary", text: "ordinary work" });
+        await gate.wait();
+        history.push({ type: "idle", id: "msg_coalesced_terminal", outcome: "succeeded" });
+      },
+    });
+    try {
+      await f.tick();
+      await gate.entered;
+      if (change === "dispose") await f.dispose();
+      else if (change === "location") moved = true;
+      else {
+        if (change === "wake-generation") changed.generation++;
+        if (change === "wake-delivery") changed.delivery_id = "relay-delivery-" + "f".repeat(32);
+        if (change === "wake-input") changed.native_input_id = "msg_other_generation";
+        if (change === "wake-location") changed.native_location = location + "/other";
+        await f.tick();
+      }
+      gate.release();
+      await pause();
+      assert.equal(f.calls.filter((c) => c.body.operation === "terminal").length, 0);
+      assert.deepEqual(f.native.prompt.map((p) => p.id), [nativeID]);
+      assert.equal(f.native.interrupt, 0);
+    } finally { gate.release(); await f.close(); }
+  });
+}
+
+for (const failure of ["wait", "context", "terminal-rejected", "terminal-reply-lost"]) {
+  test(`coalesced native wake keeps uncertainty without replay: ${failure}`, async () => {
+    let reads = 0;
+    let settled = false;
+    const wake = snapshot();
+    const f = await callerFixture({ wake,
+      context: async (_input, history) => {
+        if (++reads === 3 && failure === "context") throw new Error("readback unavailable");
+        return { data: history };
+      },
+      wait: async (history) => {
+        history.push({ type: "user", id: "msg_coalesced_ordinary", text: "ordinary work" });
+        if (failure === "wait") throw new Error("settlement unknown");
+        history.push({ type: "idle", id: "msg_coalesced_terminal", outcome: "succeeded" });
+      },
+      response: async (route, body) => {
+        if (route !== "/relay/opencode/wake") return;
+        if (body.operation === "poll" && settled) return { session: relaySession, wake: snapshot({ terminal: true }), deliveries: [] };
+        if (body.operation === "terminal") {
+          if (failure === "terminal-reply-lost") settled = true;
+          return null;
+        }
+      },
+    });
+    try {
+      await f.tick();
+      assert.equal(f.calls.filter((c) => c.body.operation === "terminal").length,
+        failure.startsWith("terminal") ? 1 : 0);
+      assert.equal(wake.terminal, false, "uncertain response cannot rotate local wake authority");
+      if (failure === "terminal-reply-lost") {
+        await f.tick();
+        assert.equal(f.calls.filter((c) => c.body.operation === "terminal").length, 1);
+      }
+      assert.deepEqual(f.native.prompt.map((p) => p.id), [nativeID]);
+      assert.equal(f.native.interrupt, 0);
+    } finally { await f.close(); }
+  });
+}
 
 test("committed empty wake fails visibly while newer natural work remains usable", async () => {
   const f = await callerFixture({ wake: snapshot() });
@@ -649,6 +919,721 @@ const completedAssistant = (id = "msg_answer", text = "שלום answer 😀") =>
 const captureCalls = (f) => f.calls.filter((call) => call.path === "/items");
 const captureReceipt = [{ source_item_id: "source-capture" }];
 const sourceUser = (id, text = "question") => ({ type: "user", id, text });
+
+const freshUser = () => sourceUser("msg_fresh_ordinary", "fresh ordinary work שלום 😀");
+const freshIdle = (outcome = "succeeded") => ({ type: "idle", id: "msg_fresh_terminal", outcome });
+const observePrompt = (f, user = freshUser()) => f.hooks.prompt({ sessionID, messageID: user.id, prompt: { text: user.text } });
+const terminals = (f) => f.calls.filter((c) => c.body.operation === "terminal");
+
+for (const outcome of ["succeeded", "failed", "interrupted"]) {
+  test(`fresh supersession settles exact frozen generation: ${outcome}`, async () => {
+    const f = await callerFixture({ wake: snapshot({ admitted: true }), wait: async (history) => history.push(freshIdle(outcome)) });
+    try {
+      await observePrompt(f); // Real first observation before native preparation/promotion.
+      f.history.push(freshUser());
+      await f.tick();
+      assert.equal(terminals(f).length, 1, "fresh promoted ordinary work must release the missing admitted anchor");
+      assert.deepEqual([terminals(f)[0].body.generation, terminals(f)[0].body.delivery_id,
+        terminals(f)[0].body.native_input_id, terminals(f)[0].body.terminal_message_id],
+      [1, deliveryID, nativeID, freshIdle().id]);
+      assert.equal(f.calls.filter((c) => c.body.operation === "admitted" || c.path === "/relay/deliveries/ack").length, 0);
+      assert.deepEqual(f.native, { prompt: [], wait: 1, interrupt: 0 });
+      assert.deepEqual(f.trace.slice(f.trace.lastIndexOf("wait") - 2),
+        ["get", "raw", "wait", "get", "raw", "poll", "get", "raw", "terminal"], "canonical final raw ordering");
+      await f.tick();
+      assert.equal(terminals(f).length, 1, "consumed proof cannot replay even before backend reconciliation");
+    } finally { await f.close(); }
+  });
+}
+
+for (const preparation of ["prompt-await", "queued"]) {
+  test(`fresh supersession retains unpromoted candidate: ${preparation}`, async () => {
+    const gate = barrier();
+    const f = await callerFixture({ wake: snapshot({ admitted: true }),
+      fetch: async (route) => { if (route === "/item-and-query" && preparation === "prompt-await") await gate.wait(); },
+      wait: async (history) => history.push(freshIdle()) });
+    const prompt = observePrompt(f);
+    try {
+      if (preparation === "prompt-await") await gate.entered;
+      else await prompt;
+      await f.tick();
+      await f.tick(); // wakeBusy must have been released, without rearming.
+      assert.equal(terminals(f).length, 0);
+      assert.equal(f.native.wait, 0, "queued/prepared U is not native promotion");
+      gate.release();
+      await prompt;
+      f.history.push(freshUser());
+      await f.tick();
+      assert.equal(terminals(f).length, 1, "same frozen U must recover without a second prompt");
+      assert.equal(f.native.prompt.length, 0);
+      assert.equal(f.calls.filter((c) => c.path === "/item-and-query").length, 1);
+    } finally { gate.release(); await prompt; await f.close(); }
+  });
+}
+
+test("fresh supersession requires observed producer promotion before admission", async () => {
+  for (const knownBeforePrompt of [false, true]) {
+    const wake = snapshot(), readbacks = []; let promoted = false;
+    const f = await callerFixture({ wake,
+      prompt: async () => { if (!promoted) f.history.pop(); return { queued: true }; },
+      response: async (route, body) => {
+        if (route !== "/relay/opencode/wake") return;
+        if (body.operation === "admitted") wake.admitted = true; // Backend write is NOT a local cache update.
+        if (body.operation === "poll") readbacks.push({ ...wake });
+      },
+      wait: async (history) => { if (!history.some((row) => row.id === nativeID)) history.push(freshIdle()); } });
+    try {
+      await f.tick();
+      assert.equal(f.calls.filter((c) => c.body.operation === "admitted").length, 0, "queue acceptance is not native promotion");
+      const input = f.native.prompt[0];
+      promoted = true;
+      f.history.push({ type: "user", id: input.id, text: input.text, metadata: input.metadata });
+      await f.tick();
+      assert.equal(wake.admitted, true, "certified native producer committed admission in backend");
+      assert.equal(readbacks.at(-1).admitted, false, "preceding poll did not yet tell the adapter admission was committed");
+      assert.equal(terminals(f).length, 0, "promotion alone is not terminal evidence");
+      if (knownBeforePrompt) {
+        const waits = f.native.wait;
+        await f.tick(); // Genuine normal-poll readback while G remains visible.
+        assert.equal(readbacks.at(-1).admitted, true, "admitted G was returned BEFORE first observation of U");
+        assert.equal(f.native.wait, waits + 1, "adapter consumed that poll and progressed its bound visible-G flight");
+      }
+      f.history.length = 0;
+      await observePrompt(f);
+      f.history.push(freshUser());
+      if (!knownBeforePrompt) f.history.push(freshIdle()); // Even completed later U cannot retrofit eligibility.
+      await f.tick();
+      await f.tick();
+      assert.equal(terminals(f).length, knownBeforePrompt ? 1 : 0,
+        knownBeforePrompt ? "poll-established admitted G permits fresh witnessed settlement" : "later enrollment/poll must not retrofit first observation");
+      assert.equal(f.native.prompt.length, 1, "fresh witness must not replay G");
+    } finally { await f.close(); }
+  }
+});
+
+test("fresh supersession keeps native ID and ordinary input boundaries", async () => {
+  for (const [id, text, expected] of [["", "ordinary", 0], ["invalid", "ordinary", 0],
+    ["msg_" + "a".repeat(508), "boundary שלום 😀", 1], ["msg_" + "a".repeat(509), "over boundary", 0],
+    ["msg_empty", "", 0], ["msg_command", "/command", 0]]) {
+    const f = await callerFixture({ wake: snapshot({ admitted: true }), wait: async (history) => history.push(freshIdle()) });
+    try {
+      const user = sourceUser(id, text);
+      await observePrompt(f, user); f.history.push(user); await f.tick();
+      assert.equal(terminals(f).length, expected, `${id.length}/${text}`);
+    } finally { await f.close(); }
+  }
+});
+
+test("fresh supersession never retrofits duplicate or historical observations", async () => {
+  for (const fault of ["no-known-G", "unadmitted-G", "terminal-G", "duplicate", "memory-retry", "context-only", "delayed-enroll", "duplicate-owned-await"]) {
+    let known = !["no-known-G", "delayed-enroll"].includes(fault), hold = false, later = false;
+    const gate = barrier();
+    const f = await callerFixture({ wake: null,
+      get: async ({ sessionID: id }) => { if (hold) { hold = false; await gate.wait(); } return { id, location: { directory: location } }; },
+      response: async (route) => {
+        if (route === "/item-and-query" && fault === "memory-retry") return null;
+        if (route === "/relay/opencode/wake" && fault === "delayed-enroll" && !known) await gate.wait();
+        if (route === "/relay/opencode/wake") return { session: relaySession,
+          wake: known ? snapshot({ admitted: fault !== "unadmitted-G" || later, terminal: fault === "terminal-G" }) : null };
+      }, wait: async (history) => history.push(freshIdle()) });
+    try {
+      if (fault === "context-only") await f.hooks.context({ sessionID, messages: [natural(freshUser().id)] });
+      else if (fault === "duplicate-owned-await") {
+        hold = true;
+        const first = observePrompt(f);
+        await gate.entered;
+        await observePrompt(f);
+        gate.release(); await first;
+      } else {
+        await observePrompt(f);
+        if (["duplicate", "memory-retry"].includes(fault)) await observePrompt(f);
+      }
+      known = true; later = true;
+      f.history.push(freshUser(), freshIdle());
+      if (fault === "delayed-enroll") { gate.release(); await pause(); }
+      await f.tick();
+      assert.equal(terminals(f).length, 0, fault);
+      // Null freshness tombstones must not break ordinary snapshots or capture.
+      assert.equal(f.native.interrupt, 0);
+    } finally { gate.release(); await f.close(); }
+  }
+});
+
+test("fresh supersession rejects malformed or lost promoted proof", async () => {
+  for (const fault of ["missing-U", "wrong-text", "wrong-type", "internal", "duplicate-U", "nonlatest", "missing-T", "different-T",
+    "missing-id", "invalid-id", "same-U", "same-G", "outcomeless", "unknown-outcome", "before-U", "uncertain-first-idle", "malformed-context"]) {
+    let contexts = 0;
+    const f = await callerFixture({ wake: snapshot({ admitted: true }),
+      context: async (_input, history) => { contexts++; return fault === "malformed-context" && contexts > 1 ? {} : { data: history }; },
+      wait: async (history) => {
+        const u = history[0], t = freshIdle();
+        if (fault === "missing-U") history.shift();
+        if (fault === "wrong-text") u.text += "changed";
+        if (fault === "wrong-type") u.type = "assistant";
+        if (fault === "internal") u.metadata = { pallium_relay_wake: true };
+        if (fault === "duplicate-U") history.push({ ...u });
+        if (fault === "nonlatest") history.push(sourceUser("msg_other_fresh"));
+        if (fault === "missing-id") delete t.id;
+        if (fault === "invalid-id") t.id = "invalid";
+        if (fault === "same-U") t.id = u.id;
+        if (fault === "same-G") t.id = nativeID;
+        if (fault === "outcomeless") delete t.outcome;
+        if (fault === "unknown-outcome") t.outcome = "completed";
+        if (fault === "before-U") history.unshift(t);
+        else if (fault === "uncertain-first-idle") history.push({ type: "idle", id: "msg_uncertain" }, t);
+        else if (fault !== "missing-T") history.push(t);
+      },
+      response: async (route, body) => {
+        if (fault === "different-T" && route === "/relay/opencode/wake" && body.operation === "poll" && contexts >= 3)
+          f.history.at(-1).id = "msg_replacement_terminal";
+      } });
+    try {
+      await observePrompt(f); f.history.push(freshUser());
+      await f.tick();
+      assert.equal(terminals(f).length, 0, fault);
+      assert.equal(f.native.prompt.length, 0);
+    } finally { await f.close(); }
+  }
+});
+
+test("fresh supersession rechecks raw evidence across final asynchronous fences", async () => {
+  for (const stage of ["poll", "final-get", "final-context"]) for (const mutation of ["remove-U", "change-U", "new-user", "remove-T", "replace-T"]) {
+    let armed = false, polled = false, got = false;
+    const mutate = (history) => {
+      if (mutation === "remove-U") history.shift();
+      if (mutation === "change-U") history[0].text += "changed";
+      if (mutation === "new-user") history.push(sourceUser("msg_later_raw"));
+      if (mutation === "remove-T") history.pop();
+      if (mutation === "replace-T") history.at(-1).id = "msg_different_terminal";
+    };
+    const f = await callerFixture({ wake: snapshot({ admitted: true }),
+      wait: async (history) => { history.push(freshIdle()); armed = true; },
+      get: async ({ sessionID: id }) => {
+        if (polled) { got = true; if (stage === "final-get") mutate(f.history); }
+        return { id, location: { directory: location } };
+      },
+      context: async (_input, history) => { if (got && stage === "final-context") mutate(history); return { data: history }; },
+      response: async (route, body) => {
+        if (armed && route === "/relay/opencode/wake" && body.operation === "poll") {
+          polled = true; if (stage === "poll") mutate(f.history);
+        }
+      } });
+    try {
+      await observePrompt(f); f.history.push(freshUser());
+      await f.tick(); // No event hints at all: raw read, not event delivery, must fence this.
+      assert.equal(terminals(f).length, 0, `${stage}/${mutation}`);
+      assert.equal(f.native.prompt.length, 0);
+    } finally { await f.close(); }
+  }
+});
+
+test("fresh supersession fences lifecycle and backend changes during settlement", async () => {
+  for (const stage of ["wait", "postwait-get", "postwait-context", "final-poll", "final-get", "final-context"])
+    for (const fault of ["dispose", "compaction-hook", "compaction-event", "move", "revert-staged", "revert-cleared", "revert-committed", "shutdown", "delete", "archive",
+    "subscription-end", "subscription-error", "endpoint", "scope", "generation", "delivery", "input", "terminal", "admitted", "owner", "location", "native-session", "native-revert"]) {
+    const gate = barrier(); let changed = false, waitEnded = false, fenced = false, contexts = 0, heldGets = 0, getCalls = 0;
+    const f = await callerFixture({ wake: snapshot({ admitted: true }),
+      wait: async (history) => { if (stage === "wait") await gate.wait(); history.push(freshIdle()); waitEnded = true; },
+      get: async ({ sessionID: id }) => {
+        getCalls++;
+        if (!heldGets && (waitEnded && !fenced && stage === "postwait-get" || fenced && stage === "final-get")) {
+          heldGets++; // Hold only the selected verification lookup, not compaction's ownership lookup.
+          await gate.wait();
+        }
+        return { id: changed && fault === "native-session" ? "ses_other" : id,
+          location: { directory: changed && fault === "location" ? location + "/other" : location },
+          ...(changed && fault === "native-revert" ? { revert: { messageID: freshUser().id } } : {}) };
+      },
+      context: async (_input, history) => {
+        contexts++;
+        if (contexts === 3 && stage === "postwait-context" || contexts === 4 && stage === "final-context") await gate.wait();
+        return { data: history };
+      },
+      response: async (route, body) => {
+        if (waitEnded && route === "/relay/opencode/wake" && body.operation === "poll") {
+          if (stage === "final-poll") await gate.wait();
+          fenced = true;
+        }
+        if (!changed || route !== "/relay/opencode/wake") return;
+        if (body.operation === "terminal") return null; // Server rejects the frozen stale fence, never rebinds it.
+        if (fault === "owner" && body.operation === "poll") return null;
+        const session = { ...relaySession }, wake = snapshot({ admitted: true });
+        if (fault === "endpoint") session.endpoint_id += "f";
+        if (fault === "scope") session.scope_generation++;
+        if (fault === "generation") wake.generation++;
+        if (fault === "delivery") wake.delivery_id = "relay-delivery-" + "e".repeat(32);
+        if (fault === "input") wake.native_input_id = "msg_other_wake";
+        if (fault === "terminal") wake.terminal = true;
+        if (fault === "admitted") wake.admitted = false;
+        return { session, wake };
+      } });
+    try {
+      await observePrompt(f); f.history.push(freshUser()); await f.tick(); await gate.entered;
+      if (stage.endsWith("-get")) assert.equal(heldGets, 1, "selected verification lookup reached its one-shot barrier");
+      assert.equal(terminals(f).length, 0, "no terminal before the held verification boundary");
+      changed = true;
+      if (fault === "dispose") await f.dispose();
+      else if (fault === "compaction-hook") {
+        const before = getCalls;
+        await f.hooks.compaction({ sessionID });
+        assert.ok(getCalls > before, "compaction performed its own ownership lookup while verification stayed held");
+        if (stage.endsWith("-get")) assert.equal(heldGets, 1, "compaction must not re-enter the verification barrier");
+        assert.equal(terminals(f).length, 0, "compaction cannot retire before the verification barrier is released");
+      } else if (fault === "subscription-end") await f.emit({ fixtureEnd: true });
+      else if (fault === "subscription-error") await f.emit({ fixtureError: true });
+      else if (["compaction-event", "move", "delete", "archive", "shutdown"].includes(fault) || fault.startsWith("revert-")) {
+        const type = { "compaction-event": "session.compaction.started", move: "session.moved", delete: "session.deleted", archive: "session.archived", shutdown: "session.execution.interrupted" }[fault]
+          || "session.revert." + fault.slice(7);
+        await f.emit({ type, location: { directory: fault === "move" ? location + "/other" : location }, data: { sessionID, reason: "shutdown" } });
+      } else await f.tick();
+      gate.release(); await pause();
+      const lateBackend = ["final-get", "final-context"].includes(stage) &&
+        ["endpoint", "scope", "generation", "delivery", "input", "terminal", "admitted", "owner"].includes(fault);
+      if (lateBackend) {
+        assert.ok(terminals(f).length <= 1, `${stage}/${fault}`);
+        for (const call of terminals(f)) assert.deepEqual(
+          [call.body.endpoint_id, call.body.scope_generation, call.body.generation, call.body.delivery_id, call.body.native_input_id],
+          [endpointID, 0, 1, deliveryID, nativeID], "late server changes reject the old fence, never retarget it");
+      } else assert.equal(terminals(f).length, 0, `${stage}/${fault}`);
+      assert.equal(f.native.prompt.length, 0);
+    } finally { gate.release(); await f.close(); }
+  }
+  for (const writer of ["poll", "enroll"]) for (const flag of ["admitted", "terminal"]) {
+    const original = snapshot({ admitted: true, terminal: flag === "terminal" });
+    let regress = false;
+    const f = await callerFixture({ wake: original, wait: async (history) => history.push(freshIdle()),
+      response: async (route) => route === "/relay/opencode/wake"
+        ? { session: relaySession, wake: regress ? { ...original, [flag]: false } : original } : undefined });
+    try {
+      regress = true;
+      const boundary = f.trace.length;
+      if (writer === "enroll") await f.emit({ type: "session.created", data: { sessionID } });
+      await f.tick(); await f.tick();
+      assert.equal(f.native.prompt.length, 0, `${writer}/${flag}: regressed same-G snapshot cannot authorize replay`);
+      assert.equal(terminals(f).length, 0, `${writer}/${flag}: no terminal from rejected response`);
+      assert.ok(!f.trace.slice(boundary).includes("raw"), `${writer}/${flag}: rejected snapshot cannot launch a legacy wake flight`);
+      if (flag === "admitted") {
+        regress = false; // Server repair alone is not a cache observation before hook entry.
+        await observePrompt(f); f.history.push(freshUser()); await f.tick();
+        assert.equal(terminals(f).length, 1, `${writer}: rejection retained the known admitted snapshot, not the regressed flag`);
+      }
+    } finally { await f.close(); }
+  }
+  for (const writer of ["poll", "enroll"]) for (const fault of ["runtime", "session", "container", "endpoint", "scope", "state", "health",
+    "missing-wake", "invalid-wake", "zero-generation", "lower-generation", "same-input-new-generation", "same-generation-delivery", "same-generation-input", "wake-scope", "wake-location", "invalid-admitted", "invalid-terminal"]) {
+    const original = snapshot({ admitted: true, generation: 2 }); let invalid = false;
+    const f = await callerFixture({ wake: original, response: async (route) => {
+      if (route !== "/relay/opencode/wake" || !invalid) return;
+      const session = { ...relaySession }, wake = { ...original }, response = { session, wake };
+      if (fault === "runtime") session.runtime = "codex";
+      if (fault === "session") session.session_ref = "ses_other";
+      if (fault === "container") session.container_ref = "other";
+      if (fault === "endpoint") session.endpoint_id += "f";
+      if (fault === "scope") session.scope_generation++;
+      if (fault === "state") session.state = "closed";
+      if (fault === "health") session.destination_health = "inactive";
+      if (fault === "missing-wake") delete response.wake;
+      if (fault === "invalid-wake") response.wake = {};
+      if (fault === "zero-generation") wake.generation = 0;
+      if (fault === "lower-generation") wake.generation--;
+      if (fault === "same-input-new-generation") wake.generation++;
+      if (fault === "same-generation-delivery") wake.delivery_id = "relay-delivery-" + "d".repeat(32);
+      if (fault === "same-generation-input") wake.native_input_id = "msg_conflicting";
+      if (fault === "wake-scope") wake.scope_generation++;
+      if (fault === "wake-location") wake.native_location += "/other";
+      if (fault === "invalid-admitted") wake.admitted = "true";
+      if (fault === "invalid-terminal") wake.terminal = 0;
+      return response;
+    } });
+    try {
+      invalid = true;
+      const boundary = f.trace.length;
+      if (writer === "enroll") await f.emit({ type: "session.created", data: { sessionID } });
+      await f.tick();
+      assert.ok(!f.trace.slice(boundary).includes("raw"), `${writer}/${fault}: invalid response cannot launch a flight`);
+      assert.equal(terminals(f).length, 0, `${writer}/${fault}`);
+      assert.equal(f.native.prompt.length, 0, `${writer}/${fault}`);
+    } finally { await f.close(); }
+  }
+  for (const writer of ["poll", "enroll"]) for (const stale of ["older", "empty", "released", "foreign-higher"]) {
+    const gate = barrier(), original = snapshot({ admitted: true });
+    const newer = snapshot({ admitted: true, generation: 2, native_input_id: "msg_retry_generation" });
+    let backend = original, hold = false;
+    const f = await callerFixture({ wake: original, wait: async (history) => history.push(freshIdle()),
+      response: async (route, body) => {
+        if (route !== "/relay/opencode/wake") return;
+        if (hold && body.operation === writer) {
+          hold = false;
+          const captured = stale === "empty" ? null : { ...backend };
+          await gate.wait();
+          return { session: stale === "foreign-higher" ? { ...relaySession, scope_generation: 1, endpoint_id: endpointID + "f" } : relaySession, wake: captured };
+        }
+        return { session: relaySession, wake: backend };
+      } });
+    try {
+      hold = true;
+      if (writer === "poll") await f.tick();
+      else await f.emit({ type: "session.created", data: { sessionID } });
+      await gate.entered;
+      backend = stale === "released" ? null : newer;
+      if (writer === "poll") await f.emit({ type: "session.created", data: { sessionID } });
+      else await f.tick();
+      // First-observe U only AFTER the other writer has accepted newer G/null.
+      await observePrompt(f); f.history.push(freshUser());
+      gate.release(); await pause();
+      if (stale === "released") {
+        await assert.doesNotReject(() => f.hooks.context({ sessionID, messages: [projectedWake()] }),
+          `${writer}: delayed pre-release response cannot restore internal-context authority`);
+        assert.equal(f.calls.filter((c) => c.body.operation === "context").length, 0, `${writer}: released anchor remains absent`);
+      }
+      await f.tick();
+      assert.equal(terminals(f).length, stale === "released" ? 0 : 1, `${writer}/${stale}: stale reply cannot erase newer candidate or restore old anchor`);
+      if (stale !== "released") {
+        assert.equal(terminals(f)[0].body.generation, 2);
+        assert.equal(terminals(f)[0].body.native_input_id, newer.native_input_id);
+        assert.equal(terminals(f)[0].body.scope_generation, 0, "stale higher registration cannot rebind the newer candidate");
+      }
+      assert.equal(f.native.prompt.length, 0, `${writer}/${stale}: no old native replay`);
+    } finally { gate.release(); await f.close(); }
+  }
+  for (const generation of [1, 2]) {
+    const gate = barrier(); let backend = null, hold = false;
+    const wakeFor = (value) => snapshot({ generation: value, native_input_id: "msg_aba_" + value,
+      delivery_id: "relay-delivery-" + String(value).repeat(32) });
+    const f = await callerFixture({
+      wait: async (history) => history.push({ ...freshIdle(), id: "msg_aba_terminal_" + backend.generation }),
+      response: async (route, body) => {
+        if (route !== "/relay/opencode/wake") return;
+        if (body.operation === "enroll" && hold) {
+          hold = false;
+          const captured = { ...backend };
+          await gate.wait();
+          return { session: relaySession, wake: captured };
+        }
+        if (body.operation === "admitted") backend = { ...backend, admitted: true };
+        if (body.operation === "terminal") backend = { ...backend, terminal: true };
+        if (body.operation === "poll" && backend?.terminal) backend = null;
+        return { session: relaySession, wake: backend };
+      } });
+    const counts = () => [f.native.prompt.length,
+      f.calls.filter((c) => c.body.operation === "admitted").length, terminals(f).length];
+    try {
+      if (generation === 2) {
+        backend = wakeFor(1);
+        await f.tick();
+        assert.equal(backend.terminal, true, "warmup generation completed through normal prompt/admission/terminal");
+        await f.tick();
+        assert.equal(backend, null, "normal poll returned null release before the newer generation");
+      }
+      backend = wakeFor(generation);
+      const staleWake = { ...projectedWake(), id: backend.native_input_id,
+        metadata: { pallium_relay_wake: true, generation, delivery_id: backend.delivery_id } };
+      hold = true;
+      await f.emit({ type: "session.created", data: { sessionID } });
+      await gate.entered; // Enroll captured LOCAL null, but its backend G body is held.
+      await f.tick();
+      assert.equal(backend.admitted, true, "intervening normal poll drove genuine admission");
+      assert.equal(backend.terminal, true, "intervening normal poll drove genuine terminal");
+      assert.deepEqual(counts(), [generation, generation, generation]);
+      await f.tick();
+      assert.equal(backend, null, "normal poll returned null release, completing null -> G -> null");
+      const retiredCounts = counts();
+      gate.release(); await pause();
+      // No repair poll is allowed between the delayed body and this readback.
+      await assert.doesNotReject(() => f.hooks.context({ sessionID, messages: [staleWake] }),
+        `null ABA generation ${generation}: retired input cannot regain internal-context authority`);
+      assert.equal(f.calls.filter((c) => c.body.operation === "context").length, 0, "no stale internal context request before repair poll");
+      assert.deepEqual(counts(), retiredCounts, "no new native prompt, admission or terminal from the old response");
+      backend = wakeFor(generation + 1);
+      await f.tick();
+      assert.equal(f.native.prompt.at(-1).id, backend.native_input_id, "current new generation still progresses after ABA rejection");
+      assert.deepEqual(counts(), [generation + 1, generation + 1, generation + 1]);
+      await f.tick();
+      assert.equal(backend, null, "current null release remains accepted");
+    } finally { gate.release(); await f.close(); }
+  }
+  for (const writer of ["poll", "enroll"]) {
+    const oldWait = barrier(), newWait = barrier(), original = snapshot({ admitted: true });
+    let regress = false, waits = 0;
+    const projected = projectedWake();
+    const f = await callerFixture({ wake: original,
+      history: [{ type: "user", id: nativeID, text: projected.content[0].text, metadata: projected.metadata }],
+      response: async (route) => route === "/relay/opencode/wake"
+        ? { session: relaySession, wake: regress ? { ...original, admitted: false } : original } : undefined,
+      wait: async (history) => {
+        if (++waits === 1) await oldWait.wait();
+        else { await newWait.wait(); history.push(freshIdle()); }
+      } });
+    try {
+      await f.tick(); await oldWait.entered;
+      regress = true;
+      if (writer === "enroll") await f.emit({ type: "session.created", data: { sessionID } });
+      else await f.tick();
+      regress = false;
+      await f.tick(); await newWait.entered;
+      oldWait.release(); await pause();
+      assert.equal(terminals(f).length, 0, `${writer}: cancelled old flight cannot finish after valid replacement starts`);
+      await f.tick();
+      assert.equal(waits, 2, `${writer}: old finally cannot clear replacement flight's busy reservation`);
+      newWait.release(); await pause();
+      assert.equal(terminals(f).length, 1, `${writer}: replacement flight can finish normally`);
+      assert.equal(f.native.prompt.length, 0);
+    } finally { oldWait.release(); newWait.release(); await f.close(); }
+  }
+  for (const writer of ["poll", "enroll"]) for (const bodyKind of ["null", "old-wake", "new-wake", "malformed"]) {
+    const turnGate = barrier(), captureGate = barrier(), scopeGate = barrier(), original = snapshot({ admitted: true });
+    const nextScope = ["new-wake", "malformed"].includes(bodyKind) ? 3 : 1;
+    const replacement = { ...relaySession, scope_generation: nextScope };
+    const carried = bodyKind === "null" ? null : bodyKind === "old-wake" ? original : bodyKind === "malformed" ? {}
+      : snapshot({ scope_generation: nextScope, generation: 2, native_input_id: "msg_scope_reply" });
+    let registration = relaySession, backendWake = original, replace = false, registered = true;
+    let holdTurn = false, deliver = false, turns = 0, captures = 0;
+    const f = await callerFixture({ history: [sourceUser("msg_scope_source"), completedAssistant(), freshIdle()],
+      fetch: async (route, body) => {
+        if (route === "/relay/sessions") return jsonResponse([registration]);
+        if (route === "/items") {
+          const first = ++captures === 1;
+          return { ok: true, text: async () => { if (first) await captureGate.wait(); return JSON.stringify(captureReceipt); } };
+        }
+        if (route === "/relay/opencode/wake" && body.operation === "poll" && body.scope_generation === nextScope && !registered)
+          return { ok: false, status: 409, text: async () => JSON.stringify({ detail: "OpenCode registration is missing or stale" }), body: { cancel: async () => {} } };
+      },
+      response: async (route, body) => {
+        if (route === "/relay/turn") {
+          turns++;
+          const current = registration, batch = deliver ? [delivery] : [];
+          if (holdTurn) { holdTurn = false; await turnGate.wait(); }
+          return { session: current, deliveries: batch };
+        }
+        if (route === "/relay/deliveries/ack") return { delivery_id: body.delivery_id, state: "delivered", already_delivered: false };
+        if (route !== "/relay/opencode/wake") return;
+        if (replace && body.operation === writer) {
+          replace = false;
+          await scopeGate.wait();
+          registration = replacement; backendWake = null; registered = false;
+          return { session: replacement, wake: carried };
+        }
+        if (body.operation === "enroll" && body.scope_generation === nextScope) registered = true;
+        if (body.operation === "admitted") backendWake = { ...backendWake, admitted: true };
+        if (body.operation === "terminal") backendWake = { ...backendWake, terminal: true };
+        if (body.operation === "poll" && backendWake?.terminal) backendWake = null;
+        return { session: registration, wake: backendWake };
+      }, wait: async (history) => history.push({ type: "idle", id: "msg_scope_terminal", outcome: "succeeded" }) });
+    const oldCapture = f.hooks.compaction({ sessionID });
+    let running;
+    try {
+      await captureGate.entered;
+      const captureCall = f.calls.filter((c) => c.path === "/items").at(-1);
+      const user = natural("msg_scope_context"), before = structuredClone(user), initialTurns = turns;
+      deliver = true; holdTurn = true;
+      running = f.hooks.context({ sessionID, messages: [user] });
+      await turnGate.entered;
+      const turnCall = f.calls.filter((c) => c.path === "/relay/turn").at(-1);
+      replace = true;
+      if (writer === "poll") await f.tick();
+      else await f.emit({ type: "session.created", data: { sessionID } });
+      await scopeGate.entered;
+      backendWake = ["null", "new-wake"].includes(bodyKind) ? null : original;
+      if (writer === "poll") await f.emit({ type: "session.created", data: { sessionID } });
+      else await f.tick();
+      assert.equal(turnCall.signal.aborted, false, "same-binding wake/null cache advancement is not a registration reset");
+      assert.equal(captureCall.signal.aborted, false);
+      scopeGate.release(); await pause();
+      assert.equal(turnCall.signal.aborted, true, `${writer}/${bodyKind}: positive replacement retires old ordinary transport`);
+      assert.equal(captureCall.signal.aborted, true, `${writer}/${bodyKind}: positive replacement retires old capture transport`);
+      for (const wake of [original, carried].filter((w) => w?.native_input_id)) {
+        const input = { ...projectedWake(), id: wake.native_input_id,
+          metadata: { pallium_relay_wake: true, generation: wake.generation, delivery_id: wake.delivery_id } };
+        await assert.doesNotReject(() => f.hooks.context({ sessionID, messages: [input] }));
+      }
+      assert.equal(f.calls.filter((c) => c.body.operation === "context").length, 0, "replacement invalidates registration without accepting ANY carried wake body");
+      assert.equal(f.native.prompt.length, 0); assert.equal(terminals(f).length, 0);
+      assert.equal(f.calls.filter((c) => c.path === "/relay/deliveries/ack").length, 0);
+      await f.tick(); // New binding receives exact missing-registration409 and enrolls itself.
+      assert.equal(f.calls.filter((c) => c.body.operation === "poll").at(-1).body.scope_generation, nextScope);
+      assert.ok(f.calls.some((c) => c.body.operation === "enroll" && c.body.scope_generation === nextScope));
+      await f.hooks.compaction({ sessionID }); // Old capture reservation/cache cannot suppress current capture.
+      assert.equal(captures, 2);
+      await f.hooks.context({ sessionID, messages: [structuredClone(before)] }); // Same user ID needs a NEW claim after replacement.
+      assert.equal(turns, initialTurns + 2);
+      assert.equal(f.calls.filter((c) => c.path === "/relay/deliveries/ack").length, 1);
+      turnGate.release(); captureGate.release(); await Promise.all([running, oldCapture]);
+      assert.deepEqual(user, before, "old context cannot revive after newer claim commits");
+      await f.hooks.context({ sessionID, messages: [structuredClone(before)] });
+      await f.hooks.compaction({ sessionID });
+      assert.equal(turns, initialTurns + 2, "old response cannot erase successor claim cache");
+      assert.equal(captures, 2, "old capture finally/receipt cannot erase or complete successor capture state");
+      assert.equal(f.calls.filter((c) => c.path === "/relay/deliveries/ack").length, 1);
+      const queries = f.calls.filter((c) => c.path === "/item-and-query").length;
+      await f.hooks.prompt({ sessionID, messageID: "msg_scope_source", prompt: { text: "question" } });
+      assert.equal(f.calls.filter((c) => c.path === "/item-and-query").length, queries, "reset preserves seen first-observation identity");
+      assert.equal(turns, initialTurns + 2, "reset retains immutable source/role identity without a new claim");
+      backendWake = snapshot({ scope_generation: nextScope, generation: 4, native_input_id: "msg_scope_recovered" });
+      await f.tick();
+      assert.deepEqual(f.native.prompt.map((p) => p.id), ["msg_scope_recovered"], "only a FRESH new-scope snapshot may start a new wake");
+      assert.equal(terminals(f).length, 1); assert.equal(terminals(f)[0].body.scope_generation, nextScope);
+      assert.equal(f.calls.filter((c) => c.body.operation === "admitted").length, 1);
+      await f.tick(); assert.equal(backendWake, null, "new-scope terminal release remains usable");
+    } finally { scopeGate.release(); turnGate.release(); captureGate.release(); await running; await oldCapture; await f.close(); }
+  }
+  for (const writer of ["poll", "enroll"]) for (const fault of ["lower", "negative", "fraction", "string", "missing", "runtime", "session", "container", "endpoint", "state", "health"]) {
+    const gate = barrier(); let registration = relaySession, advance = false, invalid = false, hold = false;
+    const current = { ...relaySession, scope_generation: 1 }, bad = { ...relaySession, scope_generation: 2 };
+    if (fault === "lower") bad.scope_generation = 0;
+    if (fault === "negative") bad.scope_generation = -1;
+    if (fault === "fraction") bad.scope_generation = 1.5;
+    if (fault === "string") bad.scope_generation = "2";
+    if (fault === "missing") delete bad.scope_generation;
+    if (fault === "runtime") bad.runtime = "codex";
+    if (fault === "session") bad.session_ref = "ses_other";
+    if (fault === "container") bad.container_ref = "other";
+    if (fault === "endpoint") bad.endpoint_id += "f";
+    if (fault === "state") bad.state = "closed";
+    if (fault === "health") bad.destination_health = "inactive";
+    const f = await callerFixture({ fetch: async (route) => route === "/relay/sessions" ? jsonResponse([registration]) : undefined,
+      response: async (route, body) => {
+        if (route === "/relay/turn") { const session = registration; if (hold) { hold = false; await gate.wait(); } return { session, deliveries: [delivery] }; }
+        if (route === "/relay/deliveries/ack") return { delivery_id: body.delivery_id, state: "delivered", already_delivered: false };
+        if (route !== "/relay/opencode/wake") return;
+        if (advance && body.operation === "poll") { advance = false; registration = current; }
+        if (invalid && body.operation === writer) { invalid = false; return { session: bad, wake: null }; }
+        return { session: registration, wake: null };
+      } });
+    let running;
+    try {
+      advance = true; await f.tick();
+      hold = true;
+      const user = natural("msg_scope_reject"), before = structuredClone(user);
+      running = f.hooks.context({ sessionID, messages: [user] }); await gate.entered;
+      const call = f.calls.filter((c) => c.path === "/relay/turn").at(-1);
+      invalid = true;
+      if (writer === "poll") await f.tick(); else await f.emit({ type: "session.created", data: { sessionID } });
+      assert.equal(call.signal.aborted, false, `${writer}/${fault}: invalid/lower/foreign registration cannot reset the current lifetime`);
+      gate.release(); await running;
+      assert.notDeepEqual(user, before, `${writer}/${fault}: valid current claim remains usable`);
+      assert.equal(f.calls.filter((c) => c.path === "/relay/deliveries/ack").length, 1);
+      await f.tick();
+      assert.equal(f.calls.filter((c) => c.body.operation === "poll").at(-1).body.scope_generation, 1, `${writer}/${fault}: no binding downgrade`);
+      assert.equal(f.native.prompt.length, 0); assert.equal(terminals(f).length, 0);
+    } finally { gate.release(); await running; await f.close(); }
+  }
+  for (const writer of ["poll", "enroll"]) for (const fault of ["lower", "foreign", "malformed"]) {
+    const responseGate = barrier(), waitGate = barrier(); let hold = false;
+    const session = { ...relaySession, scope_generation: 1 }, wake = snapshot({ admitted: true, scope_generation: 1 });
+    const bad = fault === "lower" ? { ...session, scope_generation: 0 } : fault === "foreign"
+      ? { ...session, scope_generation: 2, endpoint_id: endpointID + "f" } : { ...session, scope_generation: 1.5 };
+    const f = await callerFixture({ fetch: async (route) => route === "/relay/sessions" ? jsonResponse([session]) : undefined,
+      response: async (route, body) => {
+        if (route === "/relay/turn") return { session, deliveries: [] };
+        if (route !== "/relay/opencode/wake") return;
+        if (hold && body.operation === writer) { hold = false; await responseGate.wait(); return { session: bad, wake }; }
+        return { session, wake };
+      }, wait: async (history) => { await waitGate.wait(); history.push(freshIdle()); } });
+    try {
+      await observePrompt(f); f.history.push(freshUser()); await f.tick(); await waitGate.entered;
+      hold = true;
+      if (writer === "poll") await f.tick(); else await f.emit({ type: "session.created", data: { sessionID } });
+      await responseGate.entered;
+      if (writer === "poll") await f.emit({ type: "session.created", data: { sessionID } }); else await f.tick();
+      // The SAME wake keeps the SAME witness/flight but advances its opaque cache revision.
+      responseGate.release(); await pause(); await f.tick();
+      assert.equal(f.native.wait, 1, `${writer}/${fault}: stale registration rejection cannot release a still-current flight`);
+      assert.equal(terminals(f).length, 0);
+      waitGate.release(); await pause();
+      assert.equal(terminals(f).length, 1, `${writer}/${fault}: equivalent cache progress protects the existing witness from stale rejection`);
+      assert.equal(terminals(f)[0].body.scope_generation, 1);
+      assert.equal(f.native.prompt.length, 0);
+    } finally { responseGate.release(); waitGate.release(); await f.close(); }
+  }
+  for (const writer of ["poll", "enroll"]) {
+    const responseGate = barrier(), waitGate = barrier(); let hold = false, advance = false;
+    let session = { ...relaySession, scope_generation: 1 }, wake = snapshot({ admitted: true, scope_generation: 1 });
+    const f = await callerFixture({ fetch: async (route) => route === "/relay/sessions" ? jsonResponse([session]) : undefined,
+      response: async (route, body) => {
+        if (route === "/relay/turn") return { session, deliveries: [] };
+        if (route !== "/relay/opencode/wake") return;
+        if (hold && body.operation === writer) {
+          hold = false;
+          const captured = { session: { ...session, scope_generation: 2 }, wake: { ...wake } };
+          await responseGate.wait(); return captured;
+        }
+        if (advance) {
+          advance = false; session = { ...session, scope_generation: 3 };
+          wake = snapshot({ admitted: true, scope_generation: 3, generation: 3, native_input_id: "msg_new_scope_generation" });
+        }
+        return { session, wake };
+      }, wait: async (history) => { await waitGate.wait(); history.push(freshIdle()); } });
+    try {
+      hold = true;
+      if (writer === "poll") await f.tick(); else await f.emit({ type: "session.created", data: { sessionID } });
+      await responseGate.entered;
+      advance = true;
+      if (writer === "poll") await f.emit({ type: "session.created", data: { sessionID } }); else await f.tick();
+      await f.tick(); // NEW-scope request, not the old higher-registration response, learns the wake.
+      await observePrompt(f); f.history.push(freshUser()); await f.tick(); await waitGate.entered;
+      responseGate.release(); await pause(); await f.tick();
+      assert.equal(f.native.wait, 1, `${writer}: old-signal/base completion cannot clear the successor flight`);
+      assert.equal(terminals(f).length, 0);
+      waitGate.release(); await pause();
+      assert.equal(terminals(f).length, 1, `${writer}: old scope2 response cannot erase new scope3 proof`);
+      assert.equal(terminals(f)[0].body.scope_generation, 3);
+      assert.equal(terminals(f)[0].body.native_input_id, "msg_new_scope_generation");
+      assert.equal(f.native.prompt.length, 0);
+    } finally { responseGate.release(); waitGate.release(); await f.close(); }
+  }
+  const first = snapshot({ admitted: true, terminal: true });
+  let backend = first;
+  const f = await callerFixture({ wake: first, wait: async (history) => history.push({ ...freshIdle(), id: "msg_terminal_" + backend.generation }),
+    response: async (route, body) => {
+      if (route !== "/relay/opencode/wake") return;
+      if (body.operation === "admitted") backend = { ...backend, admitted: true };
+      if (body.operation === "terminal") backend = { ...backend, terminal: true };
+      return { session: relaySession, wake: backend };
+    } });
+  try {
+    for (const generation of [2, 3]) {
+      backend = snapshot({ generation, native_input_id: "msg_progress_" + generation,
+        delivery_id: generation === 2 ? deliveryID : "relay-delivery-" + "c".repeat(32) });
+      await f.tick();
+      assert.equal(f.native.prompt.at(-1).id, backend.native_input_id, "new generation is eligible even with reset admission/terminal flags");
+      assert.equal(terminals(f).at(-1).body.generation, generation);
+      await f.tick(); // Learn committed terminal normally; same-generation bits only advance.
+      backend = null;
+      await f.tick(); // Legitimate terminal release must not be mistaken for a stale null reply.
+    }
+    assert.deepEqual(f.native.prompt.map((p) => p.id), ["msg_progress_2", "msg_progress_3"], "pending retry/new delivery use NEW native IDs only");
+  } finally { await f.close(); }
+});
+
+test("fresh supersession consumes uncertain terminal without stale follow-up", async () => {
+  for (const failure of ["get", "context", "wait", "terminal-rejected", "terminal-reply-lost", "newer-candidate"]) {
+    let entered = false, committed = false, f, waits = 0;
+    f = await callerFixture({ wake: snapshot({ admitted: true }),
+      get: async ({ sessionID: id }) => { if (entered && failure === "get") throw new Error("get unavailable"); return { id, location: { directory: location } }; },
+      context: async (_input, history) => { if (entered && failure === "context") throw new Error("context unavailable"); return { data: history }; },
+      wait: async (history) => { entered = true; if (failure === "wait") throw new Error("wait unavailable"); history.push({ ...freshIdle(), id: "msg_settled_" + ++waits }); },
+      response: async (route, body) => {
+        if (route !== "/relay/opencode/wake") return;
+        if (body.operation === "poll" && committed) return { session: relaySession, wake: snapshot({ admitted: true, terminal: true }) };
+        if (body.operation === "terminal") {
+          committed = failure === "terminal-reply-lost";
+          if (failure === "newer-candidate") {
+            const user = sourceUser("msg_next_ordinary", "next ordinary work");
+            await observePrompt(f, user); f.history.push(user);
+          }
+          return null;
+        }
+      } });
+    try {
+      await observePrompt(f); f.history.push(freshUser()); await f.tick();
+      const submitted = failure.startsWith("terminal") || failure === "newer-candidate";
+      assert.equal(terminals(f).length, submitted ? 1 : 0, failure);
+      await f.tick();
+      assert.equal(terminals(f).length, failure === "newer-candidate" ? 2 : submitted ? 1 : 0, failure);
+      assert.equal(f.native.prompt.length, 0);
+    } finally { await f.close(); }
+  }
+});
 
 test("V2 freezes each prompt name and links delayed distinct outputs only inside its idle-delimited source segment", async () => {
   let alias = "planner-a";
