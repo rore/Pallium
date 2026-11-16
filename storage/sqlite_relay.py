@@ -241,8 +241,14 @@ def _delivery_render_safe(delivery: RelayDeliveryRecord, message: RelayMessageRe
 
 
 def _delivery_text(delivery: RelayDeliveryRecord, message: RelayMessageRecord, view: dict[str, Any]) -> str:
-    attempt = view.get("claim_attempt")
-    possible = view.get("possible_redelivery")
+    attempt = view.get("claim_attempt", view.get("attempts"))
+    attempt = (
+        int(attempt)
+        if type(attempt) in (int, float) and 1 <= attempt <= 2**53 - 1 and int(attempt) == attempt
+        else None
+    )
+    possible = view.get("possible_redelivery", None if attempt is None else attempt > 1)
+    possible = possible if attempt is not None and type(possible) is bool else None
     lines = [
         f"[Pallium Relay message from {message.sender_runtime}:{message.sender_session_ref}]",
         f"message_id: {message.id}",
