@@ -348,14 +348,26 @@ sixth failure.
 
 The task owner clarified the expectation: a minimum supported version and compatible
 later releases, not an exact-version lock. Binary pins make qualification repeatable.
-The existing developer is preparing a narrow plan for an API-based minimum
+The existing developer prepared a narrow plan for an API-based minimum
 (2.3.0 for the current internal-wake metadata path, subject to runtime evidence),
 clear minimum-versus-tested-version documentation, and a correct primary-request
 observation boundary. Historical 2.0.24 and 2.2.7 evidence limits and the passive V1
 path remain unchanged; no blanket compatibility with unseen releases is claimed.
-Production source remains frozen. No assertion, timeout, diagnostic, qualification
-retarget, source edit, seventh run or live change is released by this plan-only
-continuation. Full recovery remains open.
+The existing architect reviewed record-only `5cc5ce77` and returned PLAN HOLD on
+three narrow points: exact one-use completed-context/FIRST-primary pairing,
+auxiliary responses bypassing the primary gate, and executable checks of the actual
+observer's negative and failure-safe cleanup paths. The API floor, explicit-title
+precondition and need for at most one fixture observer are supported.
+
+The owner must amend only those three points in the existing record and obtain
+the same architect's narrow closure. After exact PLAN GO, the manager's conditional
+source-only release permits the existing README, qualification workflow, native
+fixture, workflow contracts and Work Record changes without another routine
+approval stop. Production plugin/helper/backend/API/package caller source stays
+exact `f80df956`. Independent patch review still follows. No source edit is released
+while PLAN HOLD remains, and no seventh run, publication, timeout increase,
+assertion weakening, diagnostic expansion or live change is authorized.
+Full recovery remains open.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
