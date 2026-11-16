@@ -240,6 +240,43 @@ test("V1 retries of one in-flight native message share one immutable Relay snaps
         mode === "conflicting" ? "https://git.example.test/Other/Repo.git" : "\n",
         (gate) => run(mode, gate));
     }
+    const builtin = await import("node:child_process");
+    for (const mode of ["never-entered", "early-close", "early-error"]) {
+      const saved = childProcess.spawn;
+      let owned, childClosed = false;
+      const spawn = (command, args, options) => {
+        if (command !== process.execPath) return saved(command, args, options);
+        owned = mode === "early-error"
+          ? saved(path.join(nonGitDir, "missing-fixture-child"), [], options)
+          : saved(command, args, options);
+        owned.once("close", () => { childClosed = true; });
+        return owned;
+      };
+      childProcess.spawn = spawn;
+      syncBuiltinESMExports();
+      try {
+        const probe = mode === "never-entered" ? "never entered fixture probe" : "remote get-url origin";
+        const failure = mode === "never-entered" ? /held Git never entered:/
+          : mode === "early-close" ? /held Git closed before readiness:/ : /held Git child error before readiness:/;
+        await assert.rejects(heldGit(probe, "", (gate) => run(mode, gate)), failure);
+        assert.equal(childProcess.spawn, spawn, `${mode}: helper restores the invoking spawn`);
+        assert.equal(builtin.spawn, spawn, `${mode}: named built-in binding is restored too`);
+        assert.equal(Boolean(owned), mode !== "never-entered");
+        assert.equal(childClosed, mode !== "never-entered", `${mode}: owned child closes before helper returns`);
+        assert.equal(P.getPinnedContainer("sesRoleRetry_" + mode), null, `${mode}: callbacks joined before pin cleanup`);
+      } finally {
+        childProcess.spawn = saved;
+        syncBuiltinESMExports();
+      }
+      assert.equal(childProcess.spawn, saved);
+      assert.equal(builtin.spawn, saved);
+    }
+    const saved = childProcess.spawn;
+    await assert.rejects(heldGit("remote get-url origin", "\n", async () => {
+      throw new Error("fixture setup failed before readiness await");
+    }), /fixture setup failed before readiness await/);
+    assert.equal(childProcess.spawn, saved);
+    assert.equal(builtin.spawn, saved, "unused rejected readiness cannot prevent setup-failure restoration");
   } finally {
     if (previousActor === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
     else process.env.PALLIUM_HOOK_ACTOR_REF = previousActor;
@@ -944,32 +981,60 @@ async function heldGit(argsText, output, run) {
   const saved = childProcess.spawn;
   const directory = fs.mkdtempSync(path.join(tmpHome, "held-git-界-"));
   const release = path.join(directory, "release");
-  let entered, armed = true, child, closed;
-  const started = new Promise((resolve) => { entered = resolve; });
+  let entered, reject, timer, settled = false, armed = true, child, closed;
+  const started = new Promise((resolve, fail) => { entered = resolve; reject = fail; });
+  // Setup may fail before the caller awaits readiness. Keep that rejection
+  // handled without changing what an actual await observes.
+  started.catch(() => {});
+  const finish = (error) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    child?.stdout?.off("data", onData);
+    child?.off("error", onError);
+    child?.off("close", onClose);
+    if (error) reject(error);
+    else entered();
+  };
+  const onData = () => finish();
+  const onError = () => finish(new Error(`held Git child error before readiness: ${argsText}`));
+  const onClose = () => finish(new Error(`held Git closed before readiness: ${argsText}`));
+  timer = setTimeout(() => finish(new Error(armed
+    ? `held Git never entered: ${argsText}` : `held Git readiness timed out: ${argsText}`)), 5000);
   childProcess.spawn = (command, args, options) => {
     if (!armed || command !== "git" || args.join(" ") !== argsText) return saved(command, args, options);
     armed = false;
-    child = saved(process.execPath, ["-e", `
+    try { child = saved(process.execPath, ["-e", `
       const fs = require("node:fs");
       process.stdout.write(${JSON.stringify(output)});
       const timer = setInterval(() => { if (fs.existsSync(${JSON.stringify(release)})) {
         clearInterval(timer); process.exit(0);
       } }, 5);
       setTimeout(()=>process.exit(0), 1500).unref();
-    `], { ...options, cwd: directory });
+    `], { ...options, cwd: directory }); }
+    catch (error) { onError(); throw error; }
     closed = new Promise((resolve) => child.once("close", resolve));
-    child.stdout.once("data", entered);
+    child.stdout.once("data", onData);
+    child.once("error", onError);
+    child.once("close", onClose);
     return child;
   };
-  syncBuiltinESMExports();
-  try { await run({ started, release: () => fs.writeFileSync(release, "release"), child: () => child }); }
-  finally {
-    fs.writeFileSync(release, "release");
-    if (child && child.exitCode === null && child.signalCode === null) child.kill();
-    await closed;
-    childProcess.spawn = saved;
+  try {
     syncBuiltinESMExports();
-    fs.rmSync(directory, { recursive: true, force: true });
+    await run({ started, release: () => fs.writeFileSync(release, "release"), child: () => child });
+  }
+  finally {
+    finish(new Error(`held Git readiness cancelled: ${argsText}`));
+    try {
+      try {
+        fs.writeFileSync(release, "release");
+        if (child && child.exitCode === null && child.signalCode === null) child.kill();
+      } finally { await closed; }
+    } finally {
+      childProcess.spawn = saved;
+      syncBuiltinESMExports();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   }
 }
 
