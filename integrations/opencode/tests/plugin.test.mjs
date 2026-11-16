@@ -190,6 +190,10 @@ test("V1 retries of one in-flight native message share one immutable Relay snaps
       assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/turn")).length, 1);
       assert.equal(P.getPinnedContainer(sessionID), container, `${mode}: sibling published its actual derived pin`);
       assert.equal(P.getPinnedActor(sessionID), "concurrent-actor");
+      if (gate) {
+        assert.equal(gate.child().exitCode, null, `${mode}: original discovery is still held when the sibling pins`);
+        assert.equal(gate.child().signalCode, null);
+      }
       if (mode === "removed") P.removeSessionPin(sessionID);
       if (mode === "retired") {
         await hooks.event({ event: { type: "session.deleted", properties: { sessionID } } });
