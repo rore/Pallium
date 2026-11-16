@@ -331,16 +331,31 @@ The inspected safe qualification artifact is `14220892839`; source hashes, offic
 Package and ordinary passes do not replace the failed native journey.
 The [same receipt](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488)
 retains all six results. The result-only record remains local and unpushed; PR410
-stays draft and unqualified. The same independent reviewer has the new actual-sixth
-evidence review; completed source and earlier result reviews are not repeated.
+stays draft and unqualified. The same independent reviewer completed the actual-sixth
+evidence review with HOLD / NOT QUALIFIED and no material reporting error. The manager
+accepts that failed-result disposition; no source or earlier result review is repeated.
 
 Read-only discovery now checks the exact delivery prerequisite: the fixture sets
 its provider-entry event for every provider POST, but that alone does not identify
-the original Relay model request. The existing architect is checking pinned native
-call ordering; the developer traces the existing fixture/plugin claim/render/ACK
-paths. No provider/barrier cause or corrective edit is accepted yet. No assertion,
-timeout, diagnostic, runtime version, source or live-environment change is released
-by this discovery. Full recovery remains open.
+the original Relay model request. The completed source comparison confirms that
+title generation can reach the provider before primary context/ACK completion.
+It also confirms that 2.2.7 omits stored metadata from primary hook messages while
+2.3.0 preserves it; the current internal-wake classifier requires that metadata.
+Even a correlated primary request proves callback return, not successful ACK.
+The public delivered assertion must remain an independent immediate oracle.
+These source findings do not establish which request or ACK outcome caused the
+sixth failure.
+
+The task owner clarified the expectation: a minimum supported version and compatible
+later releases, not an exact-version lock. Binary pins make qualification repeatable.
+The existing developer is preparing a narrow plan for an API-based minimum
+(2.3.0 for the current internal-wake metadata path, subject to runtime evidence),
+clear minimum-versus-tested-version documentation, and a correct primary-request
+observation boundary. Historical 2.0.24 and 2.2.7 evidence limits and the passive V1
+path remain unchanged; no blanket compatibility with unseen releases is claimed.
+Production source remains frozen. No assertion, timeout, diagnostic, qualification
+retarget, source edit, seventh run or live change is released by this plan-only
+continuation. Full recovery remains open.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
