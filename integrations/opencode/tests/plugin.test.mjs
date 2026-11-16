@@ -224,10 +224,12 @@ test("V1 retries of one in-flight native message share one immutable Relay snaps
       assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/turn")).length, 1);
     } finally {
       clearTimeout(timer);
-      gate?.release();
-      releaseTurn();
-      await Promise.allSettled([first, second]);
-      P.removeSessionPin(sessionID);
+      try { gate?.release(); }
+      finally {
+        releaseTurn();
+        await Promise.allSettled([first, second]);
+        P.removeSessionPin(sessionID);
+      }
     }
   };
   try {
@@ -241,8 +243,9 @@ test("V1 retries of one in-flight native message share one immutable Relay snaps
         (gate) => run(mode, gate));
     }
     const builtin = await import("node:child_process");
-    for (const mode of ["never-entered", "early-close", "early-error"]) {
+    for (const mode of ["never-entered", "early-close", "early-error", "release-failure"]) {
       const saved = childProcess.spawn;
+      const releaseError = new Error("held Git fixture release failed");
       let owned, childClosed = false;
       const spawn = (command, args, options) => {
         if (command !== process.execPath) return saved(command, args, options);
@@ -255,10 +258,21 @@ test("V1 retries of one in-flight native message share one immutable Relay snaps
       childProcess.spawn = spawn;
       syncBuiltinESMExports();
       try {
-        const probe = mode === "never-entered" ? "never entered fixture probe" : "remote get-url origin";
+        const probe = mode === "never-entered" ? "never entered fixture probe"
+          : mode === "release-failure" ? "rev-list --max-parents=0 HEAD" : "remote get-url origin";
         const failure = mode === "never-entered" ? /held Git never entered:/
-          : mode === "early-close" ? /held Git closed before readiness:/ : /held Git child error before readiness:/;
-        await assert.rejects(heldGit(probe, "", (gate) => run(mode, gate)), failure);
+          : mode === "early-close" ? /held Git closed before readiness:/
+          : mode === "release-failure" ? (error) => error === releaseError : /held Git child error before readiness:/;
+        await assert.rejects(heldGit(probe, mode === "release-failure" ? "\n" : "", async (gate) => {
+          try {
+            await run(mode, mode === "release-failure"
+              ? { ...gate, release: () => { throw releaseError; } } : gate);
+          } finally {
+            if (mode === "release-failure") assert.equal(
+              fetchCalls.filter((call) => call.url.includes("/item-and-query")).length, 2,
+              "both held callbacks finish capture before the release error returns");
+          }
+        }), failure);
         assert.equal(childProcess.spawn, spawn, `${mode}: helper restores the invoking spawn`);
         assert.equal(builtin.spawn, spawn, `${mode}: named built-in binding is restored too`);
         assert.equal(Boolean(owned), mode !== "never-entered");

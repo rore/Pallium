@@ -35,7 +35,7 @@
 
 **Approvals:** Approved by user 2026-11-16: "you have approval to drive this till end". This minimal task-authorization excerpt preserves the existing approval; its full context remains private. The manager assigned this existing issue, accepted the narrow H1 marker ceiling and released the conditional hosted envelope below. No local application execution/live changes/cleanup/old OC1 retry or unapproved cap/job changes.
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Assignment and preserved work
@@ -267,3 +267,7 @@ State returns to Blocked for the same reviewer's exact readiness-delta source re
 The same reviewer accepted the readiness fix in b304f7b4 and closed that original finding. SOURCE HOLD remains for one caller-cleanup P2: `run` calls the filesystem-backed `gate.release()` before turn release, callback joins and pin cleanup without a guarding `finally`. A release write failure can therefore strand the mocked Relay request even though the shared helper drains its child and restores built-ins. The mock does not use the HTTP abort signal to release its held turn. This is a static exception-path finding, not an observed hosted failure.
 
 The existing bounded local authority covers this exact correction. Before editing, record the minimum change: nest caller turn release, both callback joins and pin cleanup in a `finally` independent of gate-release success. Preserve the release error after draining. Extend the existing negative subcases with a failed release while real concurrent callbacks are held, requiring both captures/joins, pin cleanup, owned-child close and built-in restoration before the named release error returns. Only this Work Record and the V1 test file may change. Keep every readiness control and functional assertion; no new named case, framework, sleep, inventory, cap or production change. Exact narrow successor review and a new parent validation disposition remain required; no publication or runtime authority is added.
+
+The caller now drains its turn and both callbacks and removes its pin in a nested `finally`, regardless of gate-release success. The added release-failure mode holds a real Git child while the sibling waits on Relay, throws the same release error from the caller's gate, and requires two completed captures before that exact error object is reported. Existing negative-control assertions also require pin cleanup, owned-child close and default/named built-in restoration. The accepted shared readiness helper and all other cases are unchanged.
+
+Static verification passed: V1 test syntax, diff whitespace, complete two-path delta and existing-case reconstruction, unchanged case names/order/inventories, functional baseline and privacy. Whole-change Workflow is clean0 and Redline is GRAY/advisory1 with zero violations/checkpoints using unchanged authenticated graph evidence. Selector FULL remains unexecuted. No runtime coverage, timing fit or correction success is claimed. State is Blocked only on the exact narrow successor review and parent changed-candidate disposition. Published bb9 and both exhausted admissions remain unchanged; no push, rerun, label cycle or live action occurred.
