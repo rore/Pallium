@@ -289,16 +289,18 @@ def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_na
     focused = "coalesced native wake settles from exact outcome-bearing idle: succeeded"
     root_focused = "fresh supersession settles exact frozen generation: succeeded"
     admission_focused = "known admitted wake reentry preserves admission and uncertainty"
+    git_focused = "Git discovery yields to unrelated caller work while child waits"
     for phase in ("baseline", "focused"):
-        assert f"--test-name-pattern='^({focused}|{root_focused}|{admission_focused})$'" in steps[phase]["run"]
+        assert f"--test-name-pattern='^({focused}|{root_focused}|{admission_focused}|{git_focused})$'" in steps[phase]["run"]
         assert "startup empty discovery" not in steps[phase]["run"]
     assert "coalesced exact wake must settle activation without replay" in steps["baseline"]["run"]
     assert "fresh promoted ordinary work must release the missing admitted anchor" in steps["baseline"]["run"]
     assert "known admitted wake must not rewrite admission" in steps["baseline"]["run"]
-    assert "$exit -ne 1 -or $selected.Count -ne 3 -or $failed.Count -ne 3" in steps["baseline"]["run"]
+    assert "Git discovery must yield to unrelated caller work" in steps["baseline"]["run"]
+    assert "$exit -ne 1 -or $selected.Count -ne 4 -or $failed.Count -ne 4" in steps["baseline"]["run"]
     assert "$case.Count -ne 1" in steps["baseline"]["run"] and "[regex]::Escape($expected[$name])" in steps["baseline"]["run"]
-    assert "$selected.Count -ne 3" in steps["focused"]["run"] and "$case.Count -ne 1" in steps["focused"]["run"]
-    for name in (focused, root_focused, admission_focused):
+    assert "$selected.Count -ne 4" in steps["focused"]["run"] and "$case.Count -ne 1" in steps["focused"]["run"]
+    for name in (focused, root_focused, admission_focused, git_focused):
         assert name in steps["baseline"]["run"] and name in steps["focused"]["run"]
     preflight = steps["package"]["run"]
     for name in ("test_opencode_qualification_executes_embedded_failure_locator", "test_opencode_recovery_payload_oracle_rejects_extra_presentation"):
@@ -307,6 +309,18 @@ def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_na
     assert "--noconftest -q -n 0" in preflight
     assert "$checks.Count -ne 2" in preflight and "$check.Count -ne 1" in preflight
     assert "//testcase[skipped or failure or error]" in preflight
+    assert '$env:NEW_CASES + "`n" + $env:ASYNC_CASES' in preflight
+    sources = re.search(r"foreach \(\$path in @\(([^)]+)\)\)", steps["setup"]["run"])[1]
+    assert set(re.findall(r"'([^']+)'", sources)) == {
+        "integrations/opencode/.opencode/plugins/pallium-v2.mjs",
+        "integrations/opencode/.opencode/plugins/pallium-common.mjs",
+        "integrations/opencode/tests/v2-plugin.test.mjs",
+        "tests/test_opencode_native_wake_e2e.py", "tests/test_opencode_relay_wake_e2e.py",
+        "tests/test_ci_workflow.py", ".github/workflows/opencode-native-qualification.yml",
+        "integrations/opencode/.opencode/plugins/pallium.mjs",
+        "integrations/opencode/tests/common.test.mjs", "integrations/opencode/tests/plugin.test.mjs",
+        "tests/test_stable_actor_identity_e2e.py",
+    }
     backend = steps["backend"]["run"]
     command, = [line.strip() for line in backend.splitlines() if line.strip().startswith("python ")]
     assert shlex.split(command) == ["python", "-u", "-m", "pytest",
@@ -340,6 +354,7 @@ def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_na
     assert "item['progress'] = progress[-25:]" in evidence
     assert "inventory_key = 'new_cases' if name == 'package' else 'required_cases'" in evidence
     assert "os.environ['NEW_CASES' if name == 'package' else 'HTTP_CASES']" in evidence
+    assert "item['async_cases']" in evidence and "os.environ['ASYNC_CASES']" in evidence
     uploads = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")]
     assert len(uploads) == 1 and uploads[0]["with"]["path"].endswith("/public/summary.json")
     assert uploads[0]["if"] == "always()" and uploads[0]["timeout-minutes"] == 1
@@ -762,7 +777,16 @@ def test_opencode_settlement_qualification_inventories_every_new_case_and_preser
         "fresh supersession consumes uncertain terminal without stale follow-up"))
     assert len(expected) == 43, "preserve all original settlement and fresh-witness cases"
     expected.add("known admitted wake reentry preserves admission and uncertainty")
-    assert len(cases) == len(set(cases)) == 44 and set(cases) == expected
+    assert len(expected) == 44, "preserve all accepted OC1 cases"
+    expected.add("Git discovery yields to unrelated caller work while child waits")
+    assert len(cases) == len(set(cases)) == 45 and set(cases) == expected
+    async_cases = workflow["jobs"]["qualify"]["env"]["ASYNC_CASES"].splitlines()
+    assert len(async_cases) == len(set(async_cases)) == 18
+    sources = "\n".join((root / "integrations/opencode/tests" / file).read_text(encoding="utf-8")
+                        for file in ("common.test.mjs", "plugin.test.mjs", "v2-plugin.test.mjs"))
+    for case in async_cases:
+        assert f'test("{case}",' in sources
+    assert not set(async_cases) & set(cases)
     http_cases = workflow["jobs"]["qualify"]["env"]["HTTP_CASES"].splitlines()
     expected_http = {f"test_activation_settlement_preserves_original_authority_before_backlog[semantic-{state}]"
                      for state in ("delivered", "pending", "claimed", "expired")}

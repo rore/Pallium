@@ -11,6 +11,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 
 const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-plugin-"));
 process.env.USERPROFILE = tmpHome;
@@ -745,4 +747,275 @@ test("chat.message warns when associated refs exceed the five-ref History limit"
   assert.match(system, /not searchable from this turn/);
   assert.ok(associated.every((key) => system.includes(key)));
   assert.ok([...system].length <= 2400);
+});
+
+test("V1 lifetime authority covers every first entry and keeps retired callbacks inert", async () => {
+  const previousTrigger = process.env.PALLIUM_POSTTOOL_TRIGGERS;
+  const previousActor = process.env.PALLIUM_HOOK_ACTOR_REF;
+  process.env.PALLIUM_POSTTOOL_TRIGGERS = "1";
+  process.env.PALLIUM_HOOK_ACTOR_REF = "fixture-actor";
+  const commonUrl = pathToFileURL(path.join(process.cwd(), ".opencode", "plugins", "pallium-common.mjs"));
+  const P = await import(commonUrl);
+  const freshLoad = (await import(pathToFileURL(path.join(process.cwd(), ".opencode", "plugins", "pallium.mjs")) +
+    "?oc6-lifetime-first-entry")).default;
+  try {
+    for (const first of ["create", "assistant", "tool", "chat-without-id", "chat-with-id"]) {
+      const sessionID = "ses_v1_life_" + first;
+      installFetch({ "/query": oneBlock, "/item-and-query": oneBlock,
+        "/items": [{ source_item_id: "v1-lifetime-answer" }] });
+      const messages = [{ info: { role: "user", id: "msg_life_user" }, parts: [{ type: "text", text: "ordinary work" }] },
+        { info: { role: "assistant", id: "msg_life_answer", parentID: "msg_life_user" },
+          parts: [{ type: "text", text: "completed ordinary work שלום" }] }];
+      const hooks = await freshLoad({ client: makeClient(messages), directory: nonGitDir });
+      const event = (type) => hooks.event({ event: { type, properties: { sessionID } } });
+      const chat = (withId) => hooks["chat.message"]({}, {
+        message: { sessionID, role: "user", ...(withId ? { id: "msg_life_start" } : {}) },
+        parts: [{ type: "text", text: "substantial lifetime work without losing caller identity" }],
+      });
+      const tool = () => hooks["tool.execute.after"]({ sessionID, tool: "bash" },
+        { output: "command failed", args: { command: "test" }, metadata: { error: true } });
+      try {
+        if (first === "create") await event("session.created");
+        else if (first === "assistant") await event("session.idle");
+        else if (first === "tool") await tool();
+        else await chat(first === "chat-with-id");
+        assert.ok(fetchCalls.length > 0, `${first}: an unseen/resumed session still works`);
+        await event("session.deleted");
+        const retired = fetchCalls.length;
+        await event("session.idle");
+        await hooks["experimental.session.compacting"]({ sessionID });
+        await tool();
+        await event("session.deleted");
+        assert.equal(fetchCalls.length, retired, `${first}: passive callbacks and duplicate close cannot reactivate a retired ID`);
+        assert.deepEqual(await systemTransform(hooks, sessionID), [], `${first}: all retired payload is purged`);
+        await chat(false);
+        assert.ok(fetchCalls.length > retired, `${first}: explicit no-ID chat starts a NEW live incarnation`);
+        assert.ok((await systemTransform(hooks, sessionID)).length > 0);
+      } finally { P.removeSessionPin(sessionID); }
+    }
+  } finally {
+    if (previousTrigger === undefined) delete process.env.PALLIUM_POSTTOOL_TRIGGERS;
+    else process.env.PALLIUM_POSTTOOL_TRIGGERS = previousTrigger;
+    if (previousActor === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
+    else process.env.PALLIUM_HOOK_ACTOR_REF = previousActor;
+  }
+});
+
+test("V1 close response cannot purge an explicit same-ID successor with identical pin values", async () => {
+  const P = await import(pathToFileURL(path.join(process.cwd(), ".opencode", "plugins", "pallium-common.mjs")));
+  const sessionID = "ses_v1_close_successor";
+  let entered, release;
+  const held = new Promise((resolve) => { entered = resolve; });
+  const close = new Promise((resolve) => { release = resolve; });
+  installFetch({ "/query": oneBlock, "/item-and-query": oneBlock,
+    "/relay/sessions/close": () => { entered(); return close; } });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  const event = (type) => hooks.event({ event: { type, properties: { sessionID } } });
+  let closing;
+  try {
+    await event("session.created");
+    const originalPin = P.getPinnedContainer(sessionID);
+    assert.ok(originalPin);
+    await systemTransform(hooks, sessionID);
+    closing = event("session.deleted");
+    await held;
+    const boundary = fetchCalls.length;
+    await event("session.idle");
+    await hooks["experimental.session.compacting"]({ sessionID });
+    assert.equal(fetchCalls.length, boundary, "closing state is not live callback authority");
+    await event("session.created");
+    assert.equal(P.getPinnedContainer(sessionID), originalPin, "successor deliberately uses identical pin values");
+    release({ closed: true });
+    await closing;
+    assert.equal(P.getPinnedContainer(sessionID), originalPin, "old close must not remove successor pin");
+    assert.ok((await systemTransform(hooks, sessionID)).length > 0, "old close must not purge successor output");
+  } finally {
+    release({ closed: true });
+    await closing;
+    P.removeSessionPin(sessionID);
+  }
+});
+
+test("V1 assistant captures its original lifetime before native history awaits", async () => {
+  const P = await import(pathToFileURL(path.join(process.cwd(), ".opencode", "plugins", "pallium-common.mjs")));
+  const sessionID = "ses_v1_delayed_history";
+  let entered, release;
+  const held = new Promise((resolve) => { entered = resolve; });
+  const history = new Promise((resolve) => { release = resolve; });
+  const client = makeClient([]);
+  client.session.messages = async () => { entered(); return history; };
+  installFetch({ "/items": [{ source_item_id: "retired-answer" }], "/item-and-query": oneBlock });
+  const hooks = await loadPlugin({ client, directory: nonGitDir });
+  let pending;
+  try {
+    pending = hooks.event({ event: { type: "session.idle", properties: { sessionID } } });
+    await held;
+    await hooks.event({ event: { type: "session.deleted", properties: { sessionID } } });
+    await hooks["chat.message"]({}, { message: { sessionID, role: "user" },
+      parts: [{ type: "text", text: "a fresh substantial successor message without a native ID" }] });
+    const pin = P.getPinnedContainer(sessionID);
+    release({ data: [{ info: { role: "assistant", id: "msg_retired_history" },
+      parts: [{ type: "text", text: "retired answer must never be ingested" }] }] });
+    await pending;
+    assert.equal(fetchCalls.filter((c) => c.url.endsWith("/items")).length, 0);
+    assert.equal(P.getPinnedContainer(sessionID), pin);
+    assert.ok((await systemTransform(hooks, sessionID)).length > 0);
+  } finally {
+    release({ data: [] });
+    await pending;
+    P.removeSessionPin(sessionID);
+  }
+});
+
+async function heldGit(argsText, output, run) {
+  const saved = childProcess.spawn;
+  const directory = fs.mkdtempSync(path.join(tmpHome, "held-git-界-"));
+  const release = path.join(directory, "release");
+  let entered, armed = true, child, closed;
+  const started = new Promise((resolve) => { entered = resolve; });
+  childProcess.spawn = (command, args, options) => {
+    if (!armed || command !== "git" || args.join(" ") !== argsText) return saved(command, args, options);
+    armed = false;
+    child = saved(process.execPath, ["-e", `
+      const fs = require("node:fs");
+      process.stdout.write(${JSON.stringify(output)});
+      const timer = setInterval(() => { if (fs.existsSync(${JSON.stringify(release)})) {
+        clearInterval(timer); process.exit(0);
+      } }, 5);
+      setTimeout(()=>process.exit(0), 1500).unref();
+    `], { ...options, cwd: directory });
+    closed = new Promise((resolve) => child.once("close", resolve));
+    child.stdout.once("data", entered);
+    return child;
+  };
+  syncBuiltinESMExports();
+  try { await run({ started, release: () => fs.writeFileSync(release, "release"), child: () => child }); }
+  finally {
+    fs.writeFileSync(release, "release");
+    if (child && child.exitCode === null && child.signalCode === null) child.kill();
+    await closed;
+    childProcess.spawn = saved;
+    syncBuiltinESMExports();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+test("V1 delayed Git cannot publish after deletion and same-ID activation on any caller", { timeout: 20000 }, async () => {
+  const P = await import(pathToFileURL(path.join(process.cwd(), ".opencode", "plugins", "pallium-common.mjs")));
+  const previousActor = process.env.PALLIUM_HOOK_ACTOR_REF;
+  const previousTrigger = process.env.PALLIUM_POSTTOOL_TRIGGERS;
+  process.env.PALLIUM_HOOK_ACTOR_REF = "fixture-actor";
+  process.env.PALLIUM_POSTTOOL_TRIGGERS = "1";
+  const fresh = (await import(pathToFileURL(path.join(process.cwd(), ".opencode", "plugins", "pallium.mjs")) +
+    "?oc6-git-retirement")).default;
+  try {
+    for (const entry of ["orientation", "assistant", "tool", "chat-with-id", "chat-without-id"]) {
+      const id = "ses_git_retired_" + entry;
+      const sibling = id + "_sibling";
+      installFetch({ "/query": oneBlock, "/item-and-query": oneBlock, "/items": [{ source_item_id: "saved" }] });
+      const hooks = await fresh({ directory: nonGitDir, client: makeClient([
+        { info: { role: "assistant", id: "msg_git_old" }, parts: [{ type: "text", text: "retired old answer" }] },
+      ]) });
+      const chat = (sessionID, nativeId) => hooks["chat.message"]({}, {
+        message: { sessionID, role: "user", ...(nativeId ? { id: nativeId } : {}) },
+        parts: [{ type: "text", text: "substantial original work with independent scope" }],
+      });
+      let pending;
+      try {
+        await heldGit("remote get-url origin", "https://git.example.test/Old/Repo.git", async (gate) => {
+          if (entry === "orientation") pending = hooks.event({ event: { type: "session.created", properties: { sessionID: id } } });
+          else if (entry === "assistant") pending = hooks.event({ event: { type: "session.idle", properties: { sessionID: id } } });
+          else if (entry === "tool") pending = hooks["tool.execute.after"]({ sessionID: id, tool: "bash" },
+            { output: "command failed", metadata: { error: true } });
+          else pending = chat(id, entry === "chat-with-id" ? "msg_git_old" : null);
+          await gate.started;
+          await chat(sibling, "msg_git_sibling");
+          assert.ok(fetchCalls.some((c) => c.body?.thread_ref === sibling), `${entry}: unrelated session makes progress`);
+          await hooks.event({ event: { type: "session.deleted", properties: { sessionID: id } } });
+          await chat(id, "msg_git_successor");
+          const pin = P.getPinnedContainer(id), boundary = fetchCalls.length;
+          gate.release();
+          await pending;
+          assert.equal(fetchCalls.length, boundary, `${entry}: no old pin/claim/query/capture after reactivation`);
+          assert.equal(P.getPinnedContainer(id), pin);
+          const model = await messagesTransform(hooks, { sessionID: id, role: "user" }, [{ type: "text", text: "successor" }]);
+          assert.match(model.parts[0].text, /\[Pallium scope/);
+          assert.doesNotMatch(model.parts[0].text, /git:git\.example\.test\/old\/repo/);
+        });
+      } finally {
+        await pending;
+        P.removeSessionPin(id);
+        P.removeSessionPin(sibling);
+      }
+    }
+  } finally {
+    if (previousActor === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
+    else process.env.PALLIUM_HOOK_ACTOR_REF = previousActor;
+    if (previousTrigger === undefined) delete process.env.PALLIUM_POSTTOOL_TRIGGERS;
+    else process.env.PALLIUM_POSTTOOL_TRIGGERS = previousTrigger;
+  }
+});
+
+test("V1 ordinary role, capture and orientation updates do not replace a live Git lifetime", { timeout: 10000 }, async () => {
+  const P = await import(pathToFileURL(path.join(process.cwd(), ".opencode", "plugins", "pallium-common.mjs")));
+  const id = "ses_git_live_updates";
+  const previousActor = process.env.PALLIUM_HOOK_ACTOR_REF;
+  process.env.PALLIUM_HOOK_ACTOR_REF = "fixture-actor";
+  P.pinContainer(id, P.pathContainer(nonGitDir), undefined, "fixture-actor");
+  installFetch({ "/query": oneBlock, "/item-and-query": oneBlock, "/items": [{ source_item_id: "answer" }] });
+  const hooks = await loadPlugin({ directory: nonGitDir, client: makeClient([
+    { info: { role: "assistant", id: "msg_git_live_answer" }, parts: [{ type: "text", text: "live answer" }] },
+  ]) });
+  let pending;
+  try {
+    await heldGit("rev-parse --abbrev-ref HEAD", "feature/live-updates", async (gate) => {
+      pending = hooks.event({ event: { type: "session.created", properties: { sessionID: id } } });
+      await gate.started;
+      await hooks["chat.message"]({}, { message: { sessionID: id, role: "user", id: "msg_live_role" },
+        parts: [{ type: "text", text: "ordinary role insertion while orientation is pending" }] });
+      await hooks.event({ event: { type: "session.idle", properties: { sessionID: id } } });
+      gate.release();
+      await pending;
+      assert.ok(fetchCalls.some((c) => c.body?.trigger_origin === "session_start_orientation"),
+        "live Map entry/capture/orientation changes are not lifetime replacement");
+      assert.ok(fetchCalls.some((c) => c.url.endsWith("/items")));
+    });
+  } finally {
+    await pending;
+    P.removeSessionPin(id);
+    if (previousActor === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
+    else process.env.PALLIUM_HOOK_ACTOR_REF = previousActor;
+  }
+});
+
+test("V1 unpinned close discovery cannot target a recreated same-ID session", { timeout: 10000 }, async () => {
+  const P = await import(pathToFileURL(path.join(process.cwd(), ".opencode", "plugins", "pallium-common.mjs")));
+  const id = "ses_git_close_recreated";
+  const previousActor = process.env.PALLIUM_HOOK_ACTOR_REF;
+  process.env.PALLIUM_HOOK_ACTOR_REF = "fixture-actor";
+  installFetch({ "/item-and-query": oneBlock });
+  const hooks = await loadPlugin({ directory: nonGitDir, client: makeClient([]) });
+  const chat = (nativeId) => hooks["chat.message"]({}, { message: { sessionID: id, role: "user", id: nativeId },
+    parts: [{ type: "text", text: "substantial same ID work before and after closing" }] });
+  let closing;
+  try {
+    await chat("msg_close_before");
+    P.removeSessionPin(id);
+    await heldGit("remote get-url origin", "https://git.example.test/Retired/Repo.git", async (gate) => {
+      closing = hooks.event({ event: { type: "session.deleted", properties: { sessionID: id } } });
+      await gate.started;
+      await chat("msg_close_after");
+      const pin = P.getPinnedContainer(id);
+      gate.release();
+      await closing;
+      assert.equal(fetchCalls.filter((c) => c.url.endsWith("/relay/sessions/close")).length, 0,
+        "unsubmitted old close has no authority over the successor");
+      assert.equal(P.getPinnedContainer(id), pin);
+      assert.ok((await systemTransform(hooks, id)).length > 0);
+    });
+  } finally {
+    await closing; P.removeSessionPin(id);
+    if (previousActor === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
+    else process.env.PALLIUM_HOOK_ACTOR_REF = previousActor;
+  }
 });

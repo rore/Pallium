@@ -10,6 +10,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { pathToFileURL } from "node:url";
 
 // Redirect the state dir to a temp HOME BEFORE the module is imported, so
@@ -151,31 +153,31 @@ test("pathContainer emits path:<label>:<hash12> and path:<hash12> when label emp
   assert.match(bare, /^path:[0-9a-f]{12}$/);
 });
 
-test("deriveContainerRef returns path:<...> for a non-git dir and is stable", () => {
+test("deriveContainerRef returns path:<...> for a non-git dir and is stable", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-nogit-"));
-  const ref = P.deriveContainerRef(dir);
+  const ref = await P.deriveContainerRef(dir);
   assert.ok(ref.startsWith("path:"), `expected path: prefix, got ${ref}`);
   assert.equal(ref, P.pathContainer(dir));
-  assert.equal(ref, P.deriveContainerRef(dir)); // stable across calls
+  assert.equal(ref, await P.deriveContainerRef(dir)); // stable across calls
 });
 
-test("deriveContainerRef derives a stable ref for this repo checkout", () => {
+test("deriveContainerRef derives a stable ref for this repo checkout", async () => {
   // Runs inside a git checkout; the derivation contract (git:/repo:/path:) is
   // covered above. Assert the shape + determinism rather than the exact remote,
   // so this passes in a fork, a renamed-remote clone, or a git-less tarball.
-  const ref = P.deriveContainerRef(process.cwd());
+  const ref = await P.deriveContainerRef(process.cwd());
   assert.match(ref, /^(git:|repo:|path:)/);
-  assert.equal(ref, P.deriveContainerRef(process.cwd()));
+  assert.equal(ref, await P.deriveContainerRef(process.cwd()));
 });
 
-test("deriveActorRef uses the repository identity when the plugin cwd differs", () => {
+test("deriveActorRef uses the repository identity when the plugin cwd differs", async () => {
   const prior = process.env.PALLIUM_HOOK_ACTOR_REF;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-actor-"));
   try {
     delete process.env.PALLIUM_HOOK_ACTOR_REF;
     execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
     execFileSync("git", ["config", "user.name", "Relay Operator"], { cwd: dir });
-    assert.equal(P.deriveActorRef(dir), "Relay Operator");
+    assert.equal(await P.deriveActorRef(dir), "Relay Operator");
   } finally {
     if (prior === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
     else process.env.PALLIUM_HOOK_ACTOR_REF = prior;
@@ -183,14 +185,14 @@ test("deriveActorRef uses the repository identity when the plugin cwd differs", 
   }
 });
 
-test("deriveActorRef trims the configured actor, while a pinned actor remains authoritative", () => {
+test("deriveActorRef trims the configured actor, while a pinned actor remains authoritative", async () => {
   const prior = process.env.PALLIUM_HOOK_ACTOR_REF;
   try {
     process.env.PALLIUM_HOOK_ACTOR_REF = "  מפעיל 統一  ";
-    assert.equal(P.deriveActorRef(process.cwd()), "מפעיל 統一");
+    assert.equal(await P.deriveActorRef(process.cwd()), "מפעיל 統一");
     P.pinContainer("configured-pin", "path:configured", undefined, "Pinned Actor");
     process.env.PALLIUM_HOOK_ACTOR_REF = "Different Actor";
-    assert.equal(P.resolveActorRef(process.cwd(), "configured-pin"), "Pinned Actor");
+    assert.equal(await P.resolveActorRef(process.cwd(), "configured-pin"), "Pinned Actor");
   } finally {
     if (prior === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
     else process.env.PALLIUM_HOOK_ACTOR_REF = prior;
@@ -243,11 +245,11 @@ test("checkDedup rejects an unsafe session id (no path escape, safe default)", (
 
 // --- session pinning --------------------------------------------------------
 
-test("session scope pins container and actor across resume, then disposes both", () => {
+test("session scope pins container and actor across resume, then disposes both", async () => {
   const sid = "pin-session-1";
   P.pinContainer(sid, "git:example.com/a/b", undefined, "Relay Operator");
-  assert.equal(P.resolveContainerRef("/some/other/dir", sid), "git:example.com/a/b");
-  assert.equal(P.resolveActorRef("/some/other/dir", sid), "Relay Operator");
+  assert.equal(await P.resolveContainerRef("/some/other/dir", sid), "git:example.com/a/b");
+  assert.equal(await P.resolveActorRef("/some/other/dir", sid), "Relay Operator");
   P.pinContainer(sid, "git:example.com/a/b");
   assert.equal(P.getPinnedActor(sid), "Relay Operator");
   P.pinContainer(sid, "git:example.com/x/y", "resume", "Other Operator");
@@ -430,7 +432,7 @@ test("extractToolCall Glob splits and caps output paths", () => {
   assert.deepEqual(call, { tool: "Glob", pattern: "**/*.js", paths: ["a.js", "b.js", "c.js"] });
 });
 
-test("deriveContainerRef returns repo:<hash12> for a git repo with no remote", () => {
+test("deriveContainerRef returns repo:<hash12> for a git repo with no remote", async () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-repo-"));
   const run = (args) => execFileSync("git", args, { cwd: repo, stdio: ["ignore", "pipe", "ignore"] });
   run(["init"]);
@@ -440,9 +442,9 @@ test("deriveContainerRef returns repo:<hash12> for a git repo with no remote", (
   fs.writeFileSync(path.join(repo, "f.txt"), "hi");
   run(["add", "f.txt"]);
   run(["commit", "-m", "init"]);
-  const ref = P.deriveContainerRef(repo);
+  const ref = await P.deriveContainerRef(repo);
   const root = run(["rev-list", "--max-parents=0", "HEAD"]).toString().trim().toLowerCase();
-  assert.equal(P.repositoryScopeRef(repo), "repo:" + root);
+  assert.equal(await P.repositoryScopeRef(repo), "repo:" + root);
   assert.match(ref, /^repo:[0-9a-f]{12}$/, `expected repo:<hash12>, got ${ref}`);
 });
 
@@ -810,5 +812,180 @@ test("shared repository and roadmap vectors stay aligned with Python", () => {
   }
   for (const root of vectors.invalid_roadmap_roots) {
     assert.throws(() => P.roadmapScopeRef(repository, root));
+  }
+});
+
+// Run the actual helper against real owned Node children, without changing Git
+// configuration or adding a production command-injection seam.
+async function withGitProcess(program, run, onChild = () => {}) {
+  const saved = childProcess.spawn;
+  const previousActor = process.env.PALLIUM_HOOK_ACTOR_REF;
+  const calls = [], children = [];
+  delete process.env.PALLIUM_HOOK_ACTOR_REF;
+  childProcess.spawn = (command, args, options) => {
+    if (command !== "git") return saved(command, args, options);
+    calls.push(args);
+    const source = program(args);
+    const child = source === null
+      ? saved(path.join(tmpHome, "missing-bin", "git"), args, options)
+      : saved(process.execPath, ["-e", source], options);
+    const closed = new Promise((resolve) => child.once("close", resolve));
+    children.push({ child, closed });
+    onChild(child, args, options);
+    return child;
+  };
+  syncBuiltinESMExports();
+  try { return await run(calls); }
+  finally {
+    for (const { child } of children) if (child.exitCode === null && child.signalCode === null) child.kill();
+    await Promise.all(children.map(({ closed }) => closed));
+    childProcess.spawn = saved;
+    syncBuiltinESMExports();
+    if (previousActor === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
+    else process.env.PALLIUM_HOOK_ACTOR_REF = previousActor;
+  }
+}
+
+test("async Git shares callback facts without merging container and repository semantics", async () => {
+  const root = "a".repeat(40);
+  for (const [remote, code, containerRef, repositoryRef, probes] of [
+    ["https://git.example.test/Team/Repo.git", 0, "git:git.example.test/team/repo", "git:git.example.test/Team/Repo", 1],
+    ["https://user:password@example.test/Team/Repo.git", 0, "git:example.test/team/repo", "repo:" + root, 2],
+    ["unusable nonzero stdout", 128, "repo:" + root.slice(0, 12), "repo:" + root, 2],
+    [null, 0, P.pathContainer(process.cwd()), "repo:" + root, 2],
+  ]) {
+    await withGitProcess((args) => args[0] === "remote" ? remote === null ? null
+      : `process.stdout.write(${JSON.stringify(remote)},()=>process.exit(${code}))`
+      : `process.stdout.write(${JSON.stringify(root)})`, async (calls) => {
+      assert.deepEqual(await P.deriveGitRefs(process.cwd()), { containerRef, repositoryRef });
+      assert.equal(calls.length, probes, "remote/root results are local to this single discovery");
+      assert.equal(calls.filter((args) => args[0] === "remote").length, 1);
+    });
+  }
+  await withGitProcess(() => null, async (calls) => {
+    assert.equal(await P.deriveContainerRef(process.cwd()), P.pathContainer(process.cwd()));
+    assert.equal(calls.length, 1, "container-only spawn failure must not try a root probe");
+  });
+});
+
+test("async Git enforces byte bounds and ignores stderr rather than truncating identity", async () => {
+  const maximum = 1024 * 1024;
+  for (const [source, expected] of [
+    ["process.stdout.write('')", "local"],
+    ['process.stdout.write("nonzero actor",()=>process.exit(2))', "local"],
+    [`process.stdout.write("é".repeat(${maximum / 2}),()=>process.exit(0))`, "é".repeat(maximum / 2)],
+    [`process.stdout.write("a".repeat(${maximum + 1}),()=>process.exit(0))`, "local"],
+    [`process.stderr.write("x".repeat(${maximum * 2}));process.stdout.write("named actor",()=>process.exit(0))`, "named actor"],
+  ]) {
+    await withGitProcess(() => source, async () => assert.equal(await P.deriveActorRef(process.cwd()), expected));
+  }
+});
+
+test("async Git distinguishes pre-abort, cancellation, signal and timeout outcomes", { timeout: 12000 }, async () => {
+  const before = new AbortController(); before.abort();
+  await withGitProcess(() => "process.exit(0)", async (calls) => {
+    await assert.rejects(() => P.deriveContainerRef(process.cwd(), before.signal), { name: "AbortError" });
+    assert.equal(calls.length, 0);
+  });
+  const owner = new AbortController();
+  await withGitProcess(() => 'process.stdout.write("ready");setInterval(()=>{},50)', async () => {
+    await assert.rejects(() => P.deriveActorRef(process.cwd(), owner.signal), { name: "AbortError" });
+  }, (child) => child.stdout.once("data", () => owner.abort()));
+  await withGitProcess(() => "setInterval(()=>{},50)", async (calls) => {
+    assert.equal(await P.deriveContainerRef(process.cwd()), P.pathContainer(process.cwd()));
+    assert.equal(calls.length, 1, "a killed child is not a numeric nonzero root fallback");
+  }, (child) => child.once("spawn", () => child.kill()));
+  await withGitProcess(() => "setInterval(()=>{},50)", async (calls) => {
+    assert.equal(await P.deriveContainerRef(process.cwd()), P.pathContainer(process.cwd()));
+    assert.equal(calls.length, 1, "the native command timeout keeps the legacy spawn-error class");
+  });
+});
+
+test("async actor resolution checks lifetime and keeps actor and container pins coherent", async () => {
+  const sid = "async-actor-pin";
+  for (const change of ["retire", "new-actor", "new-container", "removed"]) {
+    let current = true;
+    P.removeSessionPin(sid);
+    P.pinContainer(sid, "git:example.test/original");
+    try {
+      await withGitProcess(() => 'process.stdout.write("derived actor");setTimeout(()=>{},50)', async () => {
+        const resolution = P.resolveActorRef(process.cwd(), sid, { current: () => current });
+        if (change === "new-actor") assert.equal(await resolution, "authoritative actor");
+        else await assert.rejects(() => resolution, { name: "AbortError" });
+        assert.notEqual(P.getPinnedActor(sid), "derived actor", "retired/conflicting discovery cannot publish its actor");
+        if (change === "new-container") assert.equal(P.getPinnedContainer(sid), "git:example.test/replacement");
+        if (change === "removed") assert.equal(P.getPinnedContainer(sid), null);
+      }, (child) => child.stdout.once("data", () => {
+        if (change === "retire") current = false;
+        if (change === "new-actor") P.pinContainer(sid, "git:example.test/original", undefined, "authoritative actor");
+        if (change === "new-container") P.pinContainer(sid, "git:example.test/replacement", undefined, "authoritative actor");
+        if (change === "removed") P.removeSessionPin(sid);
+      }));
+    } finally { P.removeSessionPin(sid); }
+  }
+});
+
+test("async Git preserves root validation and first-root container truncation", async () => {
+  for (const root of ["", "not-a-root", "A".repeat(40), "b".repeat(64), "c".repeat(65),
+    "d".repeat(40) + "\n" + "e".repeat(40)]) {
+    await withGitProcess((args) => args[0] === "remote" ? "process.exit(128)"
+      : `process.stdout.write(${JSON.stringify(root)})`, async (calls) => {
+      const first = root.split("\n")[0];
+      assert.deepEqual(await P.deriveGitRefs(process.cwd()), {
+        containerRef: first ? "repo:" + first.slice(0, 12) : P.pathContainer(process.cwd()),
+        repositoryRef: /^[0-9a-f]{40,64}$/i.test(first) ? "repo:" + first.toLowerCase() : null,
+      });
+      assert.equal(calls.length, 2);
+    });
+  }
+});
+
+test("async orientation preserves command order, token order, Unicode, redaction and eight stems", async () => {
+  const outputs = ["feature/lazy-git_fix", " M src/alpha.js\nR  old.js -> new/beta.ts\n?? src/שלום.py\n",
+    "src/alpha.js\nc.txt\nd.txt\ne.txt\nf.txt\ng.txt\nh.txt\n"];
+  await withGitProcess((args) => {
+    const output = args[0] === "rev-parse" ? outputs[0] : args[0] === "status" ? outputs[1] : outputs[2];
+    return `process.stdout.write(${JSON.stringify(output)})`;
+  }, async (calls) => {
+    assert.equal(await P.deriveOrientationQuery(process.cwd()), "feature lazy git fix alpha beta שלום c d e f g");
+    assert.deepEqual(calls, [["rev-parse", "--abbrev-ref", "HEAD"], ["status", "--porcelain"],
+      ["log", "-3", "--name-only", "--pretty=format:"]]);
+  });
+  await withGitProcess((args) => `process.stdout.write(${JSON.stringify(args[0] === "rev-parse" ? "main" : "")})`,
+    async () => assert.equal(await P.deriveOrientationQuery(process.cwd()), P.RETRIEVAL_FALLBACK_QUERY));
+  await withGitProcess((args) => `process.stdout.write(${JSON.stringify(args[0] === "status" ? " M TOKEN=example.txt" : "")})`,
+    async () => assert.equal(await P.deriveOrientationQuery(process.cwd()), "TOKEN=[REDACTED]"));
+});
+
+test("async identity follows Unicode nested cwd and linked worktree Git configuration", async () => {
+  const root = fs.mkdtempSync(path.join(tmpHome, "repo-界-"));
+  const repo = path.join(root, "primary"), linked = path.join(root, "linked-שלום");
+  const previousActor = process.env.PALLIUM_HOOK_ACTOR_REF;
+  const run = (args) => execFileSync("git", args, { cwd: repo, stdio: ["ignore", "pipe", "ignore"] });
+  fs.mkdirSync(repo);
+  delete process.env.PALLIUM_HOOK_ACTOR_REF;
+  try {
+    run(["init"]);
+    run(["config", "user.name", "מפעיל 界"]);
+    run(["config", "user.email", "fixture@example.test"]);
+    run(["config", "commit.gpgsign", "false"]);
+    fs.writeFileSync(path.join(repo, "entry.txt"), "initial");
+    run(["add", "entry.txt"]);
+    run(["commit", "-m", "initial"]);
+    run(["worktree", "add", "--detach", linked]);
+    const nested = path.join(linked, "nested-é");
+    fs.mkdirSync(nested);
+    const hash = run(["rev-list", "--max-parents=0", "HEAD"]).toString().trim();
+    for (const cwd of [repo, nested]) {
+      assert.deepEqual(await P.deriveGitRefs(cwd), { containerRef: "repo:" + hash.slice(0, 12), repositoryRef: "repo:" + hash });
+      assert.equal(await P.deriveActorRef(cwd), "מפעיל 界");
+    }
+    run(["remote", "add", "origin", "https://git.example.test/Team/Repo.git"]);
+    assert.deepEqual(await P.deriveGitRefs(nested),
+      { containerRef: "git:git.example.test/team/repo", repositoryRef: "git:git.example.test/Team/Repo" });
+  } finally {
+    if (previousActor === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
+    else process.env.PALLIUM_HOOK_ACTOR_REF = previousActor;
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
