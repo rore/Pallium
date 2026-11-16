@@ -53,8 +53,9 @@ The user prioritizes reliable everyday service over further qualification campai
 or feature expansion. Separate intermittent service reachability, failed Relay
 context lookups and stalled automatic activation; their shared cause is unproven.
 The manager owns incident triage and verified follow-through. The existing
-OpenCode owner implements the shared restore-envelope fix; PR410's failed
-qualification history remains separate. Start from retained monitor and incident
+OpenCode owner delivered the shared restore-envelope fix in PR412 and the
+hosted-qualified wake recovery in PR410. All earlier failed results remain
+separate. Start from retained monitor and incident
 evidence. The user reaffirmed standing bug-fix approval: routine bounded
 diagnostics proceed without another approval loop. Installation, restart
 and other persistent environment changes remain separately gated.
@@ -67,8 +68,12 @@ Keep one accountable owner per fix and verify that dependencies actually resume.
 Do not hold the bounded fix for disconnected or noncritical test failures without
 demonstrated relevant risk; retain their actual results and unresolved causes.
 Required tests and protections are not weakened or reported as passed.
-After PR412, resume the existing OC-1 recovery work, then OC-4/OC-6 and reconcile
-the remaining seven-area reliability follow-up list in its owning feature.
+PR410 merged as `9a885914` after the ninth hosted recovery journey passed and
+received independent result review and manager acceptance. Finish its integration
+documentation closure, then address OC-6's blocking Git discovery using the
+completed source inventory. OC-4 and the remaining seven-area follow-up list stay
+queued in their owning features. Failed registration/acquisition observations and
+installed recovery remain unresolved; hosted qualification is not live rollout.
 Use the existing records, not a new queue. Unsupported upstream capabilities,
 unapproved installed operations and cancelled cleanup stay explicit blockers,
 not reasons to stop independent source fixes or expand into new features.
