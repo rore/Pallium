@@ -27,6 +27,15 @@ from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 pytestmark = pytest.mark.slow
 
 
+def _assert_session_list(page, expected):
+    """An unfiltered limit=2 short page proves zero or one session at this read."""
+    assert isinstance(page, dict) and isinstance(page.get("data"), list)
+    rows = page["data"]
+    assert len(rows) < 2, "full session page cannot prove a sole fresh session"
+    assert all(isinstance(row, dict) and isinstance(row.get("id"), str) for row in rows)
+    assert [row["id"] for row in rows] == expected
+
+
 def _primary_gate(headers, target, first, entered, lock):
     """Route the actual provider request, never its payload or delivery success."""
     with lock:
@@ -663,6 +672,8 @@ export default {...production,setup:async ctx=>{
         pytest.fail("native server did not start: " + str(logs[-15:]))
 
     def api(method, path, body=None, headers=None):
+        if coalesced and method == "GET" and path == "/api/session":
+            path += "?limit=2"
         auth = base64.b64encode(b"opencode:local-test").decode()
         request = Request(url + path, method=method, data=None if body is None else json.dumps(body).encode(),
                           headers={"Authorization": "Basic " + auth, "Content-Type": "application/json", **(headers or {})})
@@ -726,7 +737,7 @@ export default {...production,setup:async ctx=>{
             bootstrap_summary["startup_empty_settled"] = True
         if coalesced:
             before_sessions = api("GET", "/api/session")
-            assert before_sessions["data"] == [] and before_sessions.get("cursor", {}).get("next") is None
+            _assert_session_list(before_sessions, [])
             first_primary["instance"] = [row for row in observations() if row["kind"] == "setup"][-1]["instance"]
         created = api("POST", "/api/session", {"location": {"directory": str(workspace).replace("\\", "/")},
                      **({"title": "Wake lifecycle fixture"} if coalesced else {})})["data"]
@@ -740,7 +751,7 @@ export default {...production,setup:async ctx=>{
             assert confirmed["id"] == session and confirmed["title"] == created["title"] and not confirmed.get("parentID")
             assert os.path.normcase(os.path.realpath(confirmed["location"]["directory"])) == os.path.normcase(os.path.realpath(workspace))
             sole = api("GET", "/api/session")
-            assert [row["id"] for row in sole["data"]] == [session] and sole.get("cursor", {}).get("next") is None
+            _assert_session_list(sole, [session])
             assert api("GET", prefix + "/context")["data"] == []
             assert api("GET", prefix + "/inbox")["data"] == []
             registered = client.post("/relay/turn", json={"runtime": "opencode", "session_ref": session, **scope})

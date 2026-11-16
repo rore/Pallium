@@ -213,14 +213,20 @@ Backend transactions fence backend changes; they do not create an atomic native
 snapshot or undo an already committed request. Claim/ACK, expiry, original
 delivery priority and continuation rules stay unchanged.
 
-These paths are source candidates, not runtime-qualified recovery. All six
+These paths are source candidates, not runtime-qualified recovery. All seven
 qualification campaigns failed. The first two skipped native; the third failed
 native with its predicate/cause still unknown. The fourth and fifth failed the
 package and skipped native. The sixth passed the full package and ordinary CI
 but failed the original-delivery prerequisite before its required native journey.
 Its source follow-up found an uncorrelated provider-entry barrier and a 2.2.7
 context projection that omits stored wake metadata. These are distinct source
-concerns, not proof of the sixth run's exclusive cause. Historical failures and
+concerns, not proof of the sixth run's exclusive cause. The seventh passed the
+full package and ordinary controls but failed a session-list precondition before
+Relay registration or the first send. Its exact failing conjunct/cursor value
+remains unknown. Official 2.3.0 source shows that a next cursor is a resume token,
+even on the final singleton page. The corrected fixture uses an unfiltered,
+bounded short page instead; native recovery qualification is still pending.
+Historical failures and
 partial passes remain in the [result receipt](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488).
 Earlier 2.2.7 discovery-only evidence does not qualify settlement or recovery
 after compaction. Minimum/current 2.3.0 qualification remains pending.
