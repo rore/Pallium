@@ -138,8 +138,9 @@ The task owner prioritizes
 the actual local failure, including already-compacted anchors. Reviewed bounded
 diagnostic hunks were integrated without replacing the root inventories or
 publishing raw logs. The original diagnostic checkout/evidence remain preserved.
-All six execution budgets are closed. No seventh attempt, unchanged retry,
-additional root-source push, relabel, merge or live change is authorized.
+The six earlier execution budgets are closed. The separate staged seventh budget
+below releases one reviewed-source publication and conditional qualification,
+not an unchanged retry. No eighth attempt or live change is authorized.
 Full recovery and the local incident remain open.
 Preserve the OC-1 outcome and regression matrix below. Activation settlement is
 not downstream task completion.
@@ -370,6 +371,40 @@ no seventh run, publication, timeout increase,
 assertion weakening, diagnostic expansion or live change is authorized.
 Full recovery remains open.
 
+The authorized five-path source slice is now authored at unpublished `13d7fb1e`,
+with test-first controls before fixture/workflow/README changes. Production remains
+exact `f80df956`; the empty-work guard and caller test are unchanged. The new fixture
+uses one instance-local first-primary slot, explicit auxiliary pass-through and
+failure-safe disposal. Its checks exercise the actual embedded observer and provider
+gate, but remain unexecuted. The same independent reviewer completed narrow
+SOURCE / CONTRACT GO at exact `13d7fb1e`; the manager read and accepted it.
+This is source clearance, not a runtime result.
+
+### Staged seventh validation budget (2026-11-16)
+
+After exact source clearance, the manager released one new staged attempt for
+`13d7fb1e` or a record-only successor with identical non-record source. It permits
+one normal fast-forward to existing PR410 and one automatic ordinary-CI round.
+Stage A requires both Linux JUnits to show the two new actual observer/provider
+controls passing once without skips, alongside the full required ordinary checks.
+Failure, a missing control or the 12-minute cap stops the whole attempt.
+
+Only after Stage A passes may the owner provision the exact `qualify-opencode-2.3.0`
+label if absent and admit one qualification at the same head. Stage B retains all
+existing gates, the original two extractor/oracle preflights, full package/all43,
+native13/HTTP25, immediate delivered/payload/pre-U/four-NEW assertions, 900-second
+qualification and 120/120/60-second phase caps, entry guards and owned drain.
+No duplicate minimum/current job is needed because both are presently 2.3.0.
+The existing owner observes the stages sequentially; only safe JUnits and the
+existing sanitized summary may be downloaded. Independent actual-result review
+and manager acceptance still precede merge.
+
+This is a separate exact budget, not permission to retry any of the six failed
+campaigns. It adds no workflow job or source change, preserves all earlier evidence,
+and releases no eighth attempt, extra push/label cycle, local application execution,
+paid API, raw logs, live/environment change or local cleanup. No seventh result
+or recovery is claimed yet.
+
 ### Additional live empty-wake report (2026-11-16)
 
 A downstream session reported `Pallium internal wake has no current Relay work`.
@@ -387,6 +422,15 @@ Receipt, complete body availability, understanding and task completion remain
 separate facts. Error-to-generation correlation, loaded identity and actual task
 effect are unresolved. No resend, manual receive/ACK, live change or expansion of
 the current fixture-only source scope is authorized by this report.
+
+The user later reported a fresh recurrence and supplied a screenshot of the same
+wake marker/error. This is not dismissed as harmless receipt evidence. The guard
+also rejects null or nonmatching context responses, so its wording alone does not
+distinguish genuine empty work from a rejected or failed lookup. Bounded existing
+metadata did not identify the new failing generation; no project conversation or
+raw logs were retained. Separate monitor reachability failures do not establish
+this occurrence's cause. Keep the recurrence open without weakening the guard or
+interrupting the staged qualification. No candidate has been activated by this task.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
