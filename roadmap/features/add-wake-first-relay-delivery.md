@@ -97,11 +97,14 @@ Linked features retain ownership of their existing work.
   no repeated diagnostics/tests, deadline relaxation or unsupported common-cause
   claim. PR #325 qualification remains separately owned by `@pal-dev1`.
 
-- [ ] **OpenCode reliability — existing OC-1/OC-4/OC-6 tasks remain open.**
+- [ ] **OpenCode reliability — OC-1 merged/hosted-qualified; OC-4/OC-6 open.**
   Owner: [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md).
-  Next: continue OC-1 wake-anchor liveness, OC-4 optional requests stacking latency
-  on ordinary turns, and OC-6 synchronous Git discovery blocking the event loop
-  under that item's existing owner and review gates. Acceptance: its caller/native
+  PR410 merged as `9a885914` after the ninth released OpenCode 2.3.0 native
+  journey, all13 checks, HTTP25 and independent result review passed. All eight
+  earlier failures and the separate ordinary 3.12 registration503 remain recorded.
+  Installed recovery is not established. Next: finish integration documentation,
+  then OC-6 synchronous Git discovery and OC-4 optional request latency under
+  that item's existing owner and review gates. Acceptance: its caller/native
   regressions prove safe anchor retirement and subsequent delivery, bounded
   fail-open ordinary-turn latency, and responsive discovery without blocking the
   host event loop. Dependencies: the existing OC contracts and native qualification;

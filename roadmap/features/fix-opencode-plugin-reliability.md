@@ -39,7 +39,7 @@ Related umbrella: [Add wake-first Relay delivery](add-wake-first-relay-delivery.
 Its unfinished Codex recovery and shared native-wake incident remain separately
 owned; do not absorb, reopen or claim them fixed here.
 
-## Current disposition (2026-10-20)
+## Current disposition (2026-11-16)
 
 OC-3's PR306 subsequently merged as `2ac9e2b66b9cd72ff7af9e7aeda9ecf061360b1f`, qualified head `37fc691380f86db307b2de8932b09948a736db12`, against actual PR297 main. Local full coverage passed 7,531 tests, package coverage passed 139 with seven existing skips, and real-HTTP plus isolated native OpenCode 2.0.24 checks passed. Required hosted checks passed after one independently reviewed Linux 3.12 retry; prior failures remain preserved. Actual logs and merge conditions received independent review. A private verification receipt is retained. No installed deployment occurred; remaining findings keep this item active.
 
@@ -51,12 +51,12 @@ re-resolve them before implementing remaining work.
 
 | Finding | Current disposition |
 |---|---|
-| OC-1 wake-anchor liveness | Open; no verified closure recorded. Preserve the activation/completion distinction and native qualification gates. |
+| OC-1 wake-anchor liveness | Hosted-qualified and merged in [PR410](https://github.com/rore/Pallium/pull/410), `9a885914`. Ninth released 2.3.0 journey passed all13 checks and HTTP25 with independent review. All eight earlier failures remain. Installed recovery is not established. |
 | OC-2 retired callbacks | Implemented, independently reviewed and merged in [PR302](https://github.com/rore/Pallium/pull/302), merge `e9eb3956ce4990f9dc15d0a24520f40d67246883`. Installed deployment is not established by that merge. |
 | OC-3 capture idempotence | Independently reviewed, qualified and merged in [PR306](https://github.com/rore/Pallium/pull/306), merge `2ac9e2b66b9cd72ff7af9e7aeda9ecf061360b1f`. Installed deployment remains separate. |
 | OC-4 aggregate optional latency | Open; preserve the caller-visible budget and fail-open requirements below. |
 | OC-5 bounded disposal | Implemented, independently reviewed and merged with OC-2 in PR302. Its isolated native 2.0.22/2.0.24 evidence does not establish installed deployment or arbitrary-version support. |
-| OC-6 synchronous discovery | Open; synchronous Git discovery remains in the shared helper. |
+| OC-6 synchronous discovery | Next source fix. Read-only call-graph investigation is complete; asynchronous entry/lifetime plan and implementation remain pending. |
 | OC-7 directory ownership | Independently reviewed, qualified and merged in [PR297](https://github.com/rore/Pallium/pull/297), merge `178fea16e36946ffed68fb4bdd93da76056d5f73`. Installed deployment remains separate. |
 | OC-8 deletion authority | Native reachability/qualification question remains open; do not promote the mock concern to a confirmed native defect. |
 
@@ -657,7 +657,60 @@ strict RED/GREEN coverage for the new regression in the existing phase if needed
 retain every old required case plus the new one. Native13/HTTP25, original two
 extractor/oracle preflights, caps, fail-stop, bookends and drain remain mandatory.
 No unchanged retry, tenth campaign, extra job/worker, local application execution
-or live-environment change is authorized. No tested guard or ninth pass is claimed.
+or live-environment change was released by that ninth budget.
+
+### Ninth qualification accepted and PR410 merged
+
+Exact `d9ca9db82c1662ba25d33d4141c3ae4489a14354`, with non-record source
+`c033692a`, passed [43929918263](https://github.com/rore/Pallium/actions/runs/43929918263)
+on released OpenCode 2.3.0. The strict baseline selected three expected RED
+assertions, including admission rewrite actual1/expected0; the corrected three
+passed without skips. Package218 had 211 passes, seven existing skips and zero
+failures; all44 required entries passed.
+
+The sole native journey executed unskipped and passed all13 checks. The original
+line812 assertion and entire native file remain unchanged from `96fd976c`.
+The run reached compaction/reload uncertainty holds, exact fresh-input/terminal
+proof, the pre-U original-payload non-replay oracle and four distinct NEW
+sequential automatic wakes. Required HTTP25 passed individually without skips.
+Source/binary bookends and normal/final drain passed. The source-defined checks,
+not an ACK or earlier backlog progress, establish this scoped hosted recovery.
+
+Ordinary [43927266769](https://github.com/rore/Pallium/actions/runs/43927266769)
+remains FAILED. Python 3.13 completed 9,190 passes, 106 skips and two xfails.
+Python 3.12 stopped at 7,252 passes, one failure, 37 skips and two xfails:
+`test_cross_container_association_discovery_select_send_and_reply` at
+`tests/test_relay_work_ref_associations_e2e.py:754` received initial registration
+503 `relay_busy` before discovery/send/reply. Its immediate cause remains unknown;
+no cross-container disclosure assertion was reached. The same node passed in
+3.13. Both reports passed the relevant controls, protected contracts, affected
+HTTP and accepted renderer coverage; Windows smoke and governance passed.
+Full-once and changed-feature coverage are met without relabeling failed CI,
+claiming flakiness or weakening assertions.
+
+Independent ACTUAL RESULT GO and manager combined acceptance completed at exact
+`d9ca9db8`. Both independently parsed the safe summary/ordinary JUnits and verified
+candidate identity, seven source hashes and preserved native assertions.
+Metadata observation ended on a GitHub 502, not a test failure; bounded final
+reads established all five owned runs completed within original caps. No test
+retry, replacement observer or deadline extension was used. Node RED frame
+locators remain missing; artifact API digests are metadata, not recomputed ZIP
+proof.
+
+PR410 merged normally as `9a8859149581822354178f22f0836814aa1c14d1` at
+18:57:35 UTC. The manager fetched main and verified the merged product, callers,
+workflow, native/HTTP tests and storage match the reviewed candidate. The merge
+preserves both parent roadmap commits and all eight failed campaigns.
+The ninth budget is closed. This qualifies the disposable hosted 2.3.0 journey,
+not installed recovery, downstream task completion or arbitrary runtime versions.
+Metadata minimum 2.3.0 and compatible later releases remain the support policy;
+the exact qualification pin is not a user-version lock.
+
+The same developer has the separate integration README/record closure, then a
+new OC-6 task using the completed architect inventory. No extra PR410 source push
+or unchanged native retry is needed for documentation. OC-4, OC-8, acquisition
+availability and the broader issue list remain open. Installation/restart and
+cancelled cleanup remain outside this night delivery authority.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
