@@ -81,6 +81,517 @@ was not reloaded. [Rollout evidence](https://github.com/rore/Pallium/pull/404#is
 does not establish loaded-host recovery, historical cause or broader reliability.
 This item stays active.
 
+### Confirmed OC-1 incident (2026-11-14)
+
+Read-only scheduling and native-history evidence now confirms this failure class
+in two active OpenCode sessions. Both retain a delivered, admitted, nonterminal
+anchor while their polling ownership remains live. In one session, a newer
+ordinary input precedes the first successful idle after the wake. Compaction
+later removes the wake from active context. The plugin rejects the intervening
+input's idle, then returns when the admitted wake is missing. The backend keeps
+the old anchor and cannot select a new automatic wake.
+
+A later request was saved at 20:35 UTC and claimed only with a manual prompt at
+20:42 UTC. Native input history contains no automatic wake between those times.
+The manager session has the same stuck-fence state. Hermes monitor reports were
+saved and subsequently delivered; their receipt does not establish timely wake.
+This is not evidence of a short idle timeout, dead polling or message loss.
+
+OC-1 is the immediate functional priority. The existing architect completed the
+bounded source investigation against official OpenCode 2.2.7. Native idle covers
+coalesced inputs, so an outcome-bearing terminal can settle a visible exact wake
+despite intervening input. Bare `wait()` does not prove consumption or success.
+The supported plugin API cannot reread old messages outside active context.
+That blocks retrospective correlation, but is **not** a blanket recovery blocker.
+The existing architect's pinned-source reassessment supports a fresh causal
+boundary: the supported adapter records admission only after the exact wake is
+promoted into native visible history and its inbox row is consumed. If that
+admitted generation is already known before a genuinely new ordinary prompt,
+the adapter can witness that new input's native promotion and a later settled
+outcome-idle, then revalidate the complete owner/scope/generation binding before
+using the existing terminal operation. Queue acceptance or a new steer alone
+does not supply this proof.
+
+The root fix uses one ephemeral witness in existing session state,
+not another persistent ledger or backend transition. Before the new ordinary
+input is observed promoted, its absence means not ready and retains that same
+frozen witness. After promotion, missing or changed proof invalidates it.
+Another input, shutdown, revert, move, reload or disposal must invalidate it.
+It cannot retrospectively bless completed manual turns, clear arbitrary
+admission flags or claim downstream task success. This corrects the earlier
+overstatement that historical listing is always necessary. It is source/design
+evidence, not runtime qualification or observed recovery.
+
+The existing developer owns the root correction in
+`.agent-workflow/tasks/opencode-wake-anchor-retirement.md`. Its corrected plan
+passed technical review, and the task owner's human approval carries forward.
+Root source was independently reviewed and published as
+`f7fb80e47a307f9ab41509ec6ab1c11a4de09085` in draft
+[PR #410](https://github.com/rore/Pallium/pull/410). Its test source adds 12 named
+root cases to the 31 required Node entries and a
+mandatory 13th native check. That check requires four distinct sequential new
+automatic wakes after recovery, with frozen post-recovery counters; earlier
+traffic, manual fallback and batched messages cannot supply acceptance.
+The sixth attempt passed the full package but failed the first native delivery
+prerequisite. The later root recovery journey remains unreached and unqualified.
+The task owner prioritizes
+the actual local failure, including already-compacted anchors. Reviewed bounded
+diagnostic hunks were integrated without replacing the root inventories or
+publishing raw logs. The original diagnostic checkout/evidence remain preserved.
+The six earlier execution budgets are closed. The separate staged seventh budget
+below releases one reviewed-source publication and conditional qualification,
+not an unchanged retry. Its old budget releases no eighth attempt or live change;
+the later night continuation below is a separate, conditional authorization.
+Full recovery and the local incident remain open.
+Preserve the OC-1 outcome and regression matrix below. Activation settlement is
+not downstream task completion.
+No live rows were cleared, messages replayed, or installed applications restarted
+to hide the incident. Private evidence remains local; no fix or recovery is yet
+qualified. PR404's discovery-only acceptance remains unchanged.
+
+The first qualification attempt on `b2acf606` is **failed, not qualified**.
+Exact baseline RED and focused GREEN passed, as did 205 package cases with zero
+failures and seven existing skips. All 31 required cases passed. The 60-second
+HTTP/workflow phase timed out without test-level progress; its cause is unknown.
+Native validation was skipped and all 12 native checks remain unobserved.
+Unchanged source/binary bookends and successful drain do not prove native coverage.
+Both ordinary Linux lanes stopped at a new fixture error: four backlog seconds
+plus a 12-second jump exceeded the unchanged 15-second owner lease before renewal.
+Windows smoke and governance passed, but full-suite coverage is incomplete.
+
+The second campaign failed its expired-state fixture readback after completing
+the narrowed HTTP selection: wake operations used synthetic time, but public
+status received real UTC. Its native phase was skipped. The third campaign ran
+native validation first; that unskipped journey failed and the qualification's
+HTTP phase was skipped. Its sanitized diagnostic lost the precise assertion
+location, so that native failure's predicate and cause remain unknown. None of
+the three campaigns qualifies the contribution, and the first timeout's cause
+remains unknown.
+
+Ordinary third-campaign Python 3.13 did complete: 9,140 passed, 106 skipped and
+two xfails, including all 46 HTTP-file cases and all 25 workflow-contract cases.
+The shared-clock fixture correction therefore has ordinary-CI evidence, distinct
+from the failed native qualification. Python 3.12 still failed in unchanged Codex
+cases; their causes are unresolved. Windows smoke and governance passed. Preserve
+the [first](https://github.com/rore/Pallium/pull/410#issuecomment-6885286594),
+[second](https://github.com/rore/Pallium/pull/410#issuecomment-6885852162) and
+[third](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488) receipts as
+failed campaigns, not new execution authority. No OC-1 merge, installed change
+or incident recovery is claimed.
+
+The fourth, corrected-root [qualification](https://github.com/rore/Pallium/actions/runs/43691537059)
+failed at package validation. Both exact legacy/root baseline assertions were
+observed as expected, and both candidate focused cases passed. Actual extractor
+and replay-oracle checks passed before the package ran. Package results were
+217 cases, two failures and seven existing skips; 41 of 43 required entries passed.
+The failures were `fresh supersession requires observed producer promotion before
+admission` (actual 0, expected 1) and `fresh supersession fences lifecycle and
+backend changes during settlement` (`final-poll/admitted`, actual 1, expected 0).
+No Node file/line was retained. Product-versus-fixture causes are not established;
+source investigation continues without weakening either assertion.
+
+Native and qualification HTTP were skipped: zero native 13-check or qualification
+HTTP25 evidence. Source/binary bookends and owned drain passed, but do not prove
+recovery. In [ordinary CI](https://github.com/rore/Pallium/actions/runs/43691371959),
+Python 3.12 passed the full non-slow suite: 9,142 passed, 106 skipped, two xfails,
+including all 46 HTTP-file, 27 workflow and 19 protected-contract cases. Python
+3.13 stopped at an unchanged dashboard test returning HTTP 503 instead of 200;
+its cause, independence and flakiness remain unproved. Windows smoke and governance
+passed; aggregate CI failed. The [same result receipt](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488)
+preserves all earlier evidence. Independent actual-result review completed with
+HOLD / NOT QUALIFIED; the manager accepted that failed-result disposition.
+No source retry, merge, live change or incident recovery is accepted.
+
+The fifth [qualification](https://github.com/rore/Pallium/actions/runs/43700268471)
+at `55d61d3f` also failed at package validation. Its non-record source is identical
+to independently source-reviewed `9ba27e98`. Both exact baseline RED and candidate
+focused GREEN gates passed. Both actual extractor/oracle preflights passed before
+the package ran. Package results were 217 recorded cases, one failure and seven
+existing skips. All 43 required entries passed, including the two fourth-attempt
+failures, but the whole package still failed. The unchanged caller test
+`replaced scope generation fences an older response inside the same entry`
+received unexpected Relay context on an ordinary input expected to stay unchanged.
+Its Node runtime locator is missing; a source reference is not a retained runtime
+file/line or proof of an exclusive cause. The unchanged test remains mandatory.
+
+Native and qualification HTTP were skipped: zero observed native 13-check journey
+or qualification HTTP25 evidence. Compaction/restore, fresh ordinary recovery,
+original-payload non-replay and four distinct sequential NEW automatic wakes have
+not passed. Official OpenCode 2.2.7 pins, all seven source hashes, unchanged
+source/binary bookends and normal/final drain were verified, but cannot substitute
+for that journey. The inspected safe qualification artifact is `14155604687`.
+
+Fifth [ordinary CI](https://github.com/rore/Pallium/actions/runs/43700194523)
+also failed overall. Python 3.13 passed the full non-slow suite: 9,142 passed,
+106 skipped and two xfails. Python 3.12 stopped at 6,750 passed, one failure,
+37 skipped and two xfails. Its failure was
+`test_modeled_summary_turn_refuses_real_writer_contention[sqlite-semantic]`:
+the prerequisite admission audit reported started 0, expected 1. Its later
+contention assertions were not established. The files are unchanged and the same
+case passed in current Python 3.13; cause, independence and flakiness remain unknown.
+Both Linux artifacts passed all 46 HTTP-file cases, the exact 25 required HTTP
+names, 27 workflow and 19 protected-contract cases, plus the extractor/oracle checks.
+The historical dashboard case passed both current lanes; its earlier 503 cause is
+still unresolved. Windows smoke and all three governance runs passed. All owned
+jobs completed within their original caps, without cancellation, retry or a
+remaining observer. These partial passes do not make aggregate CI green.
+
+Independent fifth actual-result/evidence review completed with HOLD / NOT QUALIFIED.
+The manager accepts the evidence as a failed result, not recovery. The
+[same receipt](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488)
+retains all five histories. A clean result-only successor remains unpushed; draft
+PR410 remains at `55d61d3f`. No root fix has merged or reached the installed host.
+
+After the fifth failure, the developer adopted a source-only continuation for the
+registration contract. At failed candidate `9ba27e98`, `applyWakeResponse()` rejected
+a higher scope before calling the existing `remember()` reset. This trace describes
+that candidate, not the older plugin on main. It identified a correction direction,
+not a recovered runtime locator
+or exclusive campaign diagnosis. Restore valid monotonic registration invalidation
+through the existing reset path without accepting an old request's wake body under
+the new scope. Preserve the original test's unchanged-context, zero-ACK and
+future-poll-scope assertions, cache revisions, stale-response rejection, witness
+fences and replacement-flight isolation. The existing architect completed the
+bounded read-only compatibility comparison. It confirmed that the omitted reset
+also fences ordinary claims, context and assistant captures. Registration freshness
+must be checked separately from wake-cache freshness: intervening same-binding
+wake/null progress must not hide valid higher-scope invalidation. Discard that old
+request's wake body after reset; only a fresh new-scope request can obtain wake
+authority. Keep revision protection for all same-scope wake acceptance. The manager
+accepted and forwarded these findings for consolidation, not as source or runtime
+GO for the evolving correction. At that source checkpoint, the then-unpublished
+`f80df956` correction separated those freshness checks and fenced stale rejection
+effects as well as wake acceptance. Both-writer caller schedules were authored
+but unexecuted. The same independent reviewer completed narrow SOURCE / CONTRACT
+GO at exact `f80df956`; its later publication is recorded below.
+The manager read and accepted that source disposition. Registration compatibility
+and ordering source gates are closed. That source-only disposition did not itself
+release another campaign. The local automatic-wake incident remains open.
+
+### Bounded finish continuation (2026-11-16)
+
+This section records a historical manager authorization, not permission created
+by the documentation PR. The task owner requested continuation to finish the fix.
+The manager released one
+new, sixth hosted attempt for exact source-reviewed `f80df956` or a record-only
+successor with identical non-record source. The existing developer adopted
+that scope. It permitted one normal fast-forward to the existing PR410 branch,
+one automatic ordinary-CI round and one existing qualification-label cycle at the
+same immutable head. It does not permit another product or workflow edit.
+
+The existing package-first gates and acceptance remain unchanged: whole package
+including the original scope-replacement test, all 43 required entries, unskipped
+native 13-check compaction/recovery/non-replay/four-NEW-wake journey, and exact
+HTTP25. Caps remain 900 seconds for qualification, 120 for package, 120 for native,
+60 for HTTP and 12 minutes for ordinary CI observation. The existing owner observes
+only that round, stops on failure and cancels owned active jobs at their cap.
+No unchanged retry, seventh attempt, cap extension, raw-log download, local
+application execution, new runner or worker is released. The same independent
+reviewer must review the actual sixth result before manager acceptance and merge.
+The actual result below closes this budget; the five earlier failed histories
+remain unchanged.
+
+Ordinary coordination found the desktop-managed CLI directory now at 2.3.0.
+This is not proof of a loaded plugin version or native recovery. The hosted
+campaign stays pinned to reviewed OpenCode 2.2.7. The existing architect completed
+the bounded source-applicability comparison against official 2.3.0 commit
+`a6b15d33daf6ab7d35569f6d711fdb630b9f04e7` and returned SOURCE APPLICABILITY GO:
+no concrete changed premise requiring an `f80df956` adaptation was found.
+Promotion, context/compaction and same-session settlement assumptions remain
+applicable. Metadata propagation, descendant reporting and incomplete-assistant
+replay have changes that still need runtime evidence. The manager accepts this
+source-only disposition, not blanket compatibility or installed recovery.
+It does not retarget or block the current qualification. Actual 2.3.0 qualification,
+loaded runtime/plugin identity and the exact installation/restart/reload scope
+remain separate. No live-environment change or cleanup is authorized here.
+
+### Sixth actual result (2026-11-16)
+
+Exact published `f7fb80e4` has the same non-record source as reviewed `f80df956`.
+[Qualification](https://github.com/rore/Pallium/actions/runs/43855605873)
+failed at native validation, not package validation. Both exact baseline RED and
+candidate GREEN gates and both extractor/oracle preflights passed. The full package
+recorded 217 cases: 210 passed, zero failed and seven existing skips. All 43 required
+entries passed, including the unchanged scope-replacement contract.
+
+The selected native case ran unskipped and failed at
+`tests/test_opencode_native_wake_e2e.py:611`, `assert delivered(original)`, through
+the wrapper at line 190. The preceding blocked-provider event was observed, but
+the immediate public Relay readback was not delivered. Subsequent admission,
+ordinary-input coalescing, compaction/restore, non-replay and four NEW sequential
+automatic wakes were not reached. Cause, ACK failure, timing and flakiness remain
+unestablished. Of the 13 native fields, only host-version verification and owned
+drain are true; the other 11 are unestablished, not proven contract violations.
+Qualification HTTP25 was skipped.
+
+[Ordinary CI](https://github.com/rore/Pallium/actions/runs/43855585214) passed.
+Both Linux versions completed 9,142 passed, 106 skipped and two xfails. Both passed
+all 46 HTTP-file cases, exact HTTP25 names, 27 workflow and 19 protected-contract
+cases, plus both extractor/oracle checks. Windows smoke and all three governance
+runs passed. Previous capacity and dashboard cases passed in both current lanes;
+their historical causes remain unknown. All owned runs completed within the
+original caps without cancellation, timeout, retry or a remaining observer.
+
+The inspected safe qualification artifact is `14220892839`; source hashes, official
+2.2.7 pins, unchanged source/binary bookends and normal/final drain passed.
+Package and ordinary passes do not replace the failed native journey.
+The [same receipt](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488)
+retains all six results. The result-only record remains local and unpushed; PR410
+stays draft and unqualified. The same independent reviewer completed the actual-sixth
+evidence review with HOLD / NOT QUALIFIED and no material reporting error. The manager
+accepts that failed-result disposition; no source or earlier result review is repeated.
+
+Read-only discovery now checks the exact delivery prerequisite: the fixture sets
+its provider-entry event for every provider POST, but that alone does not identify
+the original Relay model request. The completed source comparison confirms that
+title generation can reach the provider before primary context/ACK completion.
+It also confirms that 2.2.7 omits stored metadata from primary hook messages while
+2.3.0 preserves it; the current internal-wake classifier requires that metadata.
+Even a correlated primary request proves callback return, not successful ACK.
+The public delivered assertion must remain an independent immediate oracle.
+These source findings do not establish which request or ACK outcome caused the
+sixth failure.
+
+The task owner clarified the expectation: a minimum supported version and compatible
+later releases, not an exact-version lock. Binary pins make qualification repeatable.
+The existing developer prepared a narrow plan for an API-based minimum
+(2.3.0 for the current internal-wake metadata path, subject to runtime evidence),
+clear minimum-versus-tested-version documentation, and a correct primary-request
+observation boundary. Historical 2.0.24 and 2.2.7 evidence limits and the passive V1
+path remain unchanged; no blanket compatibility with unseen releases is claimed.
+The existing architect reviewed record-only `5cc5ce77` and returned PLAN HOLD on
+three narrow points: exact one-use completed-context/FIRST-primary pairing,
+auxiliary responses bypassing the primary gate, and executable checks of the actual
+observer's negative and failure-safe cleanup paths. The API floor, explicit-title
+precondition and need for at most one fixture observer are supported.
+
+The owner amended those three points in record-only `a0e9af4b`. The same architect
+completed PLAN GO at that exact revision, closing H1–H3. The manager read and
+accepted the closure, which unlocks the existing conditional source-only release.
+It permits the existing README, qualification workflow, native
+fixture, workflow contracts and Work Record changes without another routine
+approval stop. Production plugin/helper/backend/API/package caller source stays
+exact `f80df956`. Independent patch review still follows. This plan closure grants
+no seventh run, publication, timeout increase,
+assertion weakening, diagnostic expansion or live change is authorized.
+Full recovery remains open.
+
+The authorized five-path source slice is now authored at unpublished `13d7fb1e`,
+with test-first controls before fixture/workflow/README changes. Production remains
+exact `f80df956`; the empty-work guard and caller test are unchanged. The new fixture
+uses one instance-local first-primary slot, explicit auxiliary pass-through and
+failure-safe disposal. Its checks exercise the actual embedded observer and provider
+gate, but remain unexecuted. The same independent reviewer completed narrow
+SOURCE / CONTRACT GO at exact `13d7fb1e`; the manager read and accepted it.
+This is source clearance, not a runtime result.
+
+### Staged seventh validation budget (2026-11-16)
+
+After exact source clearance, the manager released one new staged attempt for
+`13d7fb1e` or a record-only successor with identical non-record source. It permits
+one normal fast-forward to existing PR410 and one automatic ordinary-CI round.
+Stage A requires both Linux JUnits to show the two new actual observer/provider
+controls passing once without skips, alongside the full required ordinary checks.
+Failure, a missing control or the 12-minute cap stops the whole attempt.
+
+Only after Stage A passes may the owner provision the exact `qualify-opencode-2.3.0`
+label if absent and admit one qualification at the same head. Stage B retains all
+existing gates, the original two extractor/oracle preflights, full package/all43,
+native13/HTTP25, immediate delivered/payload/pre-U/four-NEW assertions, 900-second
+qualification and 120/120/60-second phase caps, entry guards and owned drain.
+No duplicate minimum/current job is needed because both are presently 2.3.0.
+The existing owner observes the stages sequentially; only safe JUnits and the
+existing sanitized summary may be downloaded. Independent actual-result review
+and manager acceptance still precede merge.
+
+This is a separate exact budget, not permission to retry any of the six failed
+campaigns. It adds no workflow job or source change, preserves all earlier evidence,
+and releases no eighth attempt, extra push/label cycle, local application execution,
+paid API, raw logs, live/environment change or local cleanup.
+
+The owner now records candidate `5906044f` as FAILED / NOT QUALIFIED. Stage A
+passed both actual fixture controls in both Linux JUnits and the required ordinary
+checks. Stage B [43885769807](https://github.com/rore/Pallium/actions/runs/43885769807)
+passed package checks but failed the combined singleton-session/no-next-cursor
+precondition before Relay registration or send. The failed conjunct and cause are
+not established. No delivery or recovery journey was reached; qualification HTTP
+was skipped. Owned runs ended within caps. Independent actual-result review and
+manager acceptance remain pending. The seventh budget is closed; no eighth retry
+is released.
+
+The user's subsequent priority is local service reliability. The manager owns
+triage of the recurring context error and intermittent reachability separately
+from this fixture failure. Existing monitor evidence reports restored endpoint
+health and one successful summary with aged unacknowledged work, not caller
+recovery. Preserve the guard, queue and evidence. The user subsequently reaffirmed
+standing bug-fix approval; routine bounded diagnostics no longer wait on another
+approval request. No installed change is authorized by this diagnostic scope.
+
+### Additional live empty-wake report (2026-11-16)
+
+A downstream session reported `Pallium internal wake has no current Relay work`.
+Read-only existing trace/status evidence confirms one delivery attempt and a
+durable ACK. The activation receipt was recorded later; that is not proof of
+native execution ordering or an exclusive overtaken-wake cause. Exact identifiers,
+scope and evidence remain private; no downstream project payload is copied here.
+
+The caller contract already expects this visible refusal for an empty committed
+wake and requires newer ordinary work to remain usable. Do not weaken that guard
+merely to remove the error. The user reports uncertain message recognition, not
+confirmed task interruption. The supplied status excerpt is only the final body
+page; it does not establish whether earlier pages were available or read.
+Receipt, complete body availability, understanding and task completion remain
+separate facts. Error-to-generation correlation, loaded identity and actual task
+effect are unresolved. No resend, manual receive/ACK, live change or expansion of
+the current fixture-only source scope is authorized by this report.
+
+The user later reported a fresh recurrence and supplied a screenshot of the same
+wake marker/error. This is not dismissed as harmless receipt evidence. The guard
+also rejects null or nonmatching context responses, so its wording alone does not
+distinguish genuine empty work from a rejected or failed lookup. Bounded existing
+metadata did not identify the new failing generation; no project conversation or
+raw logs were retained. Separate monitor reachability failures do not establish
+this occurrence's cause. Keep the recurrence open without weakening the guard or
+interrupting the staged qualification. No candidate has been activated by this task.
+
+A further user-supplied recurrence now identifies another message and delivery
+(private evidence only). The screenshot shows a successful status-page tool read
+followed by the same context error. This supplied page has a non-null next cursor
+and is not the full message. Investigate post-tool context restoration, not only
+initial delivery. Source confirms that each wake context projection revalidates
+the delivery before using restored continuation; null transport results and empty
+or mismatched delivery responses share this error. Delivered-content restoration
+also requires a nonterminal wake, exact claim-attempt binding, safe rendering and
+sufficient current budget. The failing response, generation and loaded source
+remain unknown. No payload was retained or published and no live query was made.
+
+Subsequent authorized read-only diagnostics correlate that delivery to its native
+wake metadata and a failed native idle after a completed tool call. The server log
+records the exact guard at `pallium-v2.mjs:359:21`. This establishes an actual native
+execution failure, not merely uncertain reading of an ACKed message. Exact IDs
+stay private. Health, readiness and embedding checks passed in 76–110 ms at
+14:46 UTC; queue health returned HTTP 200, with no empty-queue inference. A later
+bounded log sample contains heavy slow wake/projection activity and three busy
+wake operations, all sampled durations below the shared six-second HTTP timeout.
+The sample is not a full-window census and does not identify the earlier failing
+context response. Its status/body, backend snapshot, loaded hash and root cause
+remain open. No replay, queue mutation, restart or installed edit was performed.
+
+### Shared restore-envelope sizing defect (2026-11-16)
+
+Source inspection found a concrete mismatch in both installed source and current
+main. Initial `claim_view()` supplies `claim_attempt` and `possible_redelivery`
+when `_delivery_text()` sizes the envelope. Restored `_delivery_view()` supplies
+`attempts` but not those derived fields. The same renderer therefore substitutes
+`unknown` for both fields on restoration. For attempt one, that adds eight
+characters relative to `1` and `false`. A truncated prefix that fitted the original
+budget can then fail the restoration budget and return empty deliveries.
+The plugin rejects that response at its existing guard. This is a source-supported
+failure mechanism, not yet an executed regression or the proven exclusive cause
+of the live incident.
+
+The existing developer explicitly accepted the distinct shared-rendering fix.
+The new branch and Work Record exist. The developer was idle on the architect
+prerequisite because the queued review had not started. The manager resumed that
+same architect through one normal queued native turn and verified actual review.
+The architect returned PLAN / PERSISTENCE GO at `87c17d33`; the manager read its
+full disposition. Developer2 resumed and authored 16 HTTP cases plus 29 renderer
+controls before the production change. Test-only PR412 at `3b4fa826` ran the
+ordinary RED cohort `43897548351`. The manager inspected both actual JUnits:
+Python 3.13 failed the new exact-budget reusable-envelope assertion at
+`tests/test_opencode_relay_wake_e2e.py:318`. Only the first short, claimed,
+first-attempt ASCII case executed; long, ACKed and redelivery RED coverage is
+unestablished because of fail-fast. Python 3.12 stopped earlier at the unchanged
+Claude durability assertion at `tests/test_claude_wake_durability.py:713`
+(claimed rather than delivered). This is not the target regression or a green
+lane; its cause and relation remain unknown. Windows and governance passed.
+
+The minimal shared normalization is committed locally at `677a4f80`, with tests
+frozen from the test-first checkpoint and all other storage code unchanged.
+The existing architect completed PATCH / PERSISTENCE GO at `677a4f80` with no
+blocking source finding and no demonstrated blocker from the unchanged 3.12
+failure. The manager resumed that review through one normal queued native turn,
+read its actual final disposition, and verified Developer2 resumed for the sole
+preauthorized GREEN round. No GREEN execution or pass is claimed yet.
+The user reaffirmed that out-of-scope failures without demonstrated relevant or
+critical risk must not block the fix. Preserve and assess the Claude observation
+in the planned GREEN result; do not add a separate repair campaign, extra RED run,
+unsupported flakiness claim or report failed required CI as green.
+It uses a new isolated branch and Work Record from main; PR410 and its closed
+seventh campaign remain frozen. Invoke Agent Workflow before code edits, review
+all renderer callers, obtain the existing architect's narrow plan review, then
+fix shared normalization rather than weakening the guard or increasing budgets.
+Test-first HTTP coverage must prove initial context → ACK → status-page read →
+same-budget restoration, repeated restoration without another claim or ACK,
+Unicode and tight-budget boundaries, while retaining existing authority, terminal
+and stale-state protections.
+
+The new bug-fix scope authorizes at most two existing ordinary hosted CI rounds:
+expected RED, then corrected GREEN with affected and full required checks. Each
+has a 15-minute cap and one existing owner observing sequentially. It authorizes
+no local application execution, workflow changes, native qualification retry,
+third round, live installation, restart, database mutation or replay. The user’s
+standing bug-fix approval carries forward without another routine approval loop.
+Independent review and manager acceptance remain required; no recovery is claimed.
+
+Both rounds are complete. Corrected PR412 head `a2e9b325` passed all 45 new
+controls once without skips and the full Python 3.12 suite: 9,165 passed,
+106 skipped and two xfails. Whole affected wake/envelope/exact-claim files,
+19 protected contracts, Windows smoke and governance passed. The manager parsed
+both actual JUnits and verified their hashes and candidate identity. Python 3.13
+failed earlier at unchanged `test_idempotent_send_schedules_one_codex_wake`
+(`tests/test_codex_wake.py:4438`, HTTP 200 then 503); none of the new cases executed
+there. Overall CI remains failed; no full Windows or installed recovery is claimed.
+
+Independent actual-result review returned ADEQUACY GO at exact `a2e9b325`.
+The earlier both-Linux/full-aggregate target was not met. Under the user's later
+explicit direction not to block disconnected or noncritical failures and to finish
+and merge the fix overnight, the manager accepts the bounded renderer correction
+on full 3.12, all changed-feature/affected coverage and independent review.
+The unchanged duplicate-send failure has no demonstrated relevant or critical
+regression from the read-only formatter change; its cause remains unresolved and
+stays a separate follow-up. This does not assert causal independence or flakiness.
+Fresh GitHub checks found no main protection or applicable branch rules requiring
+the failed status. No check is relabeled, test weakened or protection bypassed.
+PR412 merged normally as `09951d57e635808ed77971166bc92218af8699d7` at
+16:24:57 UTC. The manager independently verified GitHub's merged state, fetched
+main and checked that the merged storage fix and both test files are byte-identical
+to the reviewed candidate. No extra source push, rerun or administrative override
+was used. Installed activation remains separately gated; this merge alone does
+not close the user-visible incident or OC-1.
+
+### Night continuation — remaining OC-1 recovery
+
+After PR412 merged, the manager assigned the same developer and architect the
+next existing bug under the user's instruction to finish and merge the fix list
+without further routine approvals. All seven old native campaigns remain failed.
+First settle the exact released 2.3.0 session-list/cursor contract behind the
+seventh fixture precondition. Prefer an explicit bounded short-page proof of a
+sole fresh session if supported by that source, otherwise the smallest supported
+bounded traversal. Do not infer the failed conjunct from the sanitized summary,
+drop the fresh-session requirement, add waits or weaken the original native tail.
+
+The same Work Record must capture the new assumption and review before edits.
+Preserve the reviewed root plugin and original immediate-delivery-through-EOF,
+pre-U non-replay and four-NEW-wake assertions. Main now includes the independently
+accepted shared renderer fix; combined-source identity must acknowledge it rather
+than claiming every backend file is still the old frozen version.
+
+After actual narrow plan/API and patch/source GO, this separate authority permits
+one materially corrected eighth campaign: one normal PR410 publication, one
+15-minute ordinary stage, then one existing 2.3.0 label admission at the same head
+only after relevant controls, affected coverage, a complete full non-slow lane,
+Windows smoke and governance satisfy the reviewed gate. Disconnected noncritical
+ordinary failures retain honest dispositions, not blanket holds. Native validation
+keeps all original 900/120/120/60-second caps, entry guards, full217/all43,
+native13/HTTP25, fail-stop, source/binary bookends and owned drain. Native journey
+failures remain directly relevant; no partial result can qualify recovery.
+No ninth or unchanged retry, extra source push, new workflow/worker, local
+application execution, live installation/restart, queue mutation, replay or cleanup
+is released. Concrete unsupported behavior is a blocker for that slice, not a
+reason to stop independent OC-4/OC-6 work. Source proof and plan are pending;
+no eighth run or recovery is claimed.
+
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
 [39695623972](https://github.com/rore/Pallium/actions/runs/39695623972) and

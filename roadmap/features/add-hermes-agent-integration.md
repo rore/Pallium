@@ -37,12 +37,43 @@ application, tests, dependencies and workflows were identical at that checkpoint
 ### Current bridge recovery boundary (2026-11-14)
 
 The dedicated MCP bridge recovery plan is accepted and its first caller-surface
-regression is authored but unexecuted. It must prove that a transport failure
+regression now has an accepted hosted behavioral RED. It must prove that a transport failure
 after persistence does not replay the original call, while a later independent
 call recovers with its own immutable binding after the old owned resources close.
-Continuation is held on the implementation owner's source-custody handoff.
-The manager owns resolving that blocker; an unread request or inactive session
-does not transfer ownership. This work remains separate from the deliberate RED
+The manager accepted an isolated current-main adoption at
+`86be6218482c2d6b209b50162c239e7a9f979a9b`, preserving the original source,
+checkout, branch and role ownership. The current architect inspected that exact
+source and gave source-only GO for the first regression. The existing developer
+resumed through native queued input because automatic Relay wake is stuck and
+published deliberate-RED draft [PR #408](https://github.com/rore/Pallium/pull/408)
+at `bb96a435`. The reviewed test is unchanged. The manager independently inspected
+both Linux JUnit artifacts from
+[run 43641218592](https://github.com/rore/Pallium/actions/runs/43641218592): each
+reaches the intended later-caller assertion, with prerequisite mutation/readback
+checks satisfied and no subject skip or setup/teardown error. This is injected
+post-success stale-session RED, not genuine EOF or original-incident-cause proof.
+The old-checkout custody restriction remains; it does not block this independent
+adoption. The accepted minimal bridge plan is implemented in current PR head
+`7470898c`. The manager independently inspected both JUnit artifacts from
+[run 43647802699](https://github.com/rore/Pallium/actions/runs/43647802699): all
+29 source-derived bridge cases pass exactly once on each Linux version, with
+no subject skip, setup error or teardown error. Python 3.13 passes the full
+non-slow suite: 9,120 passed, 106 skipped and two xfails. Windows smoke and
+governance pass. Overall CI remains failed because Python 3.12 later fails an
+initial Relay registration with HTTP 503 before that case's delivery assertions.
+Its cause and availability impact remain unresolved. Earlier failed runs and
+fixture corrections remain recorded, not relabeled as passing.
+
+The existing architect gave current product/result GO, and the manager accepted
+the registration 503 as an unresolved, nonblocking shared-availability finding
+for this bounded contribution. Failed CI is not relabeled green and no complete
+causal independence is claimed. [PR #408](https://github.com/rore/Pallium/pull/408)
+merged normally as `6eaf303507a2463e5a47986d4145cca1ad223b24`, without a protection
+bypass. Its final canonical record is adopted in the manager's existing PR #409.
+SDK1 wire checks pass with memory off/on;
+optional SDK2 checks skipped and do not qualify SDK2. No local recovery test,
+native-host campaign or installed rollout occurred. This work remains separate
+from the deliberate RED
 reply-contract [PR #400](https://github.com/rore/Pallium/pull/400), the qualified
 integration above and installed adoption. No bridge recovery is yet qualified.
 
