@@ -588,9 +588,76 @@ native13/HTTP25, fail-stop, source/binary bookends and owned drain. Native journ
 failures remain directly relevant; no partial result can qualify recovery.
 No ninth or unchanged retry, extra source push, new workflow/worker, local
 application execution, live installation/restart, queue mutation, replay or cleanup
-is released. Concrete unsupported behavior is a blocker for that slice, not a
-reason to stop independent OC-4/OC-6 work. Source proof and plan are pending;
-no eighth run or recovery is claimed.
+is released by that eighth budget. Concrete unsupported behavior is a blocker for
+that slice, not a reason to stop independent OC-4/OC-6 work.
+
+The exact 2.3 source-contract/plan review completed at `8fe53341`: `cursor.next`
+is present on every nonempty page, including a final singleton. The unfiltered
+`limit=2` short-page predicate is therefore the supported read-time proof.
+Test-first controls preceded correction `96fd976c`; the intended independent
+reviewer returned PATCH SOURCE / CONTRACT GO. Workflow, root plugin/common, H3
+controls and the original native delivery-through-EOF assertions stayed intact.
+
+Eighth candidate `700fdfa9` passed ordinary
+[43915727027](https://github.com/rore/Pallium/actions/runs/43915727027) in both
+Linux lanes: 9,190 passed, 106 skipped and two xfails each. Actual pagination,
+H3 and extractor/oracle controls, affected HTTP62/exact25, protected19, envelope33,
+exact-claim122 and all 45 accepted renderer controls passed without skips.
+Windows smoke and governance passed. This is later combined-source evidence,
+not a rewrite of PR412's earlier failed 3.13 result or its unknown cause.
+
+Native [43918562841](https://github.com/rore/Pallium/actions/runs/43918562841) then
+failed at `tests/test_opencode_native_wake_e2e.py:812`: two successful `admitted`
+HTTP rows versus one `terminal` row for the original delivery. Package217/all43
+passed. First-primary identity, original delivery, ordered coalesced outcome and
+lost-terminal-reply reconciliation were reached. Four backlog delivery readbacks
+and the unique-native-prompt-ID assertion also preceded the failure. They are not
+the later four-NEW-wake recovery acceptance. The subsequent ACK/payload and
+reload/compaction/fresh-input checks were not reached; qualification HTTP skipped.
+Only version, ordered coalescing, lost-terminal reconciliation and owned drain
+are true in native13. Other default-false fields are unestablished, not proven
+violations. Source/binary bookends and normal/final drain passed. The eighth
+campaign is FAILED / NOT QUALIFIED and closed.
+
+### Night continuation — admitted-state reentry
+
+The manager traced a concrete shared-path defect: `sameWake()` includes the
+`admitted` flag. A trusted poll can advance that flag while a flight retains its
+older false snapshot. The correctly fenced old flight then yields; a later valid
+flight reenters, but `runWake()` unconditionally sends `admitted` again even when
+its validated snapshot already says true. This source schedule matches the
+observed request-count failure; its exact hosted interleaving is not retained.
+Repeated idempotent HTTP writes are not proof of duplicate native prompts or
+payload replay.
+
+Under the existing night authority, the same developer is assigned a minimal
+authoritative-admitted-state guard and caller regression, subject to a narrow
+recorded plan and independent source review. Preserve observation, scope/lifetime,
+flight/cache, false/unknown/lost-response and terminal fences; no new ledger,
+scheduler, retry, clock mask or weakened native assertion. The intended independent
+reviewer completed eighth-result HOLD / NOT QUALIFIED and narrow PLAN GO at
+`afcf375b`. The manager read both full dispositions and accepted the failed-result
+classification. The original native tail, including line812's invariant, remains
+unchanged.
+
+The developer consumed that GO and committed test-first `3743c7ef` before the
+production change. Its first assertion is `known admitted wake must not rewrite
+admission`. The single caller test also covers fresh false/new-generation state,
+rejected and deferred waits, authoritative flag progress, reload, committed and
+uncommitted lost admission replies, and lost terminal reply reconciliation.
+Correction `c033692a` changes only the shared admission call to skip an exact
+validated `admitted === true` snapshot. Local syntax/source checks are not
+execution evidence; the regression remains unexecuted pending hosted validation.
+Exact independent patch review must precede publication.
+
+After source-supported plan and patch GO, a separate conditional ninth campaign
+permits one corrected publication and ordinary stage, then one same-head 2.3
+qualification admission. Keep the original two focused RED/GREEN cases and add
+strict RED/GREEN coverage for the new regression in the existing phase if needed;
+retain every old required case plus the new one. Native13/HTTP25, original two
+extractor/oracle preflights, caps, fail-stop, bookends and drain remain mandatory.
+No unchanged retry, tenth campaign, extra job/worker, local application execution
+or live-environment change is authorized. No tested guard or ninth pass is claimed.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
@@ -826,6 +893,20 @@ missing remote, Unicode paths, cwd changes, dirty/untracked files, cancellation
 and simultaneous sessions. Assert unrelated native API/event work remains
 responsive while discovery is delayed. Preserve V1 compatibility and caller
 identity; do not change the user's Git configuration.
+
+The architect completed a bounded read-only current-main/OC-1 call-graph
+investigation on 2026-11-16. Native asynchronous Git is sufficient; no dependency,
+cache or process framework is needed. This is not an implementation plan or an
+OC-1 gate. Resolve Git at existing async entry points, not by returning promises
+from synchronous scope/proof guards. Preserve the final proof-to-action ordering,
+original lifetime signals and authoritative pins after awaits. Actor resolution
+can write pins, and disposal needs its already-known detach identity.
+Preserve nonzero-exit versus spawn/timeout/cancellation semantics and bounded
+output. Windows structural work-reference discovery already avoids Git; identity
+and repository discovery still use it. Reuse V1/V2 caller fixtures, shared parity
+and `tests/test_stable_actor_identity_e2e.py`; add delayed-Git responsiveness and
+stale-continuation coverage when implementation is assigned. No code or execution
+was performed by the investigation. OC-6 remains open behind the current fix.
 
 ### OC-7 — Existing cross-folder assistant ownership defect (PR297 dependency)
 
