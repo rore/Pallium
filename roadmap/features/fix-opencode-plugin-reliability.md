@@ -126,20 +126,20 @@ The existing developer owns the root correction in
 `.agent-workflow/tasks/opencode-wake-anchor-retirement.md`. Its corrected plan
 passed technical review, and the task owner's human approval carries forward.
 Root source was independently reviewed and published as
-`55d61d3fc22193c276a46a08f326b527e3863b7d` in draft
+`f7fb80e47a307f9ab41509ec6ab1c11a4de09085` in draft
 [PR #410](https://github.com/rore/Pallium/pull/410). Its test source adds 12 named
 root cases to the 31 required Node entries and a
 mandatory 13th native check. That check requires four distinct sequential new
 automatic wakes after recovery, with frozen post-recovery counters; earlier
 traffic, manual fallback and batched messages cannot supply acceptance.
-The fifth, separately budgeted corrected-root attempt failed at package validation;
-native recovery remains unexecuted and unqualified. The task owner prioritizes
+The sixth attempt passed the full package but failed the first native delivery
+prerequisite. The later root recovery journey remains unreached and unqualified.
+The task owner prioritizes
 the actual local failure, including already-compacted anchors. Reviewed bounded
 diagnostic hunks were integrated without replacing the root inventories or
 publishing raw logs. The original diagnostic checkout/evidence remain preserved.
-The five earlier execution budgets are closed. The separate 2026-11-16 continuation
-below releases one sixth attempt for the reviewed correction, not an unchanged
-retry. No seventh attempt or live change is authorized.
+All six execution budgets are closed. No seventh attempt, unchanged retry,
+additional root-source push, relabel, merge or live change is authorized.
 Full recovery and the local incident remain open.
 Preserve the OC-1 outcome and regression matrix below. Activation settlement is
 not downstream task completion.
@@ -282,7 +282,8 @@ only that round, stops on failure and cancels owned active jobs at their cap.
 No unchanged retry, seventh attempt, cap extension, raw-log download, local
 application execution, new runner or worker is released. The same independent
 reviewer must review the actual sixth result before manager acceptance and merge.
-No result is claimed yet; the five failed histories remain unchanged.
+The actual result below closes this budget; the five earlier failed histories
+remain unchanged.
 
 Ordinary coordination found the desktop-managed CLI directory now at 2.3.0.
 This is not proof of a loaded plugin version or native recovery. The hosted
@@ -297,6 +298,49 @@ source-only disposition, not blanket compatibility or installed recovery.
 It does not retarget or block the current qualification. Actual 2.3.0 qualification,
 loaded runtime/plugin identity and the exact installation/restart/reload scope
 remain separate. No live-environment change or cleanup is authorized here.
+
+### Sixth actual result (2026-11-16)
+
+Exact published `f7fb80e4` has the same non-record source as reviewed `f80df956`.
+[Qualification](https://github.com/rore/Pallium/actions/runs/43855605873)
+failed at native validation, not package validation. Both exact baseline RED and
+candidate GREEN gates and both extractor/oracle preflights passed. The full package
+recorded 217 cases: 210 passed, zero failed and seven existing skips. All 43 required
+entries passed, including the unchanged scope-replacement contract.
+
+The selected native case ran unskipped and failed at
+`tests/test_opencode_native_wake_e2e.py:611`, `assert delivered(original)`, through
+the wrapper at line 190. The preceding blocked-provider event was observed, but
+the immediate public Relay readback was not delivered. Subsequent admission,
+ordinary-input coalescing, compaction/restore, non-replay and four NEW sequential
+automatic wakes were not reached. Cause, ACK failure, timing and flakiness remain
+unestablished. Of the 13 native fields, only host-version verification and owned
+drain are true; the other 11 are unestablished, not proven contract violations.
+Qualification HTTP25 was skipped.
+
+[Ordinary CI](https://github.com/rore/Pallium/actions/runs/43855585214) passed.
+Both Linux versions completed 9,142 passed, 106 skipped and two xfails. Both passed
+all 46 HTTP-file cases, exact HTTP25 names, 27 workflow and 19 protected-contract
+cases, plus both extractor/oracle checks. Windows smoke and all three governance
+runs passed. Previous capacity and dashboard cases passed in both current lanes;
+their historical causes remain unknown. All owned runs completed within the
+original caps without cancellation, timeout, retry or a remaining observer.
+
+The inspected safe qualification artifact is `14220892839`; source hashes, official
+2.2.7 pins, unchanged source/binary bookends and normal/final drain passed.
+Package and ordinary passes do not replace the failed native journey.
+The [same receipt](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488)
+retains all six results. The result-only record remains local and unpushed; PR410
+stays draft and unqualified. The same independent reviewer has the new actual-sixth
+evidence review; completed source and earlier result reviews are not repeated.
+
+Read-only discovery now checks the exact delivery prerequisite: the fixture sets
+its provider-entry event for every provider POST, but that alone does not identify
+the original Relay model request. The existing architect is checking pinned native
+call ordering; the developer traces the existing fixture/plugin claim/render/ACK
+paths. No provider/barrier cause or corrective edit is accepted yet. No assertion,
+timeout, diagnostic, runtime version, source or live-environment change is released
+by this discovery. Full recovery remains open.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
