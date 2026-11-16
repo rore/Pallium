@@ -286,12 +286,17 @@ No result is claimed yet; the five failed histories remain unchanged.
 
 Ordinary coordination found the desktop-managed CLI directory now at 2.3.0.
 This is not proof of a loaded plugin version or native recovery. The hosted
-campaign stays pinned to reviewed OpenCode 2.2.7. The manager has offered the
-existing architect a bounded read-only source-applicability comparison before
-later installed activation; no acceptance or result is inferred from sending
-that offer. It does not retarget or block the current qualification. Any actual
-2.3.0 qualification and exact installation/restart/reload scope remain separate.
-No live-environment change or cleanup is authorized by this continuation.
+campaign stays pinned to reviewed OpenCode 2.2.7. The existing architect completed
+the bounded source-applicability comparison against official 2.3.0 commit
+`a6b15d33daf6ab7d35569f6d711fdb630b9f04e7` and returned SOURCE APPLICABILITY GO:
+no concrete changed premise requiring an `f80df956` adaptation was found.
+Promotion, context/compaction and same-session settlement assumptions remain
+applicable. Metadata propagation, descendant reporting and incomplete-assistant
+replay have changes that still need runtime evidence. The manager accepts this
+source-only disposition, not blanket compatibility or installed recovery.
+It does not retarget or block the current qualification. Actual 2.3.0 qualification,
+loaded runtime/plugin identity and the exact installation/restart/reload scope
+remain separate. No live-environment change or cleanup is authorized here.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
