@@ -242,10 +242,11 @@ The manager accepts the evidence as a failed result, not recovery. The
 retains all five histories. A clean result-only successor remains unpushed; draft
 PR410 remains at `55d61d3f`. No root fix has merged or reached the installed host.
 
-The existing developer has adopted a source-only continuation for the failed
-registration contract. Source tracing shows the new shared wake-response guard
-rejecting a higher scope before the existing `remember()` reset can abort older
-requests. This identifies a correction direction, not a recovered runtime locator
+After the fifth failure, the developer adopted a source-only continuation for the
+registration contract. At failed candidate `9ba27e98`, `applyWakeResponse()` rejected
+a higher scope before calling the existing `remember()` reset. This trace describes
+that candidate, not the older plugin on main. It identified a correction direction,
+not a recovered runtime locator
 or exclusive campaign diagnosis. Restore valid monotonic registration invalidation
 through the existing reset path without accepting an old request's wake body under
 the new scope. Preserve the original test's unchanged-context, zero-ACK and
@@ -258,20 +259,23 @@ wake/null progress must not hide valid higher-scope invalidation. Discard that o
 request's wake body after reset; only a fresh new-scope request can obtain wake
 authority. Keep revision protection for all same-scope wake acceptance. The manager
 accepted and forwarded these findings for consolidation, not as source or runtime
-GO for the evolving correction. The unpublished correction now separates those
-freshness checks and fences stale rejection effects as well as wake acceptance.
-Both-writer caller schedules are authored but unexecuted. The same independent
-reviewer completed narrow SOURCE / CONTRACT GO at exact unpublished `f80df956`.
+GO for the evolving correction. At that source checkpoint, the then-unpublished
+`f80df956` correction separated those freshness checks and fenced stale rejection
+effects as well as wake acceptance. Both-writer caller schedules were authored
+but unexecuted. The same independent reviewer completed narrow SOURCE / CONTRACT
+GO at exact `f80df956`; its later publication is recorded below.
 The manager read and accepted that source disposition. Registration compatibility
 and ordering source gates are closed. That source-only disposition did not itself
 release another campaign. The local automatic-wake incident remains open.
 
 ### Bounded finish continuation (2026-11-16)
 
-The task owner requested continuation to finish the fix. The manager released one
+This section records a historical manager authorization, not permission created
+by the documentation PR. The task owner requested continuation to finish the fix.
+The manager released one
 new, sixth hosted attempt for exact source-reviewed `f80df956` or a record-only
-successor with identical non-record source. The existing developer has adopted
-that scope. It permits one normal fast-forward to the existing PR410 branch,
+successor with identical non-record source. The existing developer adopted
+that scope. It permitted one normal fast-forward to the existing PR410 branch,
 one automatic ordinary-CI round and one existing qualification-label cycle at the
 same immutable head. It does not permit another product or workflow edit.
 
