@@ -35,7 +35,7 @@
 
 **Approvals:** Approved by user 2026-11-15: "as i said, i approve in any case when we have bugs to fix". Reconfirmed standing human direction 2026-11-16: "don't ask for approvals for things around fixing bugs - you have ongoing approval". New manager-wake-restore-envelope-root-fix-20261116-01 read FULL through null explicitly authorizes this separate shared bugfix, existing architect narrow plan review then implementation without another manager/human prompt, up to two ordinary hosted15min cohorts RED then GREEN/full. No eighth OC1 campaign, new worker, native qualification, local app execution, live install/restart/config/DB/replay/cleanup or merge authority.
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Pickup / source isolation
@@ -50,7 +50,7 @@ Proposed minimum correction is local to _delivery_text: effective attempt from e
 
 Existing short restoration/idempotence tests miss exact rendered boundaries. Existing max2400/over2401, owner/stale/scope/terminal/expiry and all exact-claim/render-budget/JSON tests remain unchanged. Required new evidence is a tight long-prefix restoration failure on old sizing and pass on shared sizing, both before ACK and after ACK/status read, with no attempt or authority mutation. Actual incident context-response body remains unknown; no exclusive live cause or recovery claim.
 
-## Evidence / result review
+## Evidence / result review — initial pickup history
 
 Not executed. No local application import/test/collection/probe/native host or hosted run yet. Pending narrow plan review is the only implementation dependency; no routine human approval request.
 
@@ -77,3 +77,11 @@ Safe existing JUnits only downloaded. XML3.12 SHA256d9ebfebbbf59754b37bcae22a2c0
 Candidate677a4f8052152953c3f15079eccd551f4db60c79 implements only _delivery_text's presence-priority fallback and safe normalization. Existing claim_view/prospective increment, render_floor1/true, minimum/projection/JSON sizing, restore max_chars guard, all state/fence/ACK logic are unchanged. AST comparison verifies every other storage top-level node and all imports unchanged; test files remain byte-identical to test-first3b4fa826. Static AST/privacy/four-path scope/diff/selector pass; selector FULL, no local application execution. Genuine older boundary evidence reused after identical import graph/config/adapter/policy inputs; actual hosted import-linter is still required.
 
 SAME architect narrow independent actual patch/persistence and RED-evidence review requested once at exact677a4f80; pending is not SOURCE GO. Parent received the substantive partial RED result and its unrelated failure/long-RED evidence limits, not a request for another permission round. Redline correctly reports RED/persistence-review unsatisfied until actual review and its required existing policy metadata; no boundary violation. Blocked only on this uncovered patch review before the sole remaining GREEN publication, not on already-completed plan/HUMAN approval. No extra hosted round, native label/cycle, source widening or unrelated test repair is authorized.
+
+### Patch/persistence prerequisite COMPLETE — GREEN publication released
+
+Read FULL existing architect's actual patch/persistence GO through null at exact677a4f8052152953c3f15079eccd551f4db60c79. No blocking source finding; original plan GO reused. Reviewer inspected actual production/test diffs, all shared callers, full actual RED XMLs/hashes and run/job identities. Confirms explicit presence/null/invalid handling, safe-int/integral-float behavior, deliberate1/true floor and unchanged prospective sizing/state/guards/fences/ACK/budgets. Test source remains exact test-first3b4fa826. Actual RED remains only short/full ASCII claimed first-attempt; missing long RED is a reporting limit, not another required cohort. Unchanged Claude failure stays failed/unknown but is not a demonstrated relevant/critical blocker to the already-authorized corrected round. Parent independently gave the same steering; no new approval was requested.
+
+Source/persistence review is now COMPLETE, not pending. Record-only successors remain eligible if all non-record blobs equal677a4f80. Normal repository persistence-reviewed checkpoint metadata is required before the sole GREEN FF publication; this is not a qualification label, retry or native campaign. Preserve Windows-smoke-only reporting. Actual GREEN16 HTTP+29 normalization nodes/affected/full/Linux/Windows/governance evidence and later independent result review remain outstanding. No source/test repair or local application execution by reviewer or implementer during this closure.
+
+Fresh GREEN preflight confirms PR412 OPEN/draft/MERGEABLE at test-only3b4fa826, main071278d2 unchanged, normal FF ancestry, all non-record candidate/worktree source exact677a4f80. Applied existing persistence-reviewed policy label ONCE after actual patch GO (no provisioning/cycle/native qualification); preserve any resulting test-only-head governance event as auxiliary checkpoint evidence under the same bounded owner watch. Redline RED checkpoint satisfied/no boundary violation, Workflow static clean0, AST/privacy/diff/selector FULL unchanged. No local application execution. ONE remaining corrected-source FF/ordinary GREEN round now proceeds without another permission request; no third publication/retry.
