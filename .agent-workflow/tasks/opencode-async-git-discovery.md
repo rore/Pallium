@@ -35,7 +35,7 @@
 
 **Approvals:** Approved by user 2026-11-16: "you have approval to drive this till end". This minimal task-authorization excerpt preserves the existing approval; its full context remains private. The manager assigned this existing issue, accepted the narrow H1 marker ceiling and released the conditional hosted envelope below. No local application execution/live changes/cleanup/old OC1 retry or unapproved cap/job changes.
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Assignment and preserved work
@@ -261,3 +261,9 @@ Negative controls are authored inside the unchanged existing concurrent caller c
 Syntax-only and diff checks pass. Complete Git diff/reconstruction confirms that only this record and the V1 test file differ from dc051787, with the positive caller body and every other test unchanged. Case names/order, functional baseline and privacy pass. Whole-change Workflow is clean0; Redline is GRAY/advisory1 with zero violations/checkpoints using unchanged authenticated graph evidence, not a fresh graph run. The selector still reports FULL; no selected application command was executed. An initial read-only per-blob static check timed out before producing a verdict; its incomplete result was discarded and replaced by complete Git diff plus immutable-tree comparison.
 
 State returns to Blocked for the same reviewer's exact readiness-delta source review and the parent's changed-candidate validation disposition. Runtime success and execution cost remain unobserved. Published bb9, both exhausted admissions, prior HOLD/failure evidence and every production/workflow/native/HTTP blob remain unchanged. No push, run, label cycle, live operation or cleanup occurred.
+
+### Caller release-failure cleanup finding
+
+The same reviewer accepted the readiness fix in b304f7b4 and closed that original finding. SOURCE HOLD remains for one caller-cleanup P2: `run` calls the filesystem-backed `gate.release()` before turn release, callback joins and pin cleanup without a guarding `finally`. A release write failure can therefore strand the mocked Relay request even though the shared helper drains its child and restores built-ins. The mock does not use the HTTP abort signal to release its held turn. This is a static exception-path finding, not an observed hosted failure.
+
+The existing bounded local authority covers this exact correction. Before editing, record the minimum change: nest caller turn release, both callback joins and pin cleanup in a `finally` independent of gate-release success. Preserve the release error after draining. Extend the existing negative subcases with a failed release while real concurrent callbacks are held, requiring both captures/joins, pin cleanup, owned-child close and built-in restoration before the named release error returns. Only this Work Record and the V1 test file may change. Keep every readiness control and functional assertion; no new named case, framework, sleep, inventory, cap or production change. Exact narrow successor review and a new parent validation disposition remain required; no publication or runtime authority is added.
