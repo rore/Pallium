@@ -673,6 +673,64 @@ def test_opencode_primary_provider_actual_first_gate_and_public_oracle() -> None
                 oracle(first, "ses_fixture", delivery, prompts)
 
 
+def test_opencode_session_list_actual_short_page_contract() -> None:
+    """Exercise the native fixture's real request and sole-session predicate."""
+    import ast
+    import base64
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from urllib.parse import parse_qs, urlsplit
+    from urllib.request import Request
+
+    source = (Path(__file__).parents[1] / "tests/test_opencode_native_wake_e2e.py").read_text(encoding="utf-8")
+    functions = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.FunctionDef)
+                 and node.name in ("_assert_session_list", "api")]
+    assert len(functions) == 2
+    seen = []
+    page = {"data": []}
+    def urlopen(request, timeout):
+        assert timeout == 45
+        seen.append(request)
+        return nullcontext(SimpleNamespace(read=lambda: json.dumps(page).encode()))
+    namespace = {"base64": base64, "json": json, "Request": Request, "urlopen": urlopen,
+                 "url": "http://fixture.invalid", "coalesced": True}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), "<actual-session-list>", "exec"), namespace)
+    api, validate = namespace["api"], namespace["_assert_session_list"]
+    for page, expected in (({"data": []}, []),
+                           ({"data": [{"id": "ses_fixture"}], "cursor": {"next": "opaque-resume"}}, ["ses_fixture"])):
+        actual = api("GET", "/api/session")
+        validate(actual, expected)
+        assert actual == page
+        request = seen[-1]
+        parsed = urlsplit(request.full_url)
+        assert request.get_method() == "GET" and request.data is None
+        assert parsed.path == "/api/session" and parse_qs(parsed.query) == {"limit": ["2"]}
+    for page, expected in (
+        ({"data": [{"id": "ses_other"}]}, ["ses_fixture"]),
+        ({"data": []}, ["ses_fixture"]),
+        ({"data": [{"id": "ses_fixture"}]}, []),
+        ({"data": [{"id": "ses_fixture"}, {"id": "ses_other"}]}, ["ses_fixture"]),
+        ({"data": [{"id": "ses_other"}, {"id": "ses_fixture"}]}, ["ses_fixture"]),
+        ({"data": [{"id": "ses_fixture"}] * 2}, ["ses_fixture"]),
+        ({"data": [{"id": "ses_fixture"}] * 3}, ["ses_fixture"]),
+        (None, []), ([], []), ({}, []), ({"data": None}, []), ({"data": {}}, []),
+        ({"data": [None]}, ["ses_fixture"]), ({"data": [{}]}, ["ses_fixture"]),
+        ({"data": [{"id": None}]}, ["ses_fixture"]), ({"data": [{"id": 1}]}, ["ses_fixture"]),
+    ):
+        with pytest.raises(AssertionError):
+            validate(api("GET", "/api/session"), expected)
+    for coalesced, method, path, expected_query in (
+        (True, "GET", "/api/session", "limit=2"),
+        (False, "GET", "/api/session", ""),
+        (True, "POST", "/api/session", ""),
+        (True, "GET", "/api/session/ses_fixture", ""),
+    ):
+        namespace["coalesced"] = coalesced
+        api(method, path)
+        parsed = urlsplit(seen[-1].full_url)
+        assert parsed.path == path and parsed.query == expected_query
+
+
 def test_opencode_settlement_qualification_inventories_every_new_case_and_preserved_negative() -> None:
     import yaml
 
