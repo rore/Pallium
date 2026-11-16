@@ -17,6 +17,43 @@ GUIDANCE = (
 SCOPE = {"container_ref": "git:example.test/envelope"}
 
 
+@pytest.mark.parametrize("view,attempt,possible", [
+    ({}, "unknown", "unknown"),
+    ({"attempts": 1}, "1", "false"),
+    ({"attempts": 2}, "2", "true"),
+    ({"attempts": 1.0}, "1", "false"),
+    ({"attempts": 2**53 - 1}, str(2**53 - 1), "true"),
+    *[({"attempts": value}, "unknown", "unknown")
+      for value in (None, True, False, 0, -1, 1.5, float("inf"), float("nan"), "1", 2**53)],
+    ({"attempts": 2, "claim_attempt": 1}, "1", "false"),
+    ({"attempts": 1, "claim_attempt": 2.0}, "2", "true"),
+    *[({"attempts": 2, "claim_attempt": value}, "unknown", "unknown")
+      for value in (None, True, "1", 0, 1.5, 2**53)],
+    ({"claim_attempt": 1, "possible_redelivery": True}, "1", "true"),
+    ({"attempts": 2, "possible_redelivery": False}, "2", "false"),
+    *[({"attempts": 2, "possible_redelivery": value}, "2", "unknown")
+      for value in (None, "true", 1)],
+    ({"claim_attempt": None, "possible_redelivery": True}, "unknown", "unknown"),
+])
+def test_storage_envelope_normalizes_attempt_presence_without_changing_projection_floor(view, attempt, possible):
+    from types import SimpleNamespace
+    from storage.sqlite_relay import _delivery_text
+
+    message = SimpleNamespace(id="message-fixture", sender_runtime="codex", sender_session_ref="source",
+                              created_at=None, in_reply_to=None)
+    delivery = SimpleNamespace(id="delivery-fixture")
+    envelope = {"payload": "界😀", "content_truncated": False}
+    text = _delivery_text(delivery, message, {**envelope, **view})
+    assert f"claim_attempt: {attempt}\npossible_redelivery: {possible}\n" in text
+    floor = _delivery_text(delivery, message, {
+        **envelope, "claim_attempt": 1, "possible_redelivery": True,
+    })
+    first = _delivery_text(delivery, message, {
+        **envelope, "claim_attempt": 1, "possible_redelivery": False,
+    })
+    assert len(floor) + 1 == len(first), "explicit lower-bound projection must not be recomputed"
+
+
 def _send(client, payload="Inspect target state 😀", *, message_id=None):
     for runtime, session in (("codex", "sender"), ("codex", "target")):
         response = client.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **SCOPE})

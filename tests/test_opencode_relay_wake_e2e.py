@@ -231,6 +231,112 @@ def test_context_exact_claim_ack_and_response_loss_are_idempotent(client, monkey
 
 
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+@pytest.mark.parametrize("alphabet", ["ascii", "unicode"])
+@pytest.mark.parametrize("truncated", [False, True], ids=["full", "prefix"])
+@pytest.mark.parametrize("attempt", [1, 2], ids=["first", "redelivery"])
+@pytest.mark.parametrize("acked", [False, True], ids=["claimed", "acked"])
+def test_context_restore_preserves_exact_envelope_budget(
+    client, monkeypatch, relay_admission_clock, alphabet, truncated, attempt, acked,
+):
+    from integrations.codex.hooks.common import format_relay
+    import storage.sqlite_relay as sqlite_relay
+
+    real_now = sqlite_relay._now
+    clock = [real_now()]
+    monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: real_now(value) if value is not None else clock[0])
+    base = _setup(client, relay_admission_clock=relay_admission_clock)
+    unit = "x" if alphabet == "ascii" else "界😀"
+    payload = unit * (3000 if truncated else 4)
+    sent = _send(client, base, payload, relay_admission_clock=relay_admission_clock)
+    assert sent.status_code == 200, sent.text
+    message = sent.json()
+    wake = _wake(client, base, "poll").json()["wake"]
+    snap = _snapshot(base, wake)
+    first = _wake(client, base, "context", **snap, max_chars=2400)
+    assert first.status_code == 200, first.text
+    delivery, = first.json()["deliveries"]
+    if attempt == 2:
+        # Recover a genuine expired claim through the existing HTTP lifecycle.
+        for _ in range(4):
+            clock[0] += timedelta(seconds=14)
+            assert _wake(client, base, "poll").status_code == 200
+        clock[0] += timedelta(seconds=5)
+        assert _wake(client, base, "poll").status_code == 200
+        assert _wake(client, base, "context", **snap).json()["deliveries"] == []
+        assert _wake(client, base, "terminal", **snap, terminal_message_id="msg_expired_prefix").status_code == 200
+        clock[0] += timedelta(seconds=3)
+        wake = _wake(client, base, "poll").json()["wake"]
+        assert wake["generation"] == snap["generation"] + 1
+        snap = _snapshot(base, wake)
+        recovered = _wake(client, base, "context", **snap, max_chars=2400)
+        assert recovered.status_code == 200, recovered.text
+        previous = delivery
+        delivery, = recovered.json()["deliveries"]
+        assert delivery["delivery_id"] == previous["delivery_id"]
+        assert delivery["claim_token"] != previous["claim_token"]
+    assert delivery["attempts"] == attempt
+    assert delivery["content_truncated"] is truncated
+    assert delivery["payload"] == payload[:len(delivery["payload"])]
+    assert delivery["payload_offset"] == 0 and delivery["payload_total_chars"] == len(payload)
+    assert delivery["next_offset"] == (len(delivery["payload"]) if truncated else None)
+    rendered, emitted = format_relay([delivery])
+    assert emitted == [delivery]
+    budget = len(rendered)  # Independent caller renderer, not storage's sizing helper.
+    assert 0 < budget <= 2400
+    if truncated:
+        assert budget == 2400, "long-prefix witness must fill the initial budget"
+    assert f"claim_attempt: {attempt}\npossible_redelivery: {str(attempt > 1).lower()}" in rendered
+    if acked:
+        ack = client.post("/relay/deliveries/ack", json={
+            "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"], **SCOPE,
+        })
+        assert ack.status_code == 200, ack.text
+
+    path = "/relay/messages/" + message["message_id"]
+    before = client.get(path, params=SCOPE)
+    assert before.status_code == 200, before.text
+    status, = before.json()["deliveries"]
+    assert status["state"] == ("delivered" if acked else "claimed")
+    assert status["attempts"] == attempt
+    assert status["claim_token"] == (None if acked else delivery["claim_token"])
+    offset = delivery["next_offset"] if truncated else 0
+    page = client.get(path, params={**SCOPE, "offset": offset, "page_size": 31})
+    assert page.status_code == 200, page.text
+    assert page.json()["payload_offset"] == offset
+    assert page.json()["payload"] == payload[offset:offset + 31]
+    below = _wake(client, base, "context", **snap, max_chars=budget - 1)
+    assert below.status_code == 200, below.text
+    assert below.json()["deliveries"] == [] and below.json()["restored"] is False
+    assert _wake(client, base, "context", **snap, max_chars=2401).status_code == 422
+
+    stable = ("delivery_id", "message_id", "attempts", "payload", "payload_offset",
+              "payload_total_chars", "content_truncated", "next_offset", "created_at")
+    for _ in range(3):
+        restored = _wake(client, base, "context", **snap, max_chars=budget)
+        assert restored.status_code == 200, restored.text
+        rows = restored.json()["deliveries"]
+        assert len(rows) == 1, "exact-budget saved envelope must be reusable without a new claim"
+        current, = rows
+        assert restored.json()["restored"] is acked
+        assert {key: current[key] for key in stable} == {key: delivery[key] for key in stable}
+        assert current["claim_token"] == (None if acked else delivery["claim_token"])
+        assert current["receipt"] == (None if acked else delivery["receipt"])
+        # Formatting-only copy: an old token is neither displayed nor submitted as authority.
+        text, _ = format_relay([{**current, "claim_token": delivery["claim_token"]}])
+        assert text == rendered
+        assert client.get(path, params=SCOPE).json() == before.json(), "restore/status reads must not mutate delivery state"
+    if not acked:
+        assert client.post("/relay/deliveries/ack", json={
+            "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"], **SCOPE,
+        }).status_code == 200
+    final, = client.get(path, params=SCOPE).json()["deliveries"]
+    assert final["state"] == "delivered" and final["attempts"] == attempt
+    assert _wake(client, base, "terminal", **snap, terminal_message_id="msg_prefix_finished").status_code == 200
+    assert _wake(client, base, "context", **snap, max_chars=budget).json()["deliveries"] == []
+    assert _wake(client, base, "detach").status_code == 200
+
+
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_expired_claim_lease_can_be_recovered_through_context(client, monkeypatch, relay_admission_clock):
     import storage.sqlite_relay as sqlite_relay
 
