@@ -271,7 +271,7 @@ export default {
         if (!await owned(id, item, signal) || !current()) return;
         if (!observed(rows(await ctx.session.context({ sessionID: id })))) return;
         if (!await owned(id, item, signal) || !current()) return;
-        await wakeRequest(id, item, "admitted", fields);
+        if (wake.admitted !== true) await wakeRequest(id, item, "admitted", fields);
         if (!await owned(id, item, signal) || !current()) return;
         await ctx.session.wait({ sessionID: id });
         if (!await owned(id, item, signal) || !current()) return;

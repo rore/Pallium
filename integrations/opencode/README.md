@@ -181,6 +181,10 @@ delivery. The first later idle must have a distinct valid ID and outcome exactly
 `succeeded`, `failed` or `interrupted`. The plugin rechecks its current session,
 location, endpoint, container and generations before the existing terminal
 request. The backend still checks the current owner and exact wake binding.
+If the validated current snapshot already says `admitted: true`, the candidate
+skips the redundant admission write but still waits and proves terminal state.
+A sent or lost response never sets that flag locally. An unresolved false
+snapshot keeps the existing admission path; this is not global one-shot deduplication.
 
 This settles activation, not the requested business task. Failed or interrupted
 work is not reported as successful. ACK, wait alone, elapsed time, an unknown or
@@ -213,7 +217,7 @@ Backend transactions fence backend changes; they do not create an atomic native
 snapshot or undo an already committed request. Claim/ACK, expiry, original
 delivery priority and continuation rules stay unchanged.
 
-These paths are source candidates, not runtime-qualified recovery. All seven
+These paths are source candidates, not runtime-qualified recovery. All eight
 qualification campaigns failed. The first two skipped native; the third failed
 native with its predicate/cause still unknown. The fourth and fifth failed the
 package and skipped native. The sixth passed the full package and ordinary CI
@@ -225,7 +229,13 @@ full package and ordinary controls but failed a session-list precondition before
 Relay registration or the first send. Its exact failing conjunct/cursor value
 remains unknown. Official 2.3.0 source shows that a next cursor is a resume token,
 even on the final singleton page. The corrected fixture uses an unfiltered,
-bounded short page instead; native recovery qualification is still pending.
+bounded short page instead. The eighth passed both full Linux lanes, Windows
+smoke, controls and package, then failed the unchanged native admission-count
+assertion: two successful admitted requests versus one terminal for the original
+delivery. That does not prove duplicate native prompts or payload replay.
+Later ACK/payload, reload/compaction, pre-U non-replay and four NEW wake checks
+were not reached. The candidate now guards known admission at the shared caller;
+new regression execution and native recovery qualification are still pending.
 Historical failures and
 partial passes remain in the [result receipt](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488).
 Earlier 2.2.7 discovery-only evidence does not qualify settlement or recovery

@@ -69,6 +69,7 @@ jobs:
         fresh supersession rechecks raw evidence across final asynchronous fences
         fresh supersession fences lifecycle and backend changes during settlement
         fresh supersession consumes uncertain terminal without stale follow-up
+        known admitted wake reentry preserves admission and uncertainty
       HTTP_CASES: |
         test_activation_settlement_preserves_original_authority_before_backlog[semantic-delivered]
         test_activation_settlement_preserves_original_authority_before_backlog[semantic-pending]
@@ -186,17 +187,18 @@ jobs:
           Push-Location $baseline
           try {
             # BASELINE is immutable pre-fix93f497bf, not the published040f source base.
-            node --test --test-name-pattern='^(coalesced native wake settles from exact outcome-bearing idle: succeeded|fresh supersession settles exact frozen generation: succeeded)$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/baseline.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/baseline.log"
+            node --test --test-name-pattern='^(coalesced native wake settles from exact outcome-bearing idle: succeeded|fresh supersession settles exact frozen generation: succeeded|known admitted wake reentry preserves admission and uncertainty)$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/baseline.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/baseline.log"
             $exit = $LASTEXITCODE
           } finally { Pop-Location }
           "BASELINE_EXIT=$exit" >> $env:GITHUB_ENV
           [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/baseline.xml" -Raw
           $failed = @($xml.SelectNodes('//testcase[failure]'))
           $selected = @($xml.SelectNodes('//testcase[not(skipped)]'))
-          if ($exit -ne 1 -or $selected.Count -ne 2 -or $failed.Count -ne 2 -or $xml.SelectNodes('//testcase[error]').Count) { throw 'Unexpected baseline outcome; all later phases stop' }
+          if ($exit -ne 1 -or $selected.Count -ne 3 -or $failed.Count -ne 3 -or $xml.SelectNodes('//testcase[error]').Count) { throw 'Unexpected baseline outcome; all later phases stop' }
           $expected = @{
             'coalesced native wake settles from exact outcome-bearing idle: succeeded' = 'coalesced exact wake must settle activation without replay'
             'fresh supersession settles exact frozen generation: succeeded' = 'fresh promoted ordinary work must release the missing admitted anchor'
+            'known admitted wake reentry preserves admission and uncertainty' = 'known admitted wake must not rewrite admission'
           }
           foreach ($name in $expected.Keys) {
             $case = @($selected | Where-Object { $_.name -ceq $name })
@@ -211,13 +213,13 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START -gt 480) { throw 'Insufficient remaining qualification budget' }
-          node --test --test-name-pattern='^(coalesced native wake settles from exact outcome-bearing idle: succeeded|fresh supersession settles exact frozen generation: succeeded)$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/focused.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/focused.log"
+          node --test --test-name-pattern='^(coalesced native wake settles from exact outcome-bearing idle: succeeded|fresh supersession settles exact frozen generation: succeeded|known admitted wake reentry preserves admission and uncertainty)$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/focused.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/focused.log"
           $exit = $LASTEXITCODE
           "FOCUSED_EXIT=$exit" >> $env:GITHUB_ENV
           [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/focused.xml" -Raw
           $selected = @($xml.SelectNodes('//testcase[not(skipped)]'))
-          if ($exit -ne 0 -or $selected.Count -ne 2 -or $xml.SelectNodes('//testcase[failure or error]').Count) { throw 'Corrected focused regressions did not both pass' }
-          foreach ($name in @('coalesced native wake settles from exact outcome-bearing idle: succeeded', 'fresh supersession settles exact frozen generation: succeeded')) {
+          if ($exit -ne 0 -or $selected.Count -ne 3 -or $xml.SelectNodes('//testcase[failure or error]').Count) { throw 'Corrected focused regressions did not all pass' }
+          foreach ($name in @('coalesced native wake settles from exact outcome-bearing idle: succeeded', 'fresh supersession settles exact frozen generation: succeeded', 'known admitted wake reentry preserves admission and uncertainty')) {
             $case = @($selected | Where-Object { $_.name -ceq $name })
             if ($case.Count -ne 1) { throw "Corrected focused regression did not pass exactly once: $name" }
           }

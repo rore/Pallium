@@ -288,15 +288,17 @@ def test_opencode_settlement_qualification_keeps_exact_regression_and_bounded_na
     assert steps["package"]["timeout-minutes"] == 2
     focused = "coalesced native wake settles from exact outcome-bearing idle: succeeded"
     root_focused = "fresh supersession settles exact frozen generation: succeeded"
+    admission_focused = "known admitted wake reentry preserves admission and uncertainty"
     for phase in ("baseline", "focused"):
-        assert f"--test-name-pattern='^({focused}|{root_focused})$'" in steps[phase]["run"]
+        assert f"--test-name-pattern='^({focused}|{root_focused}|{admission_focused})$'" in steps[phase]["run"]
         assert "startup empty discovery" not in steps[phase]["run"]
     assert "coalesced exact wake must settle activation without replay" in steps["baseline"]["run"]
     assert "fresh promoted ordinary work must release the missing admitted anchor" in steps["baseline"]["run"]
-    assert "$exit -ne 1 -or $selected.Count -ne 2 -or $failed.Count -ne 2" in steps["baseline"]["run"]
+    assert "known admitted wake must not rewrite admission" in steps["baseline"]["run"]
+    assert "$exit -ne 1 -or $selected.Count -ne 3 -or $failed.Count -ne 3" in steps["baseline"]["run"]
     assert "$case.Count -ne 1" in steps["baseline"]["run"] and "[regex]::Escape($expected[$name])" in steps["baseline"]["run"]
-    assert "$selected.Count -ne 2" in steps["focused"]["run"] and "$case.Count -ne 1" in steps["focused"]["run"]
-    for name in (focused, root_focused):
+    assert "$selected.Count -ne 3" in steps["focused"]["run"] and "$case.Count -ne 1" in steps["focused"]["run"]
+    for name in (focused, root_focused, admission_focused):
         assert name in steps["baseline"]["run"] and name in steps["focused"]["run"]
     preflight = steps["package"]["run"]
     for name in ("test_opencode_qualification_executes_embedded_failure_locator", "test_opencode_recovery_payload_oracle_rejects_extra_presentation"):
@@ -758,7 +760,9 @@ def test_opencode_settlement_qualification_inventories_every_new_case_and_preser
         "fresh supersession rechecks raw evidence across final asynchronous fences",
         "fresh supersession fences lifecycle and backend changes during settlement",
         "fresh supersession consumes uncertain terminal without stale follow-up"))
-    assert len(cases) == len(set(cases)) == 43 and set(cases) == expected
+    assert len(expected) == 43, "preserve all original settlement and fresh-witness cases"
+    expected.add("known admitted wake reentry preserves admission and uncertainty")
+    assert len(cases) == len(set(cases)) == 44 and set(cases) == expected
     http_cases = workflow["jobs"]["qualify"]["env"]["HTTP_CASES"].splitlines()
     expected_http = {f"test_activation_settlement_preserves_original_authority_before_backlog[semantic-{state}]"
                      for state in ("delivered", "pending", "claimed", "expired")}
