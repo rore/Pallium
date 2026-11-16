@@ -140,7 +140,8 @@ diagnostic hunks were integrated without replacing the root inventories or
 publishing raw logs. The original diagnostic checkout/evidence remain preserved.
 The six earlier execution budgets are closed. The separate staged seventh budget
 below releases one reviewed-source publication and conditional qualification,
-not an unchanged retry. No eighth attempt or live change is authorized.
+not an unchanged retry. Its old budget releases no eighth attempt or live change;
+the later night continuation below is a separate, conditional authorization.
 Full recovery and the local incident remain open.
 Preserve the OC-1 outcome and regression matrix below. Activation settlement is
 not downstream task completion.
@@ -548,9 +549,44 @@ regression from the read-only formatter change; its cause remains unresolved and
 stays a separate follow-up. This does not assert causal independence or flakiness.
 Fresh GitHub checks found no main protection or applicable branch rules requiring
 the failed status. No check is relabeled, test weakened or protection bypassed.
-The existing developer is released for normal exact-head merge after refreshing
-reviews, identity and main compatibility. No extra source push or rerun is needed.
-Installed activation remains separately gated.
+PR412 merged normally as `09951d57e635808ed77971166bc92218af8699d7` at
+16:24:57 UTC. The manager independently verified GitHub's merged state, fetched
+main and checked that the merged storage fix and both test files are byte-identical
+to the reviewed candidate. No extra source push, rerun or administrative override
+was used. Installed activation remains separately gated; this merge alone does
+not close the user-visible incident or OC-1.
+
+### Night continuation — remaining OC-1 recovery
+
+After PR412 merged, the manager assigned the same developer and architect the
+next existing bug under the user's instruction to finish and merge the fix list
+without further routine approvals. All seven old native campaigns remain failed.
+First settle the exact released 2.3.0 session-list/cursor contract behind the
+seventh fixture precondition. Prefer an explicit bounded short-page proof of a
+sole fresh session if supported by that source, otherwise the smallest supported
+bounded traversal. Do not infer the failed conjunct from the sanitized summary,
+drop the fresh-session requirement, add waits or weaken the original native tail.
+
+The same Work Record must capture the new assumption and review before edits.
+Preserve the reviewed root plugin and original immediate-delivery-through-EOF,
+pre-U non-replay and four-NEW-wake assertions. Main now includes the independently
+accepted shared renderer fix; combined-source identity must acknowledge it rather
+than claiming every backend file is still the old frozen version.
+
+After actual narrow plan/API and patch/source GO, this separate authority permits
+one materially corrected eighth campaign: one normal PR410 publication, one
+15-minute ordinary stage, then one existing 2.3.0 label admission at the same head
+only after relevant controls, affected coverage, a complete full non-slow lane,
+Windows smoke and governance satisfy the reviewed gate. Disconnected noncritical
+ordinary failures retain honest dispositions, not blanket holds. Native validation
+keeps all original 900/120/120/60-second caps, entry guards, full217/all43,
+native13/HTTP25, fail-stop, source/binary bookends and owned drain. Native journey
+failures remain directly relevant; no partial result can qualify recovery.
+No ninth or unchanged retry, extra source push, new workflow/worker, local
+application execution, live installation/restart, queue mutation, replay or cleanup
+is released. Concrete unsupported behavior is a blocker for that slice, not a
+reason to stop independent OC-4/OC-6 work. Source proof and plan are pending;
+no eighth run or recovery is claimed.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
