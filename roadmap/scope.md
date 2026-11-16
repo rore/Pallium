@@ -47,7 +47,33 @@ Shipped since last major scope update:
 - **Shared prompt-role governance**: contract ownership for `write_extraction`, `write_enrichment`, `query_ambiguity_resolution`
 - **Live improvement loop**: drift metrics, shadow routing comparison, replay-promotion tooling
 
-Current focus — Relay reliability (reconciled 2026-09-14):
+Immediate priority — local service reliability (2026-11-16):
+
+The user prioritizes reliable everyday service over further qualification campaigns
+or feature expansion. Separate intermittent service reachability, failed Relay
+context lookups and stalled automatic activation; their shared cause is unproven.
+The manager owns incident triage and verified follow-through. The existing
+OpenCode owner implements the shared restore-envelope fix; PR410's failed
+qualification history remains separate. Start from retained monitor and incident
+evidence. The user reaffirmed standing bug-fix approval: routine bounded
+diagnostics proceed without another approval loop. Installation, restart
+and other persistent environment changes remain separately gated.
+Health and ACK are not recovery: require the affected caller journey to work again
+without replay or weakened safeguards.
+
+Night delivery authority (2026-11-16): finish, review and merge the current fix,
+then continue the existing bug list without further routine human approval.
+Keep one accountable owner per fix and verify that dependencies actually resume.
+Do not hold the bounded fix for disconnected or noncritical test failures without
+demonstrated relevant risk; retain their actual results and unresolved causes.
+Required tests and protections are not weakened or reported as passed.
+After PR412, resume the existing OC-1 recovery work, then OC-4/OC-6 and reconcile
+the remaining seven-area reliability follow-up list in its owning feature.
+Use the existing records, not a new queue. Unsupported upstream capabilities,
+unapproved installed operations and cancelled cleanup stay explicit blockers,
+not reasons to stop independent source fixes or expand into new features.
+
+Current focus — Relay reliability (prior sequence reconciled 2026-09-14):
 
 `add-wake-first-relay-delivery` is the first execution item for Relay
 reliability and new wake-first activation qualification. Its current owned
