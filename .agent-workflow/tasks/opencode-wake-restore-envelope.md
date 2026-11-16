@@ -35,7 +35,7 @@
 
 **Approvals:** Approved by user 2026-11-15: "as i said, i approve in any case when we have bugs to fix". Reconfirmed standing human direction 2026-11-16: "don't ask for approvals for things around fixing bugs - you have ongoing approval". New manager-wake-restore-envelope-root-fix-20261116-01 read FULL through null explicitly authorizes this separate shared bugfix, existing architect narrow plan review then implementation without another manager/human prompt, up to two ordinary hosted15min cohorts RED then GREEN/full. No eighth OC1 campaign, new worker, native qualification, local app execution, live install/restart/config/DB/replay/cleanup or merge authority.
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Pickup / source isolation
@@ -71,3 +71,9 @@ Ordinary43897548351 at test-only3b4fa826/attempt1 FAILED; governance43897548567 
 Linux3.12/job133405214385 stopped earlier at unchanged test_restricted_resume_fences_inflight_until_normal_turn_ack[accepted], tests/test_claude_wake_durability.py:713, expected delivered but observed claimed. Production and that test are byte-identical to main at this RED head. No cause, independence or flakiness claim; no repair/weakening/retry outside scope. This is not accepted as the target regression or a green lane. Preserve it and inspect its actual result in the single already-authorized corrected GREEN/full round.
 
 Safe existing JUnits only downloaded. XML3.12 SHA256d9ebfebbbf59754b37bcae22a2c0e6f4fb073c80731603d8294e6854b9a3e891/artifact14239788087 API digest701b4a5142bd65ef04f28e05753e11db5d3e81ea8f3629f0a31110573990b27d. XML3.13 SHA25643e555d3c907e96897c361fe27b65031e85442e68f147a8f4597da0deca74462/artifact14240946160 API digestd1d57babe80c7b7cd2689346dde972ec9f79cd6f0925bdb693113096b3ca647d. Both owned runs completed before original15:48:06 UTC cap; no cancellation/retry/extra observer. Budget remaining: ONE corrected-source GREEN cohort only. Missing actual long-prefix RED is an explicit evidence limit, not retroactively claimed from the short witness; source sizing analysis predicts the same extra8 characters for attempt1.
+
+### Minimal shared correction / independent patch review
+
+Candidate677a4f8052152953c3f15079eccd551f4db60c79 implements only _delivery_text's presence-priority fallback and safe normalization. Existing claim_view/prospective increment, render_floor1/true, minimum/projection/JSON sizing, restore max_chars guard, all state/fence/ACK logic are unchanged. AST comparison verifies every other storage top-level node and all imports unchanged; test files remain byte-identical to test-first3b4fa826. Static AST/privacy/four-path scope/diff/selector pass; selector FULL, no local application execution. Genuine older boundary evidence reused after identical import graph/config/adapter/policy inputs; actual hosted import-linter is still required.
+
+SAME architect narrow independent actual patch/persistence and RED-evidence review requested once at exact677a4f80; pending is not SOURCE GO. Parent received the substantive partial RED result and its unrelated failure/long-RED evidence limits, not a request for another permission round. Redline correctly reports RED/persistence-review unsatisfied until actual review and its required existing policy metadata; no boundary violation. Blocked only on this uncovered patch review before the sole remaining GREEN publication, not on already-completed plan/HUMAN approval. No extra hosted round, native label/cycle, source widening or unrelated test repair is authorized.
