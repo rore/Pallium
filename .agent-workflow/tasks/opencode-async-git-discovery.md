@@ -35,7 +35,7 @@
 
 **Approvals:** Approved by user 2026-11-16: "you have approval to drive this till end". This minimal task-authorization excerpt preserves the existing approval; its full context remains private. The manager assigned this existing issue, accepted the narrow H1 marker ceiling and released the conditional hosted envelope below. No local application execution/live changes/cleanup/old OC1 retry or unapproved cap/job changes.
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Assignment and preserved work
@@ -113,7 +113,7 @@ Reviewer explicitly accepts this ordered real-child/production-caller evidence a
 
 ## Current next action
 
-Prepare clean publication snapshots from current origin/main: sanitized record first, reviewed test snapshot second, then reviewed product/workflow/README snapshot. Recompute exact nonrecord identity and actual whole-change preflights. Parent then verifies final safe ancestry before the single conditional publication/hosted sequence. No local application execution.
+Clean publication snapshots and local static preflights are complete. Parent to finish final safe-ancestry acceptance of the immutable candidate, then proceed with the already-authorized single publication/ordinary cohort and conditional same-head qualification. Independent actual-result review and combined acceptance remain. No new plan, source or human approval gate is requested.
 
 Static pre-review checks PASS for exact baseline/context/relationships, first-step Workflow ordering, scope/privacy and unchanged product/test/workflow/README/old OC1 record against9ab. Current self confirmed unnamed; exact Minimap CLI tuple matches existing explicit feature association, reused without duplicate attachment. Intended-path Redline GRAY/no boundary/checkpoint/protected-path edit, with High judgment for authority/proof risk. Static Workflow initially blocks on the not-yet-committed new baseline and the intentionally pending High technical plan review; first record commit resolves only baseline provenance, not review. No application code imported or tests executed. Evidence stays ignored under build/oc6-plan-20261116/.
 
@@ -186,3 +186,15 @@ The public sequence is reconstructed packaging: sanitized record, reviewed test 
 Exact SOURCE GO reuse requires SHA256 79270e3c58021d7e0e3907add1a79e6241ae4403b27ebd7dd4b9af37280863f3 over raw NUL-terminated `git ls-tree -rz` records excluding only this owning Work Record. This covers every other tracked path, mode and blob ID in order, including final NUL. Original full tree is e917cc0efc3c5f8e10d01ab2f1697374e6343136. No CRLF or partial-file equivalence is substituted.
 
 The canonical roadmap still describes OC-6 as awaiting implementation. Authored SOURCE GO does not establish runtime completion. Parent owns that reconciliation and final feature acceptance; no worker roadmap edit or completed-feature claim is made here.
+
+## Publication verification receipt
+
+The reconstructed sequence is record0763e3b2, testsc0cf0f8d, product/workflow/README8c4c9cfa, then this record-only receipt. All descend directly from public main9ab through single-parent commits. No private authored commit is an ancestor. The private authored branch, original test-first commits and evidence remain unchanged; no merge, cherry-pick, reset, force push or cleanup was used.
+
+Independent exact PATCH SOURCE GO at e5614264 found no blocking product/test/workflow issue. The final publication's complete nonrecord tree matches its reviewed raw-record SHA256 above, including modes, all paths, blob IDs, order and final NUL. Every new public record revision passes the privacy scan and retains the exact functional baseline. Baseline source and envelope provenance are safe projections, not changed requirements or invented approvals.
+
+Actual whole-change Redline is GRAY/advisory1, with zero boundary violations and zero checkpoints, using the authenticated unchanged-graph reuse described above. Workflow is clean0 with the corrected existing approval format. Both ran with application imports denied. Selector is FULL and selects `python -m pytest tests/ -x -q`; that application command has not run locally.
+
+All six changed JavaScript modules and the inline H2 child pass syntax-only checks. Changed Python and embedded exporter AST checks pass. All qualification PowerShell blocks parse without execution. Original native/HTTP files and phases, original3/all44 plus strict4/all45, separate async18 inventory and original caps are verified unchanged or exactly mapped. Evidence is retained under ignored `build/oc6-publication-20261116/`.
+
+State is Blocked only on the parent's final safe-ancestry acceptance and the pending hosted runtime/result gates. No publication, ordinary cohort, qualification label/cycle, local application import/test/probe, native host or installed operation has occurred. The bounded hosted budget is unspent.
