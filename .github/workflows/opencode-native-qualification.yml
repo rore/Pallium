@@ -70,6 +70,26 @@ jobs:
         fresh supersession fences lifecycle and backend changes during settlement
         fresh supersession consumes uncertain terminal without stale follow-up
         known admitted wake reentry preserves admission and uncertainty
+        Git discovery yields to unrelated caller work while child waits
+      ASYNC_CASES: |
+        async Git shares callback facts without merging container and repository semantics
+        async Git enforces byte bounds and ignores stderr rather than truncating identity
+        async Git distinguishes pre-abort, cancellation, signal and timeout outcomes
+        async actor resolution checks lifetime and keeps actor and container pins coherent
+        async Git preserves root validation and first-root container truncation
+        async orientation preserves command order, token order, Unicode, redaction and eight stems
+        async identity follows Unicode nested cwd and linked worktree Git configuration
+        V1 lifetime authority covers every first entry and keeps retired callbacks inert
+        V1 close response cannot purge an explicit same-ID successor with identical pin values
+        V1 assistant captures its original lifetime before native history awaits
+        V1 delayed Git cannot publish after deletion and same-ID activation on any caller
+        V1 ordinary role, capture and orientation updates do not replace a live Git lifetime
+        V1 unpinned close discovery cannot target a recreated same-ID session
+        V2 Git waits retain original lifetime, scalar, pin and native owner on every caller
+        V2 older Git resolution cannot overwrite concurrent successor scope or capture
+        V2 actor wait cannot pair a newer actor with an older container
+        V2 checks the original pin after an owned helper returns success
+        V2 restore reuses callback-local Git facts in prompt and context
       HTTP_CASES: |
         test_activation_settlement_preserves_original_authority_before_backlog[semantic-delivered]
         test_activation_settlement_preserves_original_authority_before_backlog[semantic-pending]
@@ -136,7 +156,7 @@ jobs:
             $elapsed = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START
             if ($elapsed -ge 600 -or (git rev-parse HEAD).Trim() -cne $env:CANDIDATE) { throw 'Setup budget or candidate mismatch' }
             $before = @{}
-            foreach ($path in @('integrations/opencode/.opencode/plugins/pallium-v2.mjs', 'integrations/opencode/.opencode/plugins/pallium-common.mjs', 'integrations/opencode/tests/v2-plugin.test.mjs', 'tests/test_opencode_native_wake_e2e.py', 'tests/test_opencode_relay_wake_e2e.py', 'tests/test_ci_workflow.py', '.github/workflows/opencode-native-qualification.yml')) {
+            foreach ($path in @('integrations/opencode/.opencode/plugins/pallium-v2.mjs', 'integrations/opencode/.opencode/plugins/pallium-common.mjs', 'integrations/opencode/tests/v2-plugin.test.mjs', 'tests/test_opencode_native_wake_e2e.py', 'tests/test_opencode_relay_wake_e2e.py', 'tests/test_ci_workflow.py', '.github/workflows/opencode-native-qualification.yml', 'integrations/opencode/.opencode/plugins/pallium.mjs', 'integrations/opencode/tests/common.test.mjs', 'integrations/opencode/tests/plugin.test.mjs', 'tests/test_stable_actor_identity_e2e.py')) {
               $before[$path] = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
             }
             $before | ConvertTo-Json | Set-Content "$env:QUALIFICATION_ROOT/raw/source-before.json" -Encoding utf8
@@ -187,18 +207,19 @@ jobs:
           Push-Location $baseline
           try {
             # BASELINE is immutable pre-fix93f497bf, not the published040f source base.
-            node --test --test-name-pattern='^(coalesced native wake settles from exact outcome-bearing idle: succeeded|fresh supersession settles exact frozen generation: succeeded|known admitted wake reentry preserves admission and uncertainty)$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/baseline.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/baseline.log"
+            node --test --test-name-pattern='^(coalesced native wake settles from exact outcome-bearing idle: succeeded|fresh supersession settles exact frozen generation: succeeded|known admitted wake reentry preserves admission and uncertainty|Git discovery yields to unrelated caller work while child waits)$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/baseline.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/baseline.log"
             $exit = $LASTEXITCODE
           } finally { Pop-Location }
           "BASELINE_EXIT=$exit" >> $env:GITHUB_ENV
           [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/baseline.xml" -Raw
           $failed = @($xml.SelectNodes('//testcase[failure]'))
           $selected = @($xml.SelectNodes('//testcase[not(skipped)]'))
-          if ($exit -ne 1 -or $selected.Count -ne 3 -or $failed.Count -ne 3 -or $xml.SelectNodes('//testcase[error]').Count) { throw 'Unexpected baseline outcome; all later phases stop' }
+          if ($exit -ne 1 -or $selected.Count -ne 4 -or $failed.Count -ne 4 -or $xml.SelectNodes('//testcase[error]').Count) { throw 'Unexpected baseline outcome; all later phases stop' }
           $expected = @{
             'coalesced native wake settles from exact outcome-bearing idle: succeeded' = 'coalesced exact wake must settle activation without replay'
             'fresh supersession settles exact frozen generation: succeeded' = 'fresh promoted ordinary work must release the missing admitted anchor'
             'known admitted wake reentry preserves admission and uncertainty' = 'known admitted wake must not rewrite admission'
+            'Git discovery yields to unrelated caller work while child waits' = 'Git discovery must yield to unrelated caller work'
           }
           foreach ($name in $expected.Keys) {
             $case = @($selected | Where-Object { $_.name -ceq $name })
@@ -213,13 +234,13 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QUALIFICATION_START -gt 480) { throw 'Insufficient remaining qualification budget' }
-          node --test --test-name-pattern='^(coalesced native wake settles from exact outcome-bearing idle: succeeded|fresh supersession settles exact frozen generation: succeeded|known admitted wake reentry preserves admission and uncertainty)$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/focused.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/focused.log"
+          node --test --test-name-pattern='^(coalesced native wake settles from exact outcome-bearing idle: succeeded|fresh supersession settles exact frozen generation: succeeded|known admitted wake reentry preserves admission and uncertainty|Git discovery yields to unrelated caller work while child waits)$' --test-reporter=junit --test-reporter-destination="$env:QUALIFICATION_ROOT/raw/focused.xml" integrations/opencode/tests/v2-plugin.test.mjs *> "$env:QUALIFICATION_ROOT/raw/focused.log"
           $exit = $LASTEXITCODE
           "FOCUSED_EXIT=$exit" >> $env:GITHUB_ENV
           [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/focused.xml" -Raw
           $selected = @($xml.SelectNodes('//testcase[not(skipped)]'))
-          if ($exit -ne 0 -or $selected.Count -ne 3 -or $xml.SelectNodes('//testcase[failure or error]').Count) { throw 'Corrected focused regressions did not all pass' }
-          foreach ($name in @('coalesced native wake settles from exact outcome-bearing idle: succeeded', 'fresh supersession settles exact frozen generation: succeeded', 'known admitted wake reentry preserves admission and uncertainty')) {
+          if ($exit -ne 0 -or $selected.Count -ne 4 -or $xml.SelectNodes('//testcase[failure or error]').Count) { throw 'Corrected focused regressions did not all pass' }
+          foreach ($name in @('coalesced native wake settles from exact outcome-bearing idle: succeeded', 'fresh supersession settles exact frozen generation: succeeded', 'known admitted wake reentry preserves admission and uncertainty', 'Git discovery yields to unrelated caller work while child waits')) {
             $case = @($selected | Where-Object { $_.name -ceq $name })
             if ($case.Count -ne 1) { throw "Corrected focused regression did not pass exactly once: $name" }
           }
@@ -253,7 +274,7 @@ jobs:
           "PACKAGE_EXIT=$exit" >> $env:GITHUB_ENV
           if ($exit) { throw 'Package validation failed; native witness not run' }
           [xml]$xml = Get-Content "$env:QUALIFICATION_ROOT/raw/package.xml" -Raw
-          foreach ($name in ($env:NEW_CASES -split "\r?\n" | Where-Object { $_ })) {
+          foreach ($name in (($env:NEW_CASES + "`n" + $env:ASYNC_CASES) -split "\r?\n" | Where-Object { $_ })) {
             $selected = @($xml.SelectNodes('//testcase') | Where-Object { $_.name -ceq $name })
             if ($selected.Count -ne 1 -or $selected[0].skipped -or $selected[0].failure -or $selected[0].error) { throw "Required settlement case missing, skipped or failed: $name" }
           }
@@ -429,6 +450,13 @@ jobs:
                               found = [c for c in cases if c.get('name') == expected]
                               state = 'missing' if not found else 'duplicate' if len(found) != 1 else 'skipped' if found[0].find('skipped') is not None else 'failed' if found[0].find('failure') is not None or found[0].find('error') is not None else 'passed'
                               item[inventory_key][expected] = state
+                          if name == 'package':
+                              item['async_cases'] = {}
+                              for expected in os.environ['ASYNC_CASES'].splitlines():
+                                  if not expected:
+                                      continue
+                                  found = [c for c in cases if c.get('name') == expected]
+                                  item['async_cases'][expected] = 'missing' if not found else 'duplicate' if len(found) != 1 else 'skipped' if found[0].find('skipped') is not None else 'failed' if found[0].find('failure') is not None or found[0].find('error') is not None else 'passed'
                   except ET.ParseError:
                       item['report'] = 'incomplete_or_malformed'
               if item['outcome'] not in ('success', 'skipped', 'not_run'):
