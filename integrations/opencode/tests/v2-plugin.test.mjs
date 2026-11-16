@@ -434,6 +434,108 @@ test("lost native admission reply retries the same ID after durable readback", a
   } finally { await f.close(); }
 });
 
+test("known admitted wake reentry preserves admission and uncertainty", async () => {
+  for (const scenario of ["known", "fresh", "rejected-wait", "flag-reentry", "reload",
+    "lost-admitted-committed", "lost-admitted-uncommitted", "lost-terminal"]) {
+    const startsFalse = ["fresh", "flag-reentry", "lost-admitted-committed", "lost-admitted-uncommitted"].includes(scenario);
+    const projected = projectedWake();
+    const history = startsFalse ? [] : [{ type: "user", id: nativeID,
+      text: projected.content[0].text, metadata: projected.metadata }];
+    let backend = snapshot({ admitted: !startsFalse });
+    let admissions = 0, waits = 0, terminals = 0;
+    const firstWait = barrier(), replacementWait = barrier();
+    const options = {
+      history,
+      response: async (route, body) => {
+        if (route !== "/relay/opencode/wake") return;
+        if (body.operation === "admitted") {
+          admissions++;
+          if (scenario === "lost-admitted-uncommitted" && admissions === 1) return null;
+          backend = { ...backend, admitted: true };
+          if (scenario.startsWith("lost-admitted") && admissions === 1) return null;
+        }
+        if (body.operation === "terminal") {
+          terminals++;
+          backend = { ...backend, terminal: true };
+          if (scenario === "lost-terminal") return null;
+        }
+        return { session: relaySession, wake: { ...backend }, deliveries: [] };
+      },
+      wait: async (rows) => {
+        waits++;
+        if (scenario === "rejected-wait" && waits === 1) throw new Error("settlement unavailable");
+        if (scenario === "flag-reentry") {
+          if (waits === 1) await firstWait.wait();
+          else { await replacementWait.wait(); rows.push({ type: "idle", id: "msg_reentry_terminal", outcome: "succeeded" }); }
+        }
+      },
+    };
+    let f = await callerFixture(options);
+    const writes = () => f.calls.filter((c) => c.body.operation === "admitted");
+    try {
+      await f.tick();
+      assert.equal(writes().length, startsFalse ? 1 : 0, "known admitted wake must not rewrite admission");
+      assert.equal(terminals, 0, `${scenario}: admission/wait alone is not terminal proof`);
+      assert.deepEqual(f.native.prompt.map((p) => p.id), startsFalse ? [nativeID] : []);
+      if (scenario === "flag-reentry") {
+        await firstWait.entered;
+        await f.tick(); // Authoritative false -> true readback while the old wait is pending.
+        assert.equal(f.native.wait, 1, "in-flight poll cannot overlap the old flight");
+        firstWait.release(); await pause();
+        assert.equal(terminals, 0, "changed admitted flag fences the old false-snapshot flight");
+        await f.tick(); await replacementWait.entered;
+        assert.equal(writes().length, 1, "true-snapshot replacement must not repeat the first admission");
+        await f.tick();
+        assert.equal(f.native.wait, 2, "replacement flight retains its busy reservation");
+        replacementWait.release(); await pause();
+        assert.equal(terminals, 1, "replacement settles only after its own terminal proof");
+      } else {
+        if (scenario === "reload") {
+          await f.close();
+          f = await callerFixture(options); // No adapter-local admission history survives setup.
+        }
+        await f.tick();
+        const expected = scenario === "lost-admitted-uncommitted" ? 2 : startsFalse ? 1 : 0;
+        assert.equal(writes().length, expected, `${scenario}: only authoritative true can suppress admission`);
+        assert.equal(terminals, 0, `${scenario}: repeated polls cannot invent terminal evidence`);
+        await f.tick();
+        assert.equal(writes().length, expected, `${scenario}: genuine true readback prevents further writes`);
+        assert.equal(terminals, 0);
+        history.push({ type: "idle", id: "msg_reentry_terminal", outcome: "succeeded" });
+        await f.tick();
+        assert.equal(terminals, 1, `${scenario}: exact later terminal still progresses`);
+        assert.equal(writes().length, expected);
+      }
+      const settledWaits = f.native.wait;
+      await f.tick(); await f.tick(); // Includes reconciliation of a committed-but-lost terminal reply.
+      assert.equal(terminals, 1, `${scenario}: terminal readback suppresses stale follow-up`);
+      assert.equal(f.native.wait, settledWaits);
+      assert.equal(admissions, scenario === "lost-admitted-uncommitted" ? 2 : startsFalse ? 1 : 0);
+      assert.equal(f.native.interrupt, 0);
+      assert.equal(f.native.prompt.length, scenario === "reload" ? 0 : startsFalse ? 1 : 0);
+      for (const call of f.calls.filter((c) => ["admitted", "terminal"].includes(c.body.operation))) {
+        assert.deepEqual([call.body.endpoint_id, call.body.scope_generation, call.body.generation,
+          call.body.delivery_id, call.body.native_input_id], [endpointID, 0, 1, deliveryID, nativeID]);
+      }
+      if (scenario === "fresh") {
+        backend = snapshot({ generation: 2, native_input_id: "msg_reentry_next",
+          delivery_id: "relay-delivery-" + "e".repeat(32) });
+        await f.tick();
+        assert.equal(admissions, 2, "a fresh false generation still requires its own admission");
+        assert.equal(terminals, 1);
+        assert.deepEqual(f.native.prompt.map((p) => p.id), [nativeID, "msg_reentry_next"]);
+        history.push({ type: "idle", id: "msg_reentry_next_terminal", outcome: "succeeded" });
+        await f.tick();
+        assert.equal(admissions, 2, "new generation's true readback also suppresses redundant admission");
+        assert.equal(terminals, 2);
+        const last = f.calls.filter((c) => c.body.operation === "terminal").at(-1);
+        assert.deepEqual([last.body.generation, last.body.delivery_id, last.body.native_input_id,
+          last.body.terminal_message_id], [2, backend.delivery_id, "msg_reentry_next", "msg_reentry_next_terminal"]);
+      }
+    } finally { firstWait.release(); replacementWait.release(); await f.close(); }
+  }
+});
+
 test("missing admitted input and unrelated idle cannot settle or issue a new native ID", async () => {
   const compacted = await callerFixture({ wake: snapshot({ admitted: true }), history: [{ type: "idle", id: "msg_unrelated" }] });
   try {
