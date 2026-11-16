@@ -359,14 +359,14 @@ auxiliary responses bypassing the primary gate, and executable checks of the act
 observer's negative and failure-safe cleanup paths. The API floor, explicit-title
 precondition and need for at most one fixture observer are supported.
 
-The owner amended those three points in record-only `a0e9af4b` and requested
-the same architect's narrow closure; that disposition remains pending.
-After exact PLAN GO, the manager's conditional
-source-only release permits the existing README, qualification workflow, native
+The owner amended those three points in record-only `a0e9af4b`. The same architect
+completed PLAN GO at that exact revision, closing H1–H3. The manager read and
+accepted the closure, which unlocks the existing conditional source-only release.
+It permits the existing README, qualification workflow, native
 fixture, workflow contracts and Work Record changes without another routine
 approval stop. Production plugin/helper/backend/API/package caller source stays
-exact `f80df956`. Independent patch review still follows. No source edit is released
-while PLAN HOLD remains, and no seventh run, publication, timeout increase,
+exact `f80df956`. Independent patch review still follows. This plan closure grants
+no seventh run, publication, timeout increase,
 assertion weakening, diagnostic expansion or live change is authorized.
 Full recovery remains open.
 
