@@ -137,8 +137,9 @@ native recovery remains unexecuted and unqualified. The task owner prioritizes
 the actual local failure, including already-compacted anchors. Reviewed bounded
 diagnostic hunks were integrated without replacing the root inventories or
 publishing raw logs. The original diagnostic checkout/evidence remain preserved.
-All five execution budgets are closed. No sixth attempt, unchanged retry, root-source
-push, relabel, merge or live change is authorized.
+The five earlier execution budgets are closed. The separate 2026-11-16 continuation
+below releases one sixth attempt for the reviewed correction, not an unchanged
+retry. No seventh attempt or live change is authorized.
 Full recovery and the local incident remain open.
 Preserve the OC-1 outcome and regression matrix below. Activation settlement is
 not downstream task completion.
@@ -260,10 +261,37 @@ freshness checks and fences stale rejection effects as well as wake acceptance.
 Both-writer caller schedules are authored but unexecuted. The same independent
 reviewer completed narrow SOURCE / CONTRACT GO at exact unpublished `f80df956`.
 The manager read and accepted that source disposition. Registration compatibility
-and ordering source gates are closed; runtime qualification and any later execution
-or publication budget remain separate. No sixth campaign
-is released by this source-only continuation. The local automatic-wake incident
-remains open.
+and ordering source gates are closed. That source-only disposition did not itself
+release another campaign. The local automatic-wake incident remains open.
+
+### Bounded finish continuation (2026-11-16)
+
+The task owner requested continuation to finish the fix. The manager released one
+new, sixth hosted attempt for exact source-reviewed `f80df956` or a record-only
+successor with identical non-record source. The existing developer has adopted
+that scope. It permits one normal fast-forward to the existing PR410 branch,
+one automatic ordinary-CI round and one existing qualification-label cycle at the
+same immutable head. It does not permit another product or workflow edit.
+
+The existing package-first gates and acceptance remain unchanged: whole package
+including the original scope-replacement test, all 43 required entries, unskipped
+native 13-check compaction/recovery/non-replay/four-NEW-wake journey, and exact
+HTTP25. Caps remain 900 seconds for qualification, 120 for package, 120 for native,
+60 for HTTP and 12 minutes for ordinary CI observation. The existing owner observes
+only that round, stops on failure and cancels owned active jobs at their cap.
+No unchanged retry, seventh attempt, cap extension, raw-log download, local
+application execution, new runner or worker is released. The same independent
+reviewer must review the actual sixth result before manager acceptance and merge.
+No result is claimed yet; the five failed histories remain unchanged.
+
+Ordinary coordination found the desktop-managed CLI directory now at 2.3.0.
+This is not proof of a loaded plugin version or native recovery. The hosted
+campaign stays pinned to reviewed OpenCode 2.2.7. The manager has offered the
+existing architect a bounded read-only source-applicability comparison before
+later installed activation; no acceptance or result is inferred from sending
+that offer. It does not retarget or block the current qualification. Any actual
+2.3.0 qualification and exact installation/restart/reload scope remain separate.
+No live-environment change or cleanup is authorized by this continuation.
 
 [PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
 at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
