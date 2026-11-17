@@ -59,7 +59,11 @@ async function _runGit(args, cwd, signal) {
       if (size > 1024 * 1024) stop("spawn");
       else chunks.push(chunk);
     };
-    const error = () => stop("spawn");
+    const error = () => {
+      if (!failure) { failure = "spawn"; chunks.length = 0; }
+      // kill() can emit error synchronously; never re-enter kill from here.
+      child.stdout?.destroy();
+    };
     const exit = (_code, killed) => {
       // Timeout and abort still own an open stdout after the root has exited.
       if (killed) error();
