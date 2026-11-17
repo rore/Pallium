@@ -1018,7 +1018,7 @@ test("async Git bounds owned stdout after parent exit without losing terminal ou
     const parent = `
       const fs = require("node:fs");
       const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(holder)}],
-        { stdio: ["ignore", 1, "ignore", "ipc"], windowsHide: true });
+        { stdio: ["ignore", 1, "ignore", "ipc"], windowsHide: true, detached: true });
       child.on("message", () => {
         fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));
         process.stdout.write("https://git.example.test/Team", () => process.exit(${mode === "nonzero" ? 128 : 0}));
