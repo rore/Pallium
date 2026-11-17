@@ -908,9 +908,39 @@ test("async Git bounds owned stdout after parent exit without losing terminal ou
       timer = setTimeout(() => reject(new Error(message)), ms);
     })]); } finally { clearTimeout(timer); }
   };
+  const observe = (child, signal) => {
+    let start = -1, serial = 0, pipeError = false;
+    const at = { exit: -1, close: -1, pipe: -1, error: -1 };
+    const order = { exit: 0, close: 0, pipe: 0, error: 0 };
+    const elapsed = () => start < 0 ? -1 : Math.min(60000, Math.max(0, Math.round(performance.now() - start)));
+    const mark = (name) => { at[name] = elapsed(); order[name] = ++serial; };
+    child.once("spawn", () => { start = performance.now(); });
+    child.once("exit", () => mark("exit"));
+    child.once("close", () => mark("close"));
+    child.once("error", () => mark("error"));
+    child.stdout.once("close", () => mark("pipe"));
+    child.stdout.once("error", () => { pipeError = true; });
+    return (mode, stage, holder = { ready: -1, release: -1, end: -1, terminal: -1 }) => {
+      const code = child.exitCode === null ? "none" : Number.isInteger(child.exitCode) && child.exitCode >= 0 && child.exitCode <= 255
+        ? child.exitCode : "other";
+      const exitSignal = child.signalCode === null ? "none" : child.signalCode === "SIGTERM" ? "term"
+        : child.signalCode === "SIGKILL" ? "kill" : "other";
+      return `Git failure witness stage=${stage} mode=${mode} clock=test_spawn_event elapsed_ms=${elapsed()} exit_ms=${at.exit} exit_n=${order.exit} close_ms=${at.close} close_n=${order.close} pipe_ms=${at.pipe} pipe_n=${order.pipe} error_ms=${at.error} error_n=${order.error} pipe_error=${Number(pipeError)} code=${code} signal=${exitSignal} aborted=${Number(signal.aborted)} destroyed=${Number(child.stdout.destroyed)} ready=${holder.ready} release=${holder.release} end=${holder.end} terminal=${holder.terminal}`;
+    };
+  };
+  const annotate = (error, before, after) => {
+    const stack = error.stack;
+    const context = `${before}\n${after}`;
+    error.message += `\n${context}`;
+    error.stack = `${context}\n${stack}`; // Put safe context before the exporter's bounded failure selection.
+    return error;
+  };
   const nativeSpawn = childProcess.spawn;
   const builtins = await import("node:child_process");
   {
+    let sample = (stage) => `Git failure witness stage=${stage} mode=kill-error clock=test_spawn_event elapsed_ms=-1`;
+    let firstEvidence;
+    try {
     const owner = new AbortController();
     let child, nativeKill, closed = false, kills = 0, notify;
     const attempted = new Promise((resolve) => { notify = resolve; });
@@ -931,13 +961,16 @@ test("async Git bounds owned stdout after parent exit without losing terminal ou
         assert.equal(result.error?.name, "AbortError", "the first abort outcome survives the later kill error");
         assert.equal(closed, true);
         assert.equal(kills, 1);
-      } finally {
+      } catch (error) { firstEvidence = sample("failed_check"); throw error; }
+      finally {
         child.kill = nativeKill;
         if (child.exitCode === null && child.signalCode === null) nativeKill.call(child);
         await outcome;
       }
     }, (spawned) => {
       child = spawned; nativeKill = child.kill;
+      const snapshot = observe(child, owner.signal);
+      sample = (stage) => snapshot("kill-error", stage);
       child.once("close", () => { closed = true; });
       child.kill = () => {
         kills++; notify();
@@ -949,8 +982,12 @@ test("async Git bounds owned stdout after parent exit without losing terminal ou
     });
     assert.equal(childProcess.spawn, nativeSpawn);
     assert.equal(builtins.spawn, nativeSpawn, "named built-in binding must be restored too");
+    } catch (error) { throw annotate(error, firstEvidence || sample("failed_check"), sample("after_cleanup")); }
   }
   for (const mode of ["abort", "timeout", "drain", "nonzero", "fallback-drain"]) {
+    let sample = (stage) => `Git failure witness stage=${stage} mode=${mode} clock=test_spawn_event elapsed_ms=-1`;
+    let firstEvidence;
+    try {
     const directory = fs.mkdtempSync(path.join(tmpHome, "stdio-界-"));
     const release = path.join(directory, "release"), pidFile = path.join(directory, "pid");
     const ended = path.join(directory, "ended");
@@ -959,7 +996,11 @@ test("async Git bounds owned stdout after parent exit without losing terminal ou
     const forcedError = new Error("fixture primary failure before emergency holder drain");
     let primaryError, terminalConfirmed = false;
     const cleanupErrors = [];
-    let root, running, exited;
+    let root, running, exited, snapshot;
+    sample = (stage) => snapshot ? snapshot(mode, stage, {
+      ready: Number(fs.existsSync(pidFile)), release: Number(fs.existsSync(release)),
+      end: Number(fs.existsSync(ended)), terminal: Number(terminalConfirmed),
+    }) : `Git failure witness stage=${stage} mode=${mode} clock=test_spawn_event elapsed_ms=-1`;
     const holder = `
       const fs = require("node:fs");
       process.once("exit", () => fs.writeFileSync(${JSON.stringify(ended)}, "ended"));
@@ -1015,10 +1056,11 @@ test("async Git bounds owned stdout after parent exit without losing terminal ou
           if (mode === "abort" || mode === "timeout" || forced)
             assert.equal(fs.existsSync(ended), false, "the helper closes only its pipe, not arbitrary descendants");
           if (forced) throw forcedError;
-        } catch (error) { actionError = error; throw error; }
+        } catch (error) { firstEvidence = sample("failed_check"); actionError = error; throw error; }
         finally {
           try { fs.writeFileSync(release, "release"); }
           catch (error) {
+            firstEvidence ||= sample("cleanup_check");
             if (actionError) throw new AggregateError([actionError, error], "Git fixture release failed", { cause: actionError });
             throw error;
           } finally { await outcome; }
@@ -1026,9 +1068,10 @@ test("async Git bounds owned stdout after parent exit without losing terminal ou
       }, (child, args) => {
         if (args[0] !== "remote") return;
         root = child;
+        snapshot = observe(child, owner.signal);
         exited = new Promise((resolve, reject) => { child.once("exit", resolve); child.once("error", reject); });
       });
-    } catch (error) { primaryError = error; }
+    } catch (error) { firstEvidence ||= sample("failed_check"); primaryError = error; }
     finally {
       // This test owns the holder too; production deliberately owns only its pipe.
       try {
@@ -1042,6 +1085,7 @@ test("async Git bounds owned stdout after parent exit without losing terminal ou
               await new Promise((resolve) => setTimeout(resolve, 5));
             }
           } catch (error) {
+            firstEvidence ||= sample("cleanup_check");
             cleanupErrors.push(error);
             try { process.kill(pid); }
             catch (killError) { if (killError.code !== "ESRCH") throw killError; }
@@ -1059,7 +1103,7 @@ test("async Git bounds owned stdout after parent exit without losing terminal ou
             }
           }
         } else fs.writeFileSync(release, "release");
-      } catch (error) { cleanupErrors.push(error); }
+      } catch (error) { firstEvidence ||= sample("cleanup_check"); cleanupErrors.push(error); }
       finally { await running?.catch(() => {}); }
     }
     const errors = [primaryError, ...cleanupErrors].filter(Boolean);
@@ -1077,6 +1121,7 @@ test("async Git bounds owned stdout after parent exit without losing terminal ou
       assert.match(failure.errors[1].message, /holder must finish after release/);
       assert.equal(terminalConfirmed, true, "the emergency path must observe termination, not just send kill");
     } else if (failure) throw failure;
+    } catch (error) { throw annotate(error, firstEvidence || sample("failed_check"), sample("after_cleanup")); }
   }
 });
 
