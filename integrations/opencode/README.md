@@ -164,6 +164,28 @@ queue a native user input; the context hook adds the Relay content to the model
 request. The receipt ACK only confirms attachment to model-bound context. It
 does not mean the model completed the requested work.
 
+For **V2 ordinary turns**, a failed or unknown initial ACK can be confirmed
+without another prompt. The existing 2.5-second lifecycle checks only receipts
+already attached to model-bound context. It sends at most one recovery ACK per
+session per tick, using the original token, attempt, scope and lease. Initial
+ACKs keep their 500ms allowance. Recovery honors `Retry-After` and stops unless
+a full 500ms request slot fits strictly before the original lease and message
+expiry. Invalid timing or nonempty invalid `Retry-After` disables recovery.
+The clock bound assumes continuously advancing server UTC and client monotonic
+time; server authority checks remain final.
+
+Repeated contexts reuse each receipt's disposition rather than restarting ACKs.
+Maintenance never changes model text or rendering mode. Existing context-owned
+continuation behavior is unchanged: a successful rendered subset can enable
+continuation for a cached batch, including an omitted sibling if a later budget
+fits it. That sibling does **not** gain ACK authority from continuation.
+
+This is bounded, in-process V2 ordinary receipt recovery, not exactly-once work.
+A very fast reply before confirmation can still return409. Outages, host stalls,
+late emission or expiry can prevent recovery; nothing survives a plugin restart.
+V1 and V2 wake/admission behavior are unchanged. No payload, native input or
+completed action is replayed by receipt maintenance.
+
 Git discovery uses asynchronous native subprocesses with a 3-second per-command
 timeout and a 1 MiB stdout byte limit. It shares Git facts within a callback, not
 across sessions. Cancellation does not publish fallback identity or late pins.
