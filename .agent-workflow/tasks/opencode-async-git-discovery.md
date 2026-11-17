@@ -21,7 +21,7 @@
 
 **Complexity:** Moderate
 
-**Reason:** High/Moderate retained for scope/actor pin authority and OC1 causal/lifetime boundaries. Three new pre-merge findings invalidate the assumptions about owned stdout completion, timer-only scope recovery and unissued prompt reservations. Bounded repairs stay within the accepted plan and bugfix authority. Historical qualification at cfceda205aa9a15eb2c0f34b629e76d61eafcd9d does not cover these newly identified paths.
+**Reason:** High/Moderate retained for scope/actor pin authority and OC1 causal/lifetime boundaries. The three pre-merge findings and subsequent common fixture/error-path findings have bounded repairs, independent SOURCE GO at24403803c253673a3f10be522c546d1bb6941367 and accepted ACTUAL RESULT GO at29f9a602d687a76be779f69d6e76eb96c9ae8d86. Corrected qualification covers the changed paths. Overall ordinary CI remains failed on the retained Python3.12 Hermes post-refresh claim503, with a task-owner-accepted narrow nonblocking OC6 contribution-risk disposition, not generic Hermes safety.
 
 **Discovery:** Independent OC-6 source/caller inventory consumed and retained privately. Baseline common44 runs execFileSync; repository172/container193/actor207/resolve296-305 and orientation1150-1200 are affected. V1 orientation/assistant/tool/chat/deletion and V2 scope/base/current/restore/discovery/capture/context/natural turns reach them. V1/V2 and stable-actor embedded JS callers were inspected against9ab; no product drift from accepted9a. Windows work-reference discovery already avoids Git and stays unchanged. Discovery is source evidence, not measured live latency.
 
@@ -35,10 +35,10 @@
 
 **Approvals:** Approved by user 2026-11-16: "you have approval to drive this till end". This minimal task-authorization excerpt preserves the existing approval; its full context remains private. The manager assigned this existing issue, accepted the narrow H1 marker ceiling and released the conditional hosted envelope below. No local application execution/live changes/cleanup/old OC1 retry or unapproved cap/job changes.
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
-Historical checkpoints below retain their contemporaneous blockers and authority limits; they are not current instructions. Current next action and the pre-merge hold govern the continuation. Verification and Result review retain the accepted historical result.
+Historical checkpoints below retain their contemporaneous blockers, releases and authority limits; they are not current instructions. Current next action, Result review and final documentation closure govern continuation. Earlier GO, HOLD, failed and partial results remain evidence, not new execution authority.
 
 ## Assignment and preserved work
 
@@ -115,7 +115,7 @@ Reviewer explicitly accepts this ordered real-child/production-caller evidence a
 
 ## Current next action
 
-The parent accepted the single combined SOURCE GO at24403803c253673a3f10be522c546d1bb6941367 and released the one corrected hosted cycle below. Execute only that cycle after immutable record-only identity checks. State remains Blocked on corrected runtime evidence and actual-result acceptance, not source or human approval. The failed251 cycle and every older admission remain spent and preserved. The parent owns roadmap alignment, review-thread resolution and normal merge. Installed activation and downstream recovery remain separate.
+The task owner accepted the combined SOURCE GO at24403803c253673a3f10be522c546d1bb6941367 and ACTUAL RESULT GO at tested29f9a602d687a76be779f69d6e76eb96c9ae8d86, including the narrow nonblocking Hermes contribution-risk disposition. This final factual closure changes only this record and the README qualification paragraph. Publish one coherent documentation commit to the existing PR415 branch after the exact identity/static checks below, then observe only its natural ordinary FULL CI and governance under one fixed900-second pre-push clock. No qualification, label cycle, dispatch, rerun or additional push is authorized. Report actual final-head states; do not infer overall green from reused qualification. The parent owns final documentation/evidence inspection, canonical roadmap alignment, review-thread resolution, live-head/main/rules checks and normal merge. Installed activation and downstream recovery remain separate.
 
 ### Planning checkpoint evidence (2026-11-16)
 
@@ -305,17 +305,17 @@ Both failing tests, Codex bridge, backend, fixtures and configuration match bb9 
 
 ## Result review
 
-Agent technical review: independent non-implementer SOURCE and ACTUAL RESULT GO for [PR415's qualified source](https://github.com/rore/Pallium/tree/cfceda205aa9a15eb2c0f34b629e76d61eafcd9d); full review retained privately.
+Agent technical review: the same independent non-implementer returned combined SOURCE GO for [24403803c253673a3f10be522c546d1bb6941367](https://github.com/rore/Pallium/tree/24403803c253673a3f10be522c546d1bb6941367) and ACTUAL RESULT GO for its record-only tested child [29f9a602d687a76be779f69d6e76eb96c9ae8d86](https://github.com/rore/Pallium/tree/29f9a602d687a76be779f69d6e76eb96c9ae8d86). Full reviews and independent artifact authentication are retained privately.
 
-Reviewed revision: cfceda205aa9a15eb2c0f34b629e76d61eafcd9d
+Reviewed revision: 29f9a602d687a76be779f69d6e76eb96c9ae8d86; program/test source reviewed at24403803c253673a3f10be522c546d1bb6941367 is identical.
 
-Verification adequacy: GO for OC6 caller/identity and released native/HTTP contracts, including independent artifact, inventory and ordinary-failure risk review. Overall CI, generic Codex safety and installed/downstream recovery are not claimed.
+Verification adequacy: GO for corrected OC6 caller/identity and released native/HTTP contracts. Independent review authenticated all six artifacts, strict4 RED/GREEN, package241 with234 passes/zero failures/seven existing skips, all45+async22 individually unskipped, native13/HTTP25, source11 CRLF projections, bookends/drains, caps, current3.13 full-once and retained ordinary-failure evidence. The task owner accepted the combined result and narrow nonblocking OC6 contribution-risk disposition for the current Hermes claim503. Overall CI, generic Hermes/Codex safety, full Windows and installed/downstream recovery are not claimed.
 
-Independent technical PLAN GO at cbd8149f713dcb45dd2119db9c072433d3d5f6c7, exact successor SOURCE GO and ACTUAL RESULT GO at cfceda205aa9a15eb2c0f34b629e76d61eafcd9d are complete. The same non-implementing reviewer independently checked artifact bytes, case inventories, source identity, native/HTTP contracts and ordinary-failure dispositions. The task owner accepted this OC6 result. Overall CI, full Windows, arbitrary later versions/platforms, installed or loaded-host recovery and downstream-task success are not established.
+Independent technical PLAN GO at cbd8149f713dcb45dd2119db9c072433d3d5f6c7 and historical SOURCE/ACTUAL RESULT GO at cfceda205aa9a15eb2c0f34b629e76d61eafcd9d remain preserved. Later source HOLD and failed251 qualification were not waived; the corrected244/29f reviews supersede their current blockers with new evidence. Historical passes do not replace corrected qualification. Arbitrary later versions/platforms, installed or loaded-host recovery and downstream-task success remain unestablished.
 
-### Documentation closure
+### Historical cf documentation closure
 
-This factual closure changes only this record and `integrations/opencode/README.md`. Every other raw NUL-terminated Git-tree entry must match qualified cf exactly, including paths, modes, blob IDs, order and final NUL. The expected SHA256 excluding only those two documents is `0977ea1108cdda1b4fd85ff1e8b9a9490e70bea3f5f934d9ee0d21518450a567`. All11 qualified source blobs, tested content and dependencies remain unchanged.
+That earlier factual closure changed only this record and `integrations/opencode/README.md`. Every other raw NUL-terminated Git-tree entry matched qualified cf exactly, including paths, modes, blob IDs, order and final NUL. Its SHA256 excluding only those two documents was `0977ea1108cdda1b4fd85ff1e8b9a9490e70bea3f5f934d9ee0d21518450a567`. All11 then-qualified source blobs, tested content and dependencies were unchanged.
 
 Under `docs/testing-conventions.md`, the accepted hosted evidence above is reused for that identical tested content. The whole-change selector remains FULL; it is not changed or waived. Documentation preparation uses only static privacy, baseline, identity, Redline, Workflow and selector checks with application imports denied. No application/package/native campaign is repeated for factual prose. The final documentation commit identity and actual static results are retained in the local proof receipt and handed to the parent before any push. Canonical roadmap alignment, final publication and normal merge remain parent-owned.
 
@@ -467,3 +467,41 @@ Require strict4 exact expected RED/focused4 GREEN, zero package failures with on
 Reuse completed251 ordinary full-once/platform/governance evidence only for unchanged Python/application/dependencies: both Linux9,298 inventories, actor1/workflow30/protected19/earlier five failure nodes and Windows smoke. Current natural FULL checks remain allowed; no extra manual full run. Do not turn reuse into a new Node/native pass or label ordinary failures flaky. Relevant current failures need concrete source/risk disposition; changed-feature package/native/HTTP failures block qualification and merge.
 
 Retain only approved safe existing JUnits, sanitized summary/source identities and verdict metadata with API identity and ZIP-byte hashes, never raw logs/provider bodies. After completion prepare one honest local receipt/record delta without pushing it and offer the same reviewer bounded ACTUAL RESULT review. The parent owns combined acceptance, public thread resolution, final live-head/main/rules checks, normal merge, factual closure and installed continuation. Local application/tests/probes/native hosts, live operations, settings changes and cleanup remain prohibited. This release authorizes one new corrected cycle only.
+
+## Corrected candidate: actual qualification pass
+
+Tested head29f9a602d687a76be779f69d6e76eb96c9ae8d86 is the permitted record-only child of reviewed244. All non-record raw tree entries match244; SHA256 is `b9e90eb4ed092200d5695509df6286b36b25f45fb8df6732d2fb34d582e01453`. One push and one label cycle admitted five natural attempt1 runs. The one observer finished normally at579.88 seconds from the original pre-push clock, with no cancellation, reset, retry or active observer remaining.
+
+| Surface | Actual result |
+|---|---|
+| [Qualification44046705214](https://github.com/rore/Pallium/actions/runs/44046705214), job133914063689 | SUCCESS. Strict4 exact expected baseline RED/focused4 GREEN; package241:234 passed, zero failed, seven existing skips. All45 and async22 individually passed unskipped, including the corrected common control and all three new V2 controls. |
+| Released OpenCode2.3.0 | Whole native case passed unskipped; all13 checks true. Original812, pre-input non-replay, four distinct NEW wakes and full journey retained unchanged. |
+| HTTP | All25 required cases individually passed unskipped. |
+| Identity, caps and drain | Source11 matched explicit Windows CRLF projections of immutable candidate blobs, not raw LF hashes. Source/binary bookends unchanged; both drains true. Baseline3s/focused2s/package64s/native78s/HTTP29s fit unchanged caps. |
+| [OrdinaryCI44046695496](https://github.com/rore/Pallium/actions/runs/44046695496) | FAILED overall. Linux3.13 completed exact9,298 inventory:9,190 passed, zero failed,106 skipped,two xfails; actor1/workflow30/protected19 and all five prior failure nodes unskipped PASS. Windows smoke passed both serial and remaining checks. |
+| Linux3.12 | Fail-fast partial4,557 cases:4,518 passed, one failed,37 skipped,one xfail. Workflow30/protected19 passed; actor was not reached. This is not a new completed3.12 full run. Earlier251 full runs remain valid unchanged-content evidence, with this new failure retained. |
+| Fresh governance | Runs44046695433/44046697721/44046705187 succeeded, including actual import-linter and Workflow. All three authenticated verdicts are GRAY with zero violations/checkpoints. |
+
+The corrected common control passed as one required top-level case. Its internal modes are not individually exported, and a passing case does not emit the new failure context. Diagnostic runtime emission is therefore not observed; the bounded source/pure-text retention proof remains separate. The251 failure is preserved, not waived or retroactively assigned an exclusive cause by this pass. Installed/loaded-host recovery, downstream completion, full Windows and arbitrary versions/platforms remain unestablished.
+
+### Current ordinary failure: concrete scope and limits
+
+Python3.12 failed `test_idle_session_wake_refreshes_before_claim_without_an_ordinary_turn`. Authenticated JUnit frames include `tests/test_hermes_relay_plugin.py:2236,553,2225,244` and `integrations/hermes/__init__.py:587`. The retained error is RuntimeError `Relay HTTP 503` on POST `/relay/turn`. The fixture at244 retains only the status, not the response body or typed service code.
+
+The runtime integration frame587 maps to the immutable source's post-refresh claim call with `register_session: False`, after its refresh/ownership guards and local claim-attempt marker. This is not evidence that the earlier registration refresh failed. Later successful claim/delivery readback is not established by that failed test. The exact same case passed unskipped in current3.13 and both earlier251 Linux lanes. Failing test, Hermes integration, Python fixture/config/dependencies are exact251; the only intervening program/test delta is the independent Node common fixture and its failure evidence. No execution path from that Node-only delta to this Python claim request was identified.
+
+With direct corrected Node/native/HTTP and actor coverage, the independent reviewer and task owner accepted a narrow nonblocking OC6 contribution-risk disposition, not automatic overall-CI green. The Hermes post-refresh claim availability/progress risk remains unresolved. No flakiness, exclusive physical cause, missing typed error code or generic Hermes safety is claimed. No assertion, test or backend was changed to hide the failure, and no rerun is authorized.
+
+All six approved artifact ZIP byte hashes matched authenticated API run/head identity. Qualification artifact14312037126 has ZIP SHA256 `3915df1f728b3922e727fd4f3d858a83707792c358d3c95cb197ef5396f7b6c2`; its summary SHA256 is `ee3a3d9748fa8fe5c16955909a05b671954a5e49cfdd160c1af187bd51941ef4`. Linux3.13 artifact14312272435 has ZIP SHA256 `d42919ab8ddebdd77864cc11a4e49b6fbb915e5dd28846d3e90450b8c891d423`; Linux3.12 artifact14312461028 has ZIP SHA256 `35ab0ca453418ba35600707710bd432a24295a5f26980b0d2ca214dbf11f19d8`. Verdict identities, source projections, full JUnits and safe failure categories are retained under ignored `build/oc6-244-validation-20261117/`.
+
+At the result checkpoint, the public branch stayed at tested29f and only the authorized local uncommitted result record changed. Product/tests/workflow/README were frozen while independent ACTUAL RESULT review and task-owner acceptance were pending. Both are now complete as recorded above. No raw logs/provider bodies, extra run/label cycle, local application execution, merge/thread resolution, live operation or cleanup occurred. Every earlier source GO, failed result, artifact and spent budget remains preserved.
+
+## Final documentation closure after accepted corrected result
+
+Only this owning record and the current qualification paragraph in `integrations/opencode/README.md` change from tested29f. All other raw NUL-terminated Git-tree entries, including path, mode, blob, order and final NUL, must match29f exactly. SHA256 excluding exactly those two documents is `eee147f97e041066e0ab39347ecaa21e612039179353ff86420eff84ce0cc595`. All11 qualified source blobs, tests, dependencies, configuration, qualification exporter and selector remain exact29f. Functional baseline, approvals, requirements and relationships are preserved.
+
+Accepted qualification44046705214, current3.13 full-once and unchanged251 ordinary evidence are reused under `docs/testing-conventions.md`. The whole-change selector remains FULL, not waived. Static closure checks passed with application imports denied: complete two-path diff review, privacy, baseline, source/tree identity, Redline GRAY with zero violations/checkpoints and Workflow clean0. The immutable documentation head and fresh post-commit check receipts belong in the ignored local evidence and parent handoff, not an invented new runtime result.
+
+One authorized nonforce existing-branch push may naturally start ordinary FULL CI and governance. Pin only its actual attempt1 run IDs/head/branch/PR/workflow/event and use one new sequential observer with one fixed900-second clock starting before push, including cleanup reserve. No qualification label cycle, dispatch, rerun, extra push, new PR or tag is authorized. Fresh final-head boundary, Workflow and governance are required. Report actual application-job states honestly alongside reused unchanged-content evidence. Stop and report any source, baseline, privacy or governance mismatch; do not patch or repeat inside this budget.
+
+The checked-out canonical roadmap still calls OC6 a pending source fix. That is stale relative to accepted244/29f; the parent owns its correction and broader remaining OC4/OC8/installed scope. Ready for review does not mean merged or deployed. Parent inspection, thread resolution and live rules/main checks precede normal merge without bypass. Checkouts, failed artifacts, queues and settings stay intact; no cleanup, live operation or installed-host continuation is authorized here.

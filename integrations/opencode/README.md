@@ -169,12 +169,13 @@ timeout and a 1 MiB stdout byte limit. It shares Git facts within a callback, no
 across sessions. Cancellation does not publish fallback identity or late pins.
 This removes synchronous Git from the server event loop; it does not set an
 aggregate hook-latency budget or guarantee descendant-process drain.
-[Qualification run43990204772](https://github.com/rore/Pallium/actions/runs/43990204772)
-at `cfceda20` passed strict4 baseline RED/candidate GREEN and the full package:
-237 cases, 230 passed, zero failures and seven existing Windows skips. All45
-required cases and the separate18 async cases passed unskipped. The whole released
-OpenCode 2.3.0 journey passed all13 native checks and HTTP25, including original
-payload non-replay before fresh input and four distinct NEW automatic wakes.
+[Qualification run44046705214](https://github.com/rore/Pallium/actions/runs/44046705214)
+at `29f9a602d687a76be779f69d6e76eb96c9ae8d86` passed strict4 baseline RED/candidate GREEN
+and the full package: 241 cases, 234 passed, zero failures and seven existing
+Windows skips. All45 required cases and the separate22 async cases passed unskipped.
+The whole released OpenCode 2.3.0 journey passed all13 native checks and HTTP25,
+including original payload non-replay before fresh input and four distinct NEW
+automatic wakes.
 Source11/binary bookends and normal/final owned drain passed. Real-child caller
 tests establish Git responsiveness separately; they do not inject delayed Git
 inside the released host. This is hosted qualification, not installed/loaded-host
