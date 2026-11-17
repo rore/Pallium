@@ -908,18 +908,64 @@ test("async Git bounds owned stdout after parent exit without losing terminal ou
       timer = setTimeout(() => reject(new Error(message)), ms);
     })]); } finally { clearTimeout(timer); }
   };
-  for (const mode of ["abort", "timeout", "drain", "nonzero"]) {
+  const nativeSpawn = childProcess.spawn;
+  const builtins = await import("node:child_process");
+  {
+    const owner = new AbortController();
+    let child, nativeKill, closed = false, kills = 0, notify;
+    const attempted = new Promise((resolve) => { notify = resolve; });
+    await withGitProcess(() => 'process.stdout.write("ready");setInterval(()=>{},50)', async () => {
+      let settled = false;
+      const running = P.deriveActorRef(process.cwd(), owner.signal);
+      const outcome = running.then((value) => { settled = true; return { value }; },
+        (error) => { settled = true; return { error }; });
+      try {
+        await bounded(attempted, "abort must attempt native child termination");
+        assert.equal(kills, 1, "a synchronous kill error must not issue a re-entrant kill");
+        assert.equal(child.stdout.destroyed, true, "kill failure still closes owned stdout");
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(settled, false, "pipe cleanup must not complete before the real child closes");
+        assert.equal(child.exitCode, null);
+        nativeKill.call(child); // The fixture, not the failed production kill, ends this real child.
+        const result = await bounded(outcome, "owned child must close after fixture termination");
+        assert.equal(result.error?.name, "AbortError", "the first abort outcome survives the later kill error");
+        assert.equal(closed, true);
+        assert.equal(kills, 1);
+      } finally {
+        child.kill = nativeKill;
+        if (child.exitCode === null && child.signalCode === null) nativeKill.call(child);
+        await outcome;
+      }
+    }, (spawned) => {
+      child = spawned; nativeKill = child.kill;
+      child.once("close", () => { closed = true; });
+      child.kill = () => {
+        kills++; notify();
+        if (kills > 1) throw new Error("re-entrant fixture kill");
+        child.emit("error", Object.assign(new Error("fixture kill denied"), { code: "EPERM" }));
+        return false;
+      };
+      child.stdout.once("data", () => owner.abort());
+    });
+    assert.equal(childProcess.spawn, nativeSpawn);
+    assert.equal(builtins.spawn, nativeSpawn, "named built-in binding must be restored too");
+  }
+  for (const mode of ["abort", "timeout", "drain", "nonzero", "fallback-drain"]) {
     const directory = fs.mkdtempSync(path.join(tmpHome, "stdio-界-"));
     const release = path.join(directory, "release"), pidFile = path.join(directory, "pid");
     const ended = path.join(directory, "ended");
     const owner = new AbortController();
+    const forced = mode === "fallback-drain";
+    const forcedError = new Error("fixture primary failure before emergency holder drain");
+    let primaryError, terminalConfirmed = false;
+    const cleanupErrors = [];
     let root, running, exited;
     const holder = `
       const fs = require("node:fs");
       process.once("exit", () => fs.writeFileSync(${JSON.stringify(ended)}, "ended"));
       process.stdout.on("error", () => process.exit(0));
       const timer = setInterval(() => {
-        if (fs.existsSync(${JSON.stringify(release)})) {
+        if (!${forced} && fs.existsSync(${JSON.stringify(release)})) {
           clearInterval(timer);
           process.stdout.write("/Repo.git", () => process.exit(0));
         }
@@ -943,11 +989,12 @@ test("async Git bounds owned stdout after parent exit without losing terminal ou
         running = P.deriveContainerRef(process.cwd(), owner.signal);
         // Attach a rejection handler before any readiness await.
         const outcome = running.then((value) => ({ value }), (error) => ({ error }));
+        let actionError;
         try {
           await bounded(exited, "the real Git parent must exit");
           await new Promise((resolve) => setImmediate(resolve)); // after production's exit listener
           assert.equal(root.stdout.destroyed, false, "root exit alone must not discard buffered stdout");
-          if (mode === "abort") owner.abort();
+          if (mode === "abort" || forced) owner.abort();
           if (mode === "drain" || mode === "nonzero") {
             let settled = false;
             void outcome.then(() => { settled = true; });
@@ -956,7 +1003,7 @@ test("async Git bounds owned stdout after parent exit without losing terminal ou
             fs.writeFileSync(release, "release");
           }
           const result = await bounded(outcome, "owned stdout must close under its original controls");
-          if (mode === "abort") assert.equal(result.error?.name, "AbortError");
+          if (mode === "abort" || forced) assert.equal(result.error?.name, "AbortError");
           else {
             assert.ifError(result.error);
             assert.equal(result.value, mode === "timeout" ? P.pathContainer(process.cwd())
@@ -965,36 +1012,71 @@ test("async Git bounds owned stdout after parent exit without losing terminal ou
               "only numeric nonzero may fall through to the root probe");
           }
           assert.equal(root.stdout.destroyed, true, "helper completion is owned-stream close, not root exit");
-          if (mode === "abort" || mode === "timeout")
+          if (mode === "abort" || mode === "timeout" || forced)
             assert.equal(fs.existsSync(ended), false, "the helper closes only its pipe, not arbitrary descendants");
-        } finally {
-          fs.writeFileSync(release, "release");
-          await outcome;
+          if (forced) throw forcedError;
+        } catch (error) { actionError = error; throw error; }
+        finally {
+          try { fs.writeFileSync(release, "release"); }
+          catch (error) {
+            if (actionError) throw new AggregateError([actionError, error], "Git fixture release failed", { cause: actionError });
+            throw error;
+          } finally { await outcome; }
         }
       }, (child, args) => {
         if (args[0] !== "remote") return;
         root = child;
         exited = new Promise((resolve, reject) => { child.once("exit", resolve); child.once("error", reject); });
       });
-    } finally {
-      fs.writeFileSync(release, "release");
+    } catch (error) { primaryError = error; }
+    finally {
       // This test owns the holder too; production deliberately owns only its pipe.
       try {
         if (fs.existsSync(pidFile)) {
-          const deadline = Date.now() + 5000;
-          while (!fs.existsSync(ended)) {
-            assert.ok(Date.now() < deadline, "the test-owned stdout holder must finish after release");
-            await new Promise((resolve) => setTimeout(resolve, 5));
+          const pid = Number(fs.readFileSync(pidFile, "utf8"));
+          try {
+            fs.writeFileSync(release, "release");
+            const deadline = Date.now() + (forced ? 0 : 5000);
+            while (!fs.existsSync(ended)) {
+              assert.ok(Date.now() < deadline, "the test-owned stdout holder must finish after release");
+              await new Promise((resolve) => setTimeout(resolve, 5));
+            }
+          } catch (error) {
+            cleanupErrors.push(error);
+            try { process.kill(pid); }
+            catch (killError) { if (killError.code !== "ESRCH") throw killError; }
+            const deadline = Date.now() + 5000;
+            while (!terminalConfirmed) {
+              try { process.kill(pid, 0); }
+              catch (probeError) {
+                if (probeError.code !== "ESRCH") throw probeError;
+                terminalConfirmed = true;
+              }
+              if (!terminalConfirmed) {
+                assert.ok(Date.now() < deadline, "emergency kill must be followed by holder terminal confirmation");
+                await new Promise((resolve) => setTimeout(resolve, 5));
+              }
+            }
           }
-        }
-      } finally {
-        if (fs.existsSync(pidFile) && !fs.existsSync(ended)) {
-          try { process.kill(Number(fs.readFileSync(pidFile, "utf8"))); }
-          catch (error) { if (error.code !== "ESRCH") throw error; }
-        }
-        await running?.catch(() => {});
-      }
+        } else fs.writeFileSync(release, "release");
+      } catch (error) { cleanupErrors.push(error); }
+      finally { await running?.catch(() => {}); }
     }
+    const errors = [primaryError, ...cleanupErrors].filter(Boolean);
+    const failure = errors.length > 1 ? new AggregateError(errors, "Git fixture failed with cleanup errors", { cause: primaryError })
+      : errors[0];
+    assert.equal(childProcess.spawn, nativeSpawn);
+    assert.equal(builtins.spawn, nativeSpawn);
+    if (forced) {
+      if (primaryError !== forcedError || cleanupErrors.length !== 1 || !terminalConfirmed)
+        throw failure || new Error("forced emergency drain did not exercise its required path");
+      assert.ok(failure instanceof AggregateError);
+      assert.equal(failure.cause, forcedError, "cleanup must preserve the primary failure");
+      assert.equal(failure.errors[0], forcedError);
+      assert.equal(failure.errors.length, 2, "only the forced primary and release/drain failures are expected");
+      assert.match(failure.errors[1].message, /holder must finish after release/);
+      assert.equal(terminalConfirmed, true, "the emergency path must observe termination, not just send kill");
+    } else if (failure) throw failure;
   }
 });
 
