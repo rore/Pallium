@@ -12,7 +12,7 @@
 // here is pure/deterministic or touches only git, the local state dir, or the
 // Pallium daemon over HTTP.
 
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -29,35 +29,74 @@ export const DEDUP_EXPIRY_SECONDS = 300;
 
 // --- git plumbing -----------------------------------------------------------
 
-// Run git without throwing. Distinguishes a spawn failure (git missing /
-// timeout) from a clean non-zero exit (e.g. "not a git repo"), because
-// derive_container_ref() treats them differently — matching common.py, where
-// the first subprocess block's `except` returns the path container immediately
-// while a non-zero returncode falls through to the rev-list probe.
-//
-// ceiling: this uses SYNCHRONOUS execFileSync, unlike the Python peers which are
-// short-lived per-hook subprocesses. This plugin runs inside the long-lived
-// OpenCode server process, so each call can block the event loop for up to
-// SUBPROCESS_TIMEOUT_MS. Bounded (3s) and only on session-start / per-turn
-// derivation, so acceptable for the local single-user daemon; upgrade path is
-// async execFile if server responsiveness ever regresses.
-function _runGit(args, cwd) {
-  try {
-    const stdout = execFileSync("git", args, {
-      cwd: cwd || undefined,
-      timeout: SUBPROCESS_TIMEOUT_MS,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      windowsHide: true,
-    });
-    return { ok: true, code: 0, stdout: stdout || "" };
-  } catch (e) {
-    // ENOENT (git not installed) or ETIMEDOUT (hung) => spawn failure.
-    if (e && (e.code === "ENOENT" || e.code === "ETIMEDOUT" || typeof e.status !== "number")) {
-      return { ok: false, spawnError: true, stdout: "" };
+function _abortError() {
+  const error = new Error("Git discovery retired");
+  error.name = "AbortError";
+  return error;
+}
+function _checkSignal(signal) {
+  if (signal?.aborted) throw _abortError();
+}
+
+// Keep numeric nonzero distinct from missing/timeout/signal/overflow. Stderr is
+// ignored, and stdout has execFileSync's former 1 MiB byte ceiling, not a
+// character ceiling. Only close completes the promise: kill is not child drain.
+async function _runGit(args, cwd, signal) {
+  _checkSignal(signal);
+  return new Promise((resolve, reject) => {
+    let child, timer, failure = null, size = 0;
+    const chunks = [];
+    const stop = (reason) => {
+      if (!failure) { failure = reason; chunks.length = 0; }
+      try { child.kill(); } catch { /* close/error still owns completion */ }
+      // Root exit cannot close a pipe inherited elsewhere. Close only our end.
+      child.stdout?.destroy();
+    };
+    const cancel = () => stop("abort");
+    const data = (chunk) => {
+      if (failure) return;
+      size += chunk.length;
+      if (size > 1024 * 1024) stop("spawn");
+      else chunks.push(chunk);
+    };
+    const error = () => {
+      if (!failure) { failure = "spawn"; chunks.length = 0; }
+      // kill() can emit error synchronously; never re-enter kill from here.
+      child.stdout?.destroy();
+    };
+    const exit = (_code, killed) => {
+      // Timeout and abort still own an open stdout after the root has exited.
+      if (killed) error();
+    };
+    const close = (code, killed) => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", cancel);
+      child.stdout?.removeListener("data", data);
+      child.stdout?.removeListener("error", streamError);
+      child.removeListener("error", error);
+      child.removeListener("exit", exit);
+      if (failure === "abort") reject(_abortError());
+      else if (failure || killed || typeof code !== "number") resolve({ ok: false, spawnError: true, stdout: "" });
+      else resolve({ ok: code === 0, code, stdout: Buffer.concat(chunks).toString("utf8") });
+    };
+    const streamError = () => stop("spawn");
+    try {
+      child = spawn("git", args, {
+        cwd: cwd || undefined, stdio: ["ignore", "pipe", "ignore"], windowsHide: true,
+      });
+    } catch {
+      resolve({ ok: false, spawnError: true, stdout: "" });
+      return;
     }
-    return { ok: false, code: e.status, stdout: e.stdout ? String(e.stdout) : "" };
-  }
+    child.stdout.on("data", data);
+    child.stdout.once("error", streamError);
+    child.on("error", error);
+    child.once("exit", exit);
+    child.once("close", close);
+    timer = setTimeout(() => stop("spawn"), SUBPROCESS_TIMEOUT_MS);
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) cancel();
+  });
 }
 
 export function normalizeRemoteUrl(url) {
@@ -169,18 +208,32 @@ export function roadmapScopeRef(repositoryRef, root = "roadmap") {
   return `roadmap:v1:${repositoryRef}#${encoded}`;
 }
 
-export function repositoryScopeRef(cwd) {
-  const remote = _runGit(["remote", "get-url", "origin"], cwd);
-  if (remote.ok) {
-    const value = canonicalGitRemote(remote.stdout.trim());
-    if (value) return value;
+function _repositoryRemote(remote) {
+  return remote.ok ? canonicalGitRemote(remote.stdout.trim()) : null;
+}
+function _repositoryRoot(root) {
+  const value = root?.ok ? root.stdout.trim().split(/\r?\n/)[0] : "";
+  return /^[0-9a-f]{40,64}$/i.test(value) ? `repo:${value.toLowerCase()}` : null;
+}
+function _containerRef(cwd, remote, root) {
+  if (!remote.spawnError) {
+    if (remote.ok && remote.stdout.trim()) return "git:" + normalizeRemoteUrl(remote.stdout.trim());
+    if (root?.ok && root.stdout.trim()) return `repo:${root.stdout.trim().split(/\r?\n/)[0].slice(0, 12)}`;
   }
-  const root = _runGit(["rev-list", "--max-parents=0", "HEAD"], cwd);
-  if (root.ok) {
-    const value = root.stdout.trim().split(/\r?\n/)[0];
-    if (/^[0-9a-f]{40,64}$/i.test(value)) return `repo:${value.toLowerCase()}`;
-  }
-  return null;
+  return pathContainer(cwd);
+}
+// Facts live only in this call. Container and canonical repository normalization
+// deliberately differ, including root fallback after a remote spawn failure.
+export async function deriveGitRefs(cwd, signal) {
+  const remote = await _runGit(["remote", "get-url", "origin"], cwd, signal);
+  _checkSignal(signal);
+  const repository = _repositoryRemote(remote);
+  const root = repository ? null : await _runGit(["rev-list", "--max-parents=0", "HEAD"], cwd, signal);
+  _checkSignal(signal);
+  return { containerRef: _containerRef(cwd, remote, root), repositoryRef: repository || _repositoryRoot(root) };
+}
+export async function repositoryScopeRef(cwd, signal) {
+  return (await deriveGitRefs(cwd, signal)).repositoryRef;
 }
 export function structuralWorkRefsPayload(containerRef, structuralRefs, repositoryRef = null) {
   const repo = repositoryRef || containerRef;
@@ -190,24 +243,21 @@ export function structuralWorkRefsPayload(containerRef, structuralRefs, reposito
     local_ref: localRef,
   }));
 }
-export function deriveContainerRef(cwd) {
-  const remote = _runGit(["remote", "get-url", "origin"], cwd);
-  if (remote.spawnError) return pathContainer(cwd);
-  if (remote.ok && remote.stdout.trim()) {
-    return "git:" + normalizeRemoteUrl(remote.stdout.trim());
-  }
-  const root = _runGit(["rev-list", "--max-parents=0", "HEAD"], cwd);
-  if (root.ok && root.stdout.trim()) {
-    const rootHash = root.stdout.trim().split(/\r?\n/)[0].slice(0, 12);
-    return `repo:${rootHash}`;
-  }
-  return pathContainer(cwd);
+export async function deriveContainerRef(cwd, signal) {
+  const remote = await _runGit(["remote", "get-url", "origin"], cwd, signal);
+  _checkSignal(signal);
+  const root = remote.spawnError || remote.ok && remote.stdout.trim()
+    ? null : await _runGit(["rev-list", "--max-parents=0", "HEAD"], cwd, signal);
+  _checkSignal(signal);
+  return _containerRef(cwd, remote, root);
 }
 
-export function deriveActorRef(cwd) {
+export async function deriveActorRef(cwd, signal) {
+  _checkSignal(signal);
   const configured = typeof process.env.PALLIUM_HOOK_ACTOR_REF === "string" ? process.env.PALLIUM_HOOK_ACTOR_REF.trim() : "";
   if (configured) return configured;
-  const r = _runGit(["config", "user.name"], cwd);
+  const r = await _runGit(["config", "user.name"], cwd, signal);
+  _checkSignal(signal);
   if (r.ok && r.stdout.trim()) return r.stdout.trim();
   return "local";
 }
@@ -293,15 +343,26 @@ export function getPinnedActor(sessionId) {
   return data && typeof data.actor_ref === "string" && data.actor_ref ? data.actor_ref : null;
 }
 
-export function resolveContainerRef(cwd, sessionId) {
-  return getPinnedContainer(sessionId) || deriveContainerRef(cwd);
+export async function resolveContainerRef(cwd, sessionId, signal) {
+  _checkSignal(signal);
+  const pinned = getPinnedContainer(sessionId);
+  if (pinned) return pinned;
+  const derived = await deriveContainerRef(cwd, signal);
+  _checkSignal(signal);
+  return getPinnedContainer(sessionId) || derived;
 }
 
-export function resolveActorRef(cwd, sessionId) {
+export async function resolveActorRef(cwd, sessionId, { signal, current = () => true } = {}) {
+  const check = () => { _checkSignal(signal); if (!current()) throw _abortError(); };
+  check();
   const pinned = getPinnedActor(sessionId);
   if (pinned) return pinned;
-  const actor = deriveActorRef(cwd);
   const container = getPinnedContainer(sessionId);
+  const actor = await deriveActorRef(cwd, signal);
+  check();
+  if (getPinnedContainer(sessionId) !== container) throw _abortError();
+  const authoritative = getPinnedActor(sessionId);
+  if (authoritative) return authoritative;
   if (container) pinContainer(sessionId, container, undefined, actor);
   return actor;
 }
@@ -1147,14 +1208,15 @@ export const RETRIEVAL_FALLBACK_QUERY = "recent decisions, progress, and open ta
 const _MAX_CHANGED_FILES = 8;
 const _GENERIC_BRANCHES = new Set(["main", "master", "develop", "trunk", "head"]);
 
-function _gitOut(cwd, args, strip = true) {
-  const r = _runGit(args, cwd);
+async function _gitOut(cwd, args, strip, signal) {
+  const r = await _runGit(args, cwd, signal);
+  _checkSignal(signal);
   if (!r.ok) return "";
   return strip ? r.stdout.trim() : r.stdout;
 }
 
-function _branchTokens(cwd) {
-  const branch = _gitOut(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
+async function _branchTokens(cwd, signal) {
+  const branch = await _gitOut(cwd, ["rev-parse", "--abbrev-ref", "HEAD"], true, signal);
   if (!branch || _GENERIC_BRANCHES.has(branch.toLowerCase())) return [];
   return branch.replace(/\//g, " ").replace(/-/g, " ").replace(/_/g, " ").split(/\s+/).filter(Boolean);
 }
@@ -1165,9 +1227,9 @@ function _stem(p) {
   return ext ? base.slice(0, -ext.length) : base;
 }
 
-function _changedFileTokens(cwd) {
+async function _changedFileTokens(cwd, signal) {
   const paths = [];
-  const status = _gitOut(cwd, ["status", "--porcelain"], false);
+  const status = await _gitOut(cwd, ["status", "--porcelain"], false, signal);
   for (const line of status.split(/\r?\n/)) {
     let p = line.length > 3 ? line.slice(3).trim() : "";
     if (p) {
@@ -1175,7 +1237,7 @@ function _changedFileTokens(cwd) {
       paths.push(p);
     }
   }
-  const recent = _gitOut(cwd, ["log", "-3", "--name-only", "--pretty=format:"], false);
+  const recent = await _gitOut(cwd, ["log", "-3", "--name-only", "--pretty=format:"], false, signal);
   for (const line of recent.split(/\r?\n/)) {
     const p = line.trim();
     if (p) paths.push(p);
@@ -1193,8 +1255,9 @@ function _changedFileTokens(cwd) {
   return stems;
 }
 
-export function deriveOrientationQuery(cwd) {
-  const tokens = [..._branchTokens(cwd), ..._changedFileTokens(cwd)];
+export async function deriveOrientationQuery(cwd, signal) {
+  const tokens = [...await _branchTokens(cwd, signal), ...await _changedFileTokens(cwd, signal)];
+  _checkSignal(signal);
   if (!tokens.length) return RETRIEVAL_FALLBACK_QUERY;
   return redactSensitive(tokens.join(" "));
 }

@@ -164,24 +164,47 @@ queue a native user input; the context hook adds the Relay content to the model
 request. The receipt ACK only confirms attachment to model-bound context. It
 does not mean the model completed the requested work.
 
+Git discovery uses asynchronous native subprocesses with a 3-second per-command
+timeout and a 1 MiB stdout byte limit. It shares Git facts within a callback, not
+across sessions. Cancellation does not publish fallback identity or late pins.
+This removes synchronous Git from the server event loop; it does not set an
+aggregate hook-latency budget or guarantee descendant-process drain.
+[Qualification run44046705214](https://github.com/rore/Pallium/actions/runs/44046705214)
+at `29f9a602d687a76be779f69d6e76eb96c9ae8d86` passed strict4 baseline RED/candidate GREEN
+and the full package: 241 cases, 234 passed, zero failures and seven existing
+Windows skips. All45 required cases and the separate22 async cases passed unskipped.
+The whole released OpenCode 2.3.0 journey passed all13 native checks and HTTP25,
+including original payload non-replay before fresh input and four distinct NEW
+automatic wakes.
+Source11/binary bookends and normal/final owned drain passed. Real-child caller
+tests establish Git responsiveness separately; they do not inject delayed Git
+inside the released host. This is hosted qualification, not installed/loaded-host
+recovery or downstream-task completion.
+
+V1 deletion clears pending payloads and invalidates its original callback
+lifetime before close. It retains one empty closed Map per deleted session ID
+until explicit create/chat reactivation or plugin unload. This is O(distinct
+deleted IDs), not globally bounded memory. Passive late callbacks cannot
+reactivate a deleted ID or clean up its same-ID successor.
+
 V2 can attach up to three deliveries in a wake, with the reserved trigger first
 and a separate ACK for each attached message. If the claim response is lost,
 continuation restores only the trigger. Unobserved siblings keep their original
 leases and can be collected by an existing turn or wake once eligible.
 
-### Coalesced wake settlement (qualification pending)
+### Coalesced wake settlement and recovery (hosted qualification)
 
-V2 preserves its ordinary same-input terminal correlation. The candidate native
-wake path uses the OpenCode 2.3.0 metadata API floor. Exact CI archive/version pins
-make evidence reproducible; they do not require users to stay on one exact
-release. No 2.3.0 runtime qualification is claimed yet. Native idle covers the whole busy period,
+V2 preserves its ordinary same-input terminal correlation. The native wake path
+requires OpenCode 2.3.0 metadata APIs or compatible later releases. Exact CI
+archive/version pins make evidence reproducible; they are not an exact user-version
+lock or certification of every later release. Native idle covers the whole busy period,
 including ordinary inputs steered in before idle. After the native wait, fresh
 context must still contain the exact wake user ID, text, marker, generation and
 delivery. The first later idle must have a distinct valid ID and outcome exactly
 `succeeded`, `failed` or `interrupted`. The plugin rechecks its current session,
 location, endpoint, container and generations before the existing terminal
 request. The backend still checks the current owner and exact wake binding.
-If the validated current snapshot already says `admitted: true`, the candidate
+If the validated current snapshot already says `admitted: true`, the plugin
 skips the redundant admission write but still waits and proves terminal state.
 A sent or lost response never sets that flag locally. An unresolved false
 snapshot keeps the existing admission path; this is not global one-shot deduplication.
@@ -217,8 +240,28 @@ Backend transactions fence backend changes; they do not create an atomic native
 snapshot or undo an already committed request. Claim/ACK, expiry, original
 delivery priority and continuation rules stay unchanged.
 
-These paths are source candidates, not runtime-qualified recovery. All eight
-qualification campaigns failed. The first two skipped native; the third failed
+The bounded disposable Windows OpenCode 2.3.0 recovery witness passed at
+[`d9ca9db8`](https://github.com/rore/Pallium/commit/d9ca9db82c1662ba25d33d4141c3ae4489a14354)
+in [run43929918263](https://github.com/rore/Pallium/actions/runs/43929918263).
+It was independently reviewed, accepted and merged in
+[PR410](https://github.com/rore/Pallium/pull/410) as
+[`9a885914`](https://github.com/rore/Pallium/commit/9a8859149581822354178f22f0836814aa1c14d1):
+
+- Strict baseline 3 expected RED and candidate 3 GREEN were observed.
+- Package 218: 211 passed, zero failed, seven existing skips; all 44 required cases passed.
+- The native witness ran unskipped with all 13 checks true, including admission
+  counts, ACK/payload checks, reload/compaction holds, fresh recovery, the original
+  pre-U payload non-replay oracle and four distinct NEW sequential automatic wakes.
+- Required HTTP 25/25 passed. Source/binary bookends and normal/final owned drain passed.
+- Ordinary Python 3.13 completed 9,190 passed/106 skipped/2 xfailed. Python 3.12
+  stopped early at 7,252 passed/1 failed/37 skipped/2 xfailed: initial registration
+  returned 503 `relay_busy` instead of 200 before the association discovery/send/reply
+  journey. Its immediate cause remains unknown; its later 3.12 assertions were not
+  reached. The same test passed on 3.13. Relevant controls passed in both lanes,
+  Windows smoke and governance passed, and the retained failure was accepted as
+  nonblocking for this scope. Overall ordinary CI was not green.
+
+All eight earlier qualification campaigns remain failed. The first two skipped native; the third failed
 native with its predicate/cause still unknown. The fourth and fifth failed the
 package and skipped native. The sixth passed the full package and ordinary CI
 but failed the original-delivery prerequisite before its required native journey.
@@ -234,16 +277,16 @@ smoke, controls and package, then failed the unchanged native admission-count
 assertion: two successful admitted requests versus one terminal for the original
 delivery. That does not prove duplicate native prompts or payload replay.
 Later ACK/payload, reload/compaction, pre-U non-replay and four NEW wake checks
-were not reached. The candidate now guards known admission at the shared caller;
-new regression execution and native recovery qualification are still pending.
+were not reached. The shared caller now guards known admission; the ninth
+campaign's exact new regression RED/GREEN and full native journey passed as above.
 Historical failures and
 partial passes remain in the [result receipt](https://github.com/rore/Pallium/pull/410#issuecomment-6886277488).
 Earlier 2.2.7 discovery-only evidence does not qualify settlement or recovery
-after compaction. Minimum/current 2.3.0 qualification remains pending.
-The extended witness requires four distinct NEW sequential automatic wakes after
-recovery, not an earlier cumulative backlog latch or batched payload count.
-Full wake-anchor
-recovery remains open in the [reliability feature](../../roadmap/features/fix-opencode-plugin-reliability.md).
+after compaction. The later 2.3.0 witness does not certify other platforms, every
+future release, installed recovery or downstream task success. Its four NEW
+sequential wakes are not an earlier cumulative backlog latch or batched payload count.
+Installed recovery and other findings remain open in the
+[reliability feature](../../roadmap/features/fix-opencode-plugin-reliability.md).
 
 V2 owns a short server lease and renews it while polling. Disposal retires local
 hooks and the event stream, cancels ordinary integration requests, and fences
@@ -301,7 +344,7 @@ revision. Verify both revisions before loading the complete adapter directory
 and enabling its wake callbacks. An older service rejects the new batch count.
 Older adapters can still request one exact delivery from the updated service.
 
-Current combined ownership and capture qualification covers isolated Windows
+Existing combined ownership and capture qualification covers isolated Windows
 OpenCode 2.0.24. This does not imply compatibility with every V2 release.
 The isolated Windows E2E uses
 `PALLIUM_OPENCODE_V2_BINARY` and a local mock provider. It verifies idle and busy
@@ -313,15 +356,16 @@ and verifies successor delivery after claim-lease recovery.
 
 <a id="known-gaps"></a>
 
-- V1 remains passive. Current combined V2 qualification is limited to isolated
-  Windows OpenCode 2.0.24; other releases/platforms and the global installation
-  remain unqualified. Native admission and ACK do not guarantee interrupted task completion.
+- V1 remains passive. The ownership/capture witness covers isolated Windows
+  OpenCode 2.0.24; coalesced wake/recovery has the separate isolated Windows 2.3.0
+  qualification above. Neither certifies all other releases/platforms or the
+  global installation. Native admission and ACK do not guarantee interrupted task completion.
 - Usage-audit population is server-owned after durable assistant ingestion.
 - Compaction records the latest assistant turn but does not run a pre-compaction
   query.
 - Session orientation runs on `session.created`, not on every resumed session.
-- Git discovery is synchronous and bounded; a hung Git call can briefly block
-  the OpenCode event loop.
+- Git timeout and output bounds are per command, not an aggregate hook budget.
+  The hosted qualification above adds no aggregate-latency or descendant-drain guarantee.
 - There is no `pallium setup opencode` command. Plugin, MCP, and guidance setup
   remain manual.
 

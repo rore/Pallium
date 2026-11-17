@@ -1,6 +1,9 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+import { setTimeout as delay } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 const profile = mkdtempSync(path.join(tmpdir(), "pallium-caller-"));
@@ -16,7 +19,7 @@ const deliveryID = "relay-delivery-" + "a".repeat(32);
 const endpointID = "relay-session-" + "b".repeat(32);
 const nativeID = "msg_relaywake123";
 const location = "/tmp/pallium-v2-exact";
-const container = deriveContainerRef(location);
+const container = await deriveContainerRef(location);
 const relaySession = { runtime: "opencode", session_ref: sessionID, container_ref: container,
   endpoint_id: endpointID, scope_generation: 0, alias: "planner", state: "recent", destination_health: "active" };
 const delivery = { delivery_id: deliveryID, claim_token: "claim-token", message_id: "relay-message-test",
@@ -218,6 +221,13 @@ test("assistant completion and compaction ingest only sessions owned by this dir
 });
 
 const pause = () => new Promise((resolve) => setTimeout(resolve, 20));
+async function until(predicate, message) {
+  const deadline = Date.now() + 5000;
+  while (!predicate()) {
+    assert.ok(Date.now() < deadline, message);
+    await delay(5);
+  }
+}
 const snapshot = (overrides = {}) => ({ generation: 1, delivery_id: deliveryID, native_input_id: nativeID,
   native_location: location, scope_generation: 0, admitted: false, terminal: false, ...overrides });
 const projectedWake = () => ({ id: nativeID, role: "user", content: [{ type: "text",
@@ -297,6 +307,7 @@ async function callerFixture(options = {}) {
     } },
   };
   const dispose = await v2.setup(ctx);
+  await until(() => calls.some((c) => c.path === "/relay/sessions"), "startup Git must finish before fixture actions");
   await pause();
   if (options.roleHistory || history.some((message) => message?.type === "assistant")) {
     const startId = options.roleStartId || "msg_role_source";
@@ -330,6 +341,116 @@ async function callerFixture(options = {}) {
     },
   };
 }
+
+test("Git discovery yields to unrelated caller work while child waits", async () => {
+  const directory = mkdtempSync(path.join(profile, "git-yield-界-"));
+  const ready = path.join(directory, "ready");
+  const release = path.join(directory, "release");
+  const work = path.join(directory, "work.json");
+  const result = path.join(directory, "result.json");
+  const sibling = "ses_git_sibling";
+  const siblingSession = { ...relaySession, session_ref: sibling,
+    endpoint_id: "relay-session-" + "c".repeat(32) };
+  const previousPin = getPinnedContainer(sessionID);
+  const nativeGets = [];
+  const savedSync = childProcess.execFileSync, savedSpawn = childProcess.spawn;
+  let armed = false, intercepted = false, child, closed, primary, siblingWork, f;
+  const program = String.raw`
+    import { existsSync, readFileSync, writeFileSync } from "node:fs";
+    import path from "node:path";
+    import { setTimeout } from "node:timers/promises";
+    const directory = process.argv[1];
+    const file = name => path.join(directory, name);
+    writeFileSync(file("ready"), "ready");
+    const until = Date.now() + 1000;
+    while (!existsSync(file("release")) && Date.now() < until) await setTimeout(5);
+    const released = existsSync(file("release"));
+    const work = released && existsSync(file("work.json"))
+      ? JSON.parse(readFileSync(file("work.json"), "utf8")) : null;
+    writeFileSync(file("result.json"), JSON.stringify({
+      released, workCompleted: work?.completed === true,
+    }));
+  `;
+  const take = (command, args) => {
+    if (!armed || command !== "git" || args.join(" ") !== "remote get-url origin") return false;
+    armed = false;
+    intercepted = true;
+    siblingWork = new Promise((resolve, reject) => setImmediate(async () => {
+      try {
+        const until = Date.now() + 5000;
+        while (!existsSync(ready)) {
+          assert.ok(Date.now() < until, "controlled Git child did not become ready");
+          await delay(5);
+        }
+        const messages = [{ id: "msg_git_sibling", role: "user",
+          content: [{ type: "text", text: "unrelated ordinary work שלום" }] }];
+        await f.hooks.context({ sessionID: sibling, messages });
+        assert.ok(nativeGets.includes(sibling), "real sibling context must check native ownership");
+        const turns = f.calls.filter((c) => c.path === "/relay/turn" && c.body.session_ref === sibling);
+        assert.equal(turns.length, 1, "real sibling context must complete its exact Relay turn");
+        assert.equal(turns[0].body.container_ref, container);
+        assert.ok(messages[0].content.length > 1, "real sibling context must publish its scoped readback");
+        writeFileSync(work, JSON.stringify({ completed: true }));
+        writeFileSync(release, "release");
+        resolve();
+      } catch (error) { reject(error); }
+    }));
+    siblingWork.catch(() => {}); // Joined below; avoid an early unhandled rejection while the child drains.
+    return true;
+  };
+  try {
+    // Pinned startup cannot consume the gate; the primary hook is unpinned later.
+    pinContainer(sessionID, container, undefined, "fixture-actor");
+    pinContainer(sibling, container, undefined, "fixture-actor");
+    f = await callerFixture({
+      get: async ({ sessionID: id }) => {
+        nativeGets.push(id);
+        return { id, location: { directory: location } };
+      },
+      response: async (route, body) => body.session_ref === sibling &&
+        ["/relay/turn", "/relay/opencode/wake"].includes(route)
+        ? { session: siblingSession, wake: null, deliveries: [] } : undefined,
+    });
+    await f.tick();
+    assert.ok(f.calls.some((c) => c.body.operation === "enroll"), "startup enrollment must precede the shim");
+    childProcess.execFileSync = (command, args, options) => {
+      if (!take(command, args)) return savedSync(command, args, options);
+      return savedSync(process.execPath, ["--input-type=module", "-e", program, directory],
+        { ...options, cwd: directory });
+    };
+    childProcess.spawn = (command, args, options) => {
+      if (!take(command, args)) return savedSpawn(command, args, options);
+      child = savedSpawn(process.execPath, ["--input-type=module", "-e", program, directory],
+        { ...options, cwd: directory });
+      closed = new Promise((resolve) => child.once("close", resolve));
+      return child;
+    };
+    syncBuiltinESMExports();
+    removeSessionPin(sessionID);
+    armed = true;
+    primary = f.hooks.prompt({ sessionID, messageID: "msg_git_primary",
+      prompt: { text: "primary discovery work while a sibling remains responsive" } });
+    await primary;
+    assert.equal(intercepted, true, "production primary prompt must reach unpinned Git discovery");
+    await siblingWork;
+    await closed;
+    const observed = JSON.parse(readFileSync(result, "utf8"));
+    assert.ok(observed.released && observed.workCompleted,
+      "Git discovery must yield to unrelated caller work");
+  } finally {
+    writeFileSync(release, "release");
+    if (child && child.exitCode === null && child.signalCode === null) child.kill();
+    await Promise.allSettled([primary, siblingWork, closed]);
+    childProcess.execFileSync = savedSync;
+    childProcess.spawn = savedSpawn;
+    syncBuiltinESMExports();
+    await f?.close();
+    removeSessionPin(sibling);
+    removeSessionPin(sessionID);
+    if (previousPin) pinContainer(sessionID, previousPin, undefined, "fixture-actor");
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 for (const failure of ["503", "timeout"]) {
   test(`transient poll ${failure} does not reenroll an established owner`, { timeout: 12000 }, async () => {
@@ -2252,18 +2373,29 @@ test("assistant ownership helper cannot mark a rebound lifetime as captured", as
   }, fetch: async (route) => {
     if (route === "/items") { captureCheck = true; return jsonResponse(captureReceipt); }
   }, response: async (route) => {
-    if (route === "/relay/turn") { rebindCheck = true; return { session: { ...relaySession, scope_generation: generation }, deliveries: [] }; }
+    if (route === "/relay/turn") {
+      if (generation === 1) rebindCheck = true;
+      return { session: { ...relaySession, scope_generation: generation }, deliveries: [] };
+    }
     if (route === "/relay/opencode/wake") return { session: { ...relaySession, scope_generation: generation }, wake: null, deliveries: [] };
   } });
   let rebound;
-  const first = f.hooks.compaction({ sessionID });
+  let first;
   try {
+    const seedTurn = f.calls.findLastIndex((call) => call.path === "/relay/turn");
+    assert.ok(seedTurn >= 0, "fixture must seed its actual role-source turn");
+    await until(() => f.calls.slice(seedTurn + 1).some((call) =>
+      call.body.operation === "enroll" && call.body.scope_generation === 0),
+      "seed enrollment must finish before arming the generation1 fence");
+    first = f.hooks.compaction({ sessionID });
     await captureOwned.entered;
     generation = 1;
     rebound = f.hooks.context({ sessionID, messages: [natural("msg_helper_rebind")] });
     await rebindOwned.entered;
-    // Both helpers finish under the old lifetime; rebind resumes before capture.
+    // The actual generation1 enrollment, not seed startup, owns this fence.
     rebindOwned.release();
+    await until(() => f.calls.some((call) => call.body.operation === "enroll" && call.body.scope_generation === 1),
+      "wait for the actual successor enrollment before releasing the old capture");
     captureOwned.release();
     await Promise.all([rebound, first]);
     assert.ok(f.calls.some((call) => call.body.operation === "enroll" && call.body.scope_generation === 1),
@@ -2318,6 +2450,507 @@ test("retired verified wake context fails closed without attachment or ACK", asy
     assert.deepEqual(user, before);
     assert.equal(f.calls.filter((c) => c.path === "/relay/deliveries/ack").length, 0);
   } finally { gate.release(); await outcome; await f.close(); }
+});
+
+async function holdNativeGit(commandArgs, stdout, run) {
+  const saved = childProcess.spawn;
+  const directory = mkdtempSync(path.join(profile, "held-native-界-"));
+  const release = path.join(directory, "release");
+  let child, closed, ready = false;
+  childProcess.spawn = (command, args, options) => {
+    if (ready || child || command !== "git" || args.join(" ") !== commandArgs) return saved(command, args, options);
+    child = saved(process.execPath, ["-e", `
+      const fs = require("node:fs");
+      process.stdout.write(${JSON.stringify(stdout)});
+      const timer = setInterval(() => {
+        if (fs.existsSync(${JSON.stringify(release)})) { clearInterval(timer); process.exit(0); }
+      }, 5);
+      setTimeout(()=>process.exit(0),1500).unref();
+    `], { ...options, cwd: directory });
+    closed = new Promise((resolve) => child.once("close", resolve));
+    child.stdout.once("data", () => { ready = true; });
+    return child;
+  };
+  syncBuiltinESMExports();
+  try {
+    await run({
+      started: () => until(() => ready, "production caller must reach the held native Git child"),
+      release: () => writeFileSync(release, "release"),
+    });
+  } finally {
+    writeFileSync(release, "release");
+    if (child && child.exitCode === null && child.signalCode === null) child.kill();
+    await closed;
+    childProcess.spawn = saved;
+    syncBuiltinESMExports();
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+async function withScopeGit(run) {
+  const saved = childProcess.spawn;
+  const directory = mkdtempSync(path.join(profile, "scope-git-界-"));
+  const children = [];
+  let remote = null;
+  childProcess.spawn = (command, args, options) => {
+    if (command !== "git") return saved(command, args, options);
+    const source = args[0] === "remote" && remote !== null
+      ? `process.stdout.write(${JSON.stringify(remote)})` : "process.exit(128)";
+    const child = saved(process.execPath, ["-e", source], { ...options, cwd: directory });
+    children.push({ child, closed: new Promise((resolve) => child.once("close", resolve)) });
+    return child;
+  };
+  syncBuiltinESMExports();
+  try { await run((value) => { remote = value; }); }
+  finally {
+    for (const { child } of children) if (child.exitCode === null && child.signalCode === null) child.kill();
+    await Promise.all(children.map(({ closed }) => closed));
+    childProcess.spawn = saved;
+    syncBuiltinESMExports();
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+test("V2 timer-only scope mismatch re-arms discovery without native callbacks", { timeout: 30000 }, async () => {
+  for (const boundary of ["recover", "delete", "dispose", "native-owner"]) {
+    await withScopeGit(async (setRemote) => {
+      removeSessionPin(sessionID);
+      let registration = relaySession, ownedHere = true, deleted = false;
+      const f = await callerFixture({
+        get: async ({ sessionID: id }) => ({ id, location: { directory: ownedHere ? location : "/tmp/foreign" } }),
+        fetch: async (route) => route === "/relay/sessions" ? jsonResponse(deleted ? [] : [registration]) : undefined,
+        response: (route) => route === "/relay/opencode/wake" ? { session: registration, wake: null, deliveries: [] } : undefined,
+      });
+      try {
+        await until(() => f.calls.some((c) => c.body.operation === "enroll"), "fallback scope must enroll first");
+        assert.equal(getPinnedContainer(sessionID), null, "timer discovery must stay unpinned");
+        const lists = f.calls.filter((c) => c.path === "/relay/sessions").length;
+        if (boundary === "delete") {
+          deleted = true;
+          await f.emit({ type: "session.deleted", data: { sessionID } });
+          await until(() => f.calls.some((c) => c.path === "/relay/sessions/close"), "delete must finish its own close");
+        } else if (boundary === "dispose") await f.dispose();
+        else if (boundary === "native-owner") ownedHere = false;
+        const recovered = "git:git.example.test/team/recovered";
+        registration = { ...relaySession, container_ref: recovered, scope_generation: 1 };
+        setRemote("https://git.example.test/Team/Recovered.git");
+        await f.tick();
+        if (boundary !== "dispose" && boundary !== "delete")
+          await until(() => f.calls.some((c) => c.body.operation === "detach"), "old timer binding must retire");
+        if (boundary === "recover") {
+          const [detach] = f.calls.filter((c) => c.body.operation === "detach");
+          assert.equal(detach.body.container_ref, container);
+          assert.equal(detach.body.scope_generation, 0);
+          await f.tick();
+          await until(() => f.calls.some((c) => c.body.operation === "enroll" && c.body.container_ref === recovered),
+            "a later timer alone must rediscover the recovered scope");
+          await f.tick();
+          await until(() => f.calls.some((c) => c.body.operation === "poll" && c.body.container_ref === recovered),
+            "the recovered registration must actually poll");
+          assert.equal(f.calls.filter((c) => c.path === "/relay/sessions").length, lists + 1);
+          const enrolled = f.calls.filter((c) => c.body.operation === "enroll");
+          assert.deepEqual(enrolled.map((c) => [c.body.container_ref, c.body.scope_generation]), [[container, 0], [recovered, 1]]);
+        } else {
+          await f.tick();
+          assert.equal(f.calls.filter((c) => c.path === "/relay/sessions").length, lists,
+            `${boundary}: ordinary retirement must not start discovery again`);
+          assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, 1);
+        }
+        assert.equal(f.calls.filter((c) => ["/relay/turn", "/item-and-query", "/relay/deliveries/ack"].includes(c.path)).length, 0);
+        assert.deepEqual(f.native, { prompt: [], wait: 0, interrupt: 0 });
+        assert.deepEqual(f.history, []);
+        assert.equal(getPinnedContainer(sessionID), null);
+      } finally { await f.close(); removeSessionPin(sessionID); }
+    });
+  }
+});
+
+test("V2 in-flight discovery cannot consume a scope-mismatch re-arm", { timeout: 30000 }, async () => {
+  for (const boundary of ["git", "list", "ownership"]) {
+    await withScopeGit(async (setRemote) => {
+      removeSessionPin(sessionID);
+      const pollGate = barrier(), discoveryGate = barrier();
+      let armed = false, pollHeld = false, discoveryHeld = false, listStarted = false;
+      let registration = relaySession;
+      const f = await callerFixture({ list: [[]],
+        get: async ({ sessionID: id }) => {
+          if (armed && !pollHeld) { pollHeld = true; await pollGate.wait(); }
+          else if (armed && boundary === "ownership" && listStarted && !discoveryHeld) {
+            discoveryHeld = true; await discoveryGate.wait();
+          }
+          return { id, location: { directory: location } };
+        },
+        fetch: async (route, body) => {
+          if (armed && route === "/relay/sessions" && !body.session_ref) {
+            listStarted = true;
+            if (boundary === "list" && !discoveryHeld) { discoveryHeld = true; await discoveryGate.wait(); }
+            return jsonResponse([registration]);
+          }
+          if (route === "/relay/sessions" && (body.session_ref || registration !== relaySession)) return jsonResponse([registration]);
+        },
+        response: (route) => route === "/relay/opencode/wake" ? { session: registration, wake: null, deliveries: [] } : undefined,
+      });
+      try {
+        // Restore a real old binding without consuming startup's empty-discovery retry.
+        await f.emit({ type: "session.created", data: { sessionID } });
+        await until(() => f.calls.some((c) => c.body.operation === "enroll"), "old scope must finish restore");
+        const recovered = "git:git.example.test/team/recovered";
+        registration = { ...relaySession, container_ref: recovered, scope_generation: 1 };
+        setRemote("https://git.example.test/Team/Recovered.git");
+        const race = async (gitGate) => {
+          armed = true;
+          await f.tick();
+          if (gitGate) await gitGate.started();
+          else await until(() => discoveryHeld, `discovery must reach its ${boundary} boundary`);
+          assert.equal(pollHeld, true);
+          pollGate.release();
+          await until(() => f.calls.some((c) => c.body.operation === "detach"), "concurrent timer poll must retire the mismatched item");
+          if (gitGate) gitGate.release();
+          discoveryGate.release();
+          armed = false;
+          // Real repeated timer ticks, not a sleep claiming the old Git child has closed.
+          const deadline = Date.now() + 5000;
+          while (!f.calls.some((c) => c.body.operation === "enroll" && c.body.container_ref === recovered)) {
+            assert.ok(Date.now() < deadline, `stale ${boundary} discovery cannot consume the new re-arm`);
+            await f.tick();
+          }
+          assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, 2);
+          assert.equal(f.calls.filter((c) => c.body.operation === "detach").length, 1);
+          await f.tick();
+          await until(() => f.calls.some((c) => c.body.operation === "poll" && c.body.container_ref === recovered),
+            "only the new scope may resume polling");
+          assert.equal(f.calls.filter((c) => ["/relay/turn", "/item-and-query", "/relay/deliveries/ack"].includes(c.path)).length, 0);
+          assert.deepEqual(f.native, { prompt: [], wait: 0, interrupt: 0 });
+        };
+        if (boundary === "git")
+          await holdNativeGit("remote get-url origin", "https://git.example.test/Team/Recovered.git", race);
+        else await race();
+      } finally { pollGate.release(); discoveryGate.release(); await f.close(); removeSessionPin(sessionID); }
+    });
+  }
+});
+
+test("V2 prompt capture reservations retry only unissued original attempts", { timeout: 30000 }, async () => {
+  const event = { sessionID, messageID: "msg_reservation_retry", prompt: { text: "ordinary unicode 界 source" } };
+  for (const failure of ["scope", "after-git", "actor", "actor-pin", "after-claim", "prewrite-error", "null-write"]) {
+    let armed = false, gets = 0, foreign = false;
+    const f = await callerFixture({
+      get: async ({ sessionID: id }) => {
+        const call = armed ? ++gets : 0;
+        if (call === ({ scope: 2, "after-git": 3, actor: 4 })[failure] || foreign)
+          return { id, location: { directory: "/tmp/foreign" } };
+        return { id, location: { get directory() {
+          if (call === 4 && failure === "actor-pin")
+            queueMicrotask(() => { removeSessionPin(sessionID); pinContainer(sessionID, container); });
+          return location;
+        } } };
+      },
+      response: (route) => {
+        if (armed && route === "/relay/turn" && failure === "after-claim") foreign = true;
+        if (armed && route === "/item-and-query" && failure === "null-write") return null;
+      },
+    });
+    try {
+      pinContainer(sessionID, container, undefined, "fixture-actor");
+      armed = true;
+      const metadata = failure === "prewrite-error"
+        ? { get pallium_work_refs() { throw new Error("prewrite metadata failure"); } } : undefined;
+      await f.hooks.prompt({ ...event, metadata });
+      const writes = () => f.calls.filter((c) => c.path === "/item-and-query");
+      assert.equal(writes().length, failure === "null-write" ? 1 : 0, failure);
+      armed = false; foreign = false;
+      pinContainer(sessionID, container, undefined, "fixture-actor");
+      await f.hooks.prompt(event);
+      assert.equal(writes().length, failure === "null-write" ? 2 : 1,
+        `${failure}: the same native ID must retry an uncommitted capture`);
+      const captured = writes().at(-1).body;
+      assert.equal(captured.source_id, ocNativeMessageSourceId("user", sessionID, event.messageID));
+      assert.equal(captured.source_turn_id, event.messageID);
+      assert.equal(captured.content, event.prompt.text);
+      assert.equal(captured.container_ref, container);
+      assert.equal(captured.actor_ref, "fixture-actor");
+      await f.hooks.prompt(event);
+      assert.equal(writes().length, failure === "null-write" ? 2 : 1, "successful capture stays deduplicated");
+      assert.equal(f.calls.filter((c) => c.path === "/relay/turn").length, 1,
+        "retry reuses the immutable claim instead of reserving a new causal turn");
+    } finally { await f.close(); removeSessionPin(sessionID); }
+  }
+  {
+    let rejectCapture = true;
+    const f = await callerFixture({ response: (route) => route === "/item-and-query" && rejectCapture ? null : undefined });
+    try {
+      await f.hooks.prompt(event); // retain its immutable input hash after an explicit failed write
+      rejectCapture = false;
+      await f.hooks.prompt({ ...event, prompt: { text: "different text for the same native ID" } });
+      assert.equal(f.calls.filter((c) => c.path === "/item-and-query").length, 1, "role hash mismatch cannot capture");
+      await f.hooks.prompt(event);
+      assert.equal(f.calls.filter((c) => c.path === "/item-and-query").length, 2,
+        "hash rejection must not poison the original input's retry");
+      assert.equal(f.calls.filter((c) => c.path === "/relay/turn").length, 1);
+    } finally { await f.close(); removeSessionPin(sessionID); }
+  }
+  for (const lifetime of ["generation", "delete", "dispose", "issued-generation"]) {
+    const oldGate = barrier(), newGate = barrier();
+    let phase = null, gets = 0, oldEntered = false, newEntered = false;
+    let registration = relaySession;
+    const f = await callerFixture({
+      get: async ({ sessionID: id }) => {
+        if (phase && ++gets === 4) {
+          if (phase === "old") { oldEntered = true; await oldGate.wait(); }
+          else { newEntered = true; await newGate.wait(); }
+        }
+        return { id, location: { directory: location } };
+      },
+      fetch: async (route) => route === "/relay/sessions" ? jsonResponse([registration]) : undefined,
+      response: async (route) => {
+        if (route === "/item-and-query" && lifetime === "issued-generation") {
+          oldEntered = true; await oldGate.wait();
+          return null; // a retired/uncertain issued write must not be released as unissued
+        }
+        if (route === "/relay/turn" || route === "/relay/opencode/wake")
+          return { session: registration, wake: null, deliveries: [] };
+      },
+    });
+    let old, newer;
+    try {
+      pinContainer(sessionID, container, undefined, "fixture-actor");
+      if (lifetime !== "issued-generation") phase = "old";
+      old = f.hooks.prompt(event);
+      await until(() => oldEntered, "original attempt must reach its owned boundary");
+      phase = null;
+      if (lifetime === "dispose") {
+        await f.dispose(); oldGate.release(); await old;
+        await f.hooks.prompt(event);
+        assert.equal(f.calls.filter((c) => c.path === "/item-and-query").length, 0);
+        continue;
+      }
+      if (lifetime === "delete") {
+        await f.emit({ type: "session.deleted", data: { sessionID } });
+        await until(() => f.calls.some((c) => c.path === "/relay/sessions/close"), "old item must close before recreation");
+      }
+      registration = { ...relaySession, scope_generation: 1 };
+      await f.emit({ type: "session.created", data: { sessionID } });
+      await until(() => f.calls.some((c) => c.body.operation === "enroll" && c.body.scope_generation === 1),
+        "the successor signal must enroll before retry");
+      if (lifetime === "issued-generation") {
+        oldGate.release(); await old;
+        await f.hooks.prompt(event);
+        assert.equal(f.calls.filter((c) => c.path === "/item-and-query").length, 1,
+          "retired null response cannot authorize replay of an already issued capture");
+        continue;
+      }
+      phase = "new"; gets = 0;
+      newer = f.hooks.prompt(event);
+      await until(() => newEntered, "same-ID successor must reserve its own unissued capture");
+      oldGate.release(); await old;
+      phase = null;
+      await f.hooks.prompt(event);
+      assert.equal(f.calls.filter((c) => c.path === "/item-and-query").length, 0,
+        "old cleanup cannot delete the successor reservation or admit an overlapping duplicate");
+      newGate.release(); await newer;
+      await f.hooks.prompt(event);
+      const writes = f.calls.filter((c) => c.path === "/item-and-query");
+      assert.equal(writes.length, 1);
+      assert.equal(writes[0].body.source_turn_id, event.messageID);
+      assert.equal(writes[0].body.content, event.prompt.text);
+    } finally {
+      phase = null; oldGate.release(); newGate.release();
+      await Promise.allSettled([old, newer]);
+      await f.close(); removeSessionPin(sessionID);
+    }
+  }
+});
+
+test("V2 Git waits retain original lifetime, scalar, pin and native owner on every caller", { timeout: 30000 }, async () => {
+  for (const entry of ["prompt", "context", "assistant"]) {
+    for (const change of ["delete", "dispose", "pin", "generation", "native-owner"]) {
+      let ownedHere = true, registration = relaySession;
+      const f = await callerFixture({ history: [completedAssistant()], get: async ({ sessionID: id }) =>
+        ({ id, location: { directory: ownedHere ? location : "/tmp/foreign" } }),
+      fetch: async (route) => route === "/relay/sessions" ? jsonResponse([registration]) : undefined,
+      response: (route) => ["/relay/turn", "/relay/opencode/wake"].includes(route)
+        ? { session: registration, wake: null, deliveries: [] } : undefined });
+      const originalPin = getPinnedContainer(sessionID);
+      removeSessionPin(sessionID);
+      let pending;
+      const user = natural("msg_git_context");
+      const before = structuredClone(user);
+      const boundary = f.calls.length;
+      try {
+        await holdNativeGit("remote get-url origin", "https://git.example.test/Old/Repo.git", async (gate) => {
+          pending = entry === "prompt"
+            ? f.hooks.prompt({ sessionID, messageID: "msg_git_retired_prompt", prompt: { text: "retired source" } })
+            : entry === "context" ? f.hooks.context({ sessionID, messages: [user] })
+              : f.hooks.compaction({ sessionID });
+          await gate.started();
+          if (change === "delete") await f.emit({ type: "session.deleted", data: { sessionID } });
+          if (change === "dispose") await f.dispose();
+          if (change === "pin") pinContainer(sessionID, "git:example.test/replacement", undefined, "replacement actor");
+          if (change === "generation") {
+            registration = { ...relaySession, scope_generation: 1 };
+            await f.emit({ type: "session.created", data: { sessionID } });
+            await until(() => f.calls.some((c) => c.body.operation === "enroll" && c.body.scope_generation === 1),
+              "new registration must replace the original signal while Git waits");
+          }
+          if (change === "native-owner") ownedHere = false;
+          gate.release();
+          await pending;
+          const later = f.calls.slice(boundary);
+          assert.equal(later.filter((c) => ["/relay/turn", "/item-and-query", "/items",
+            "/relay/deliveries/ack"].includes(c.path)).length, 0, `${entry}/${change}: no old publication`);
+          assert.deepEqual(user, before, `${entry}/${change}: no old attachment`);
+          assert.equal(f.native.prompt.length, 0);
+          if (change === "pin") assert.equal(getPinnedContainer(sessionID), "git:example.test/replacement");
+          else assert.equal(getPinnedContainer(sessionID), null, `${entry}/${change}: no late fallback pin`);
+        });
+      } finally {
+        await pending;
+        await f.close();
+        removeSessionPin(sessionID);
+        if (originalPin) pinContainer(sessionID, originalPin, undefined, "fixture-actor");
+      }
+    }
+  }
+});
+
+test("V2 older Git resolution cannot overwrite concurrent successor scope or capture", { timeout: 10000 }, async () => {
+  const f = await callerFixture();
+  removeSessionPin(sessionID);
+  let old;
+  try {
+    await holdNativeGit("remote get-url origin", "https://git.example.test/Old/Repo.git", async (gate) => {
+      old = f.hooks.prompt({ sessionID, messageID: "msg_git_older", prompt: { text: "older source" } });
+      await gate.started();
+      await f.hooks.prompt({ sessionID, messageID: "msg_git_newer", prompt: { text: "newer source" } });
+      assert.equal(getPinnedContainer(sessionID), container);
+      gate.release();
+      await old;
+      const writes = f.calls.filter((c) => c.path === "/item-and-query");
+      assert.deepEqual(writes.map((c) => c.body.source_turn_id), ["msg_git_newer"]);
+      assert.ok(writes.every((c) => c.body.container_ref === container));
+      assert.equal(getPinnedContainer(sessionID), container);
+    });
+  } finally { await old; await f.close(); removeSessionPin(sessionID); }
+});
+
+test("V2 actor wait cannot pair a newer actor with an older container", { timeout: 10000 }, async () => {
+  const previousActor = process.env.PALLIUM_HOOK_ACTOR_REF;
+  const P = await import("../.opencode/plugins/pallium-common.mjs");
+  try {
+    for (const change of ["same-container", "different-container", "remove-after-owned"]) {
+      const sameContainer = change !== "different-container";
+      let removeActor = false;
+      const f = await callerFixture({ get: async ({ sessionID: id }) => ({
+        id, location: { get directory() {
+          if (removeActor) {
+            removeActor = false;
+            queueMicrotask(() => { removeSessionPin(sessionID); pinContainer(sessionID, container); });
+          }
+          return location;
+        } },
+      }) });
+      removeSessionPin(sessionID);
+      pinContainer(sessionID, container);
+      delete process.env.PALLIUM_HOOK_ACTOR_REF;
+      let pending;
+      try {
+        await holdNativeGit("config user.name", "derived actor", async (gate) => {
+          pending = f.hooks.prompt({ sessionID, messageID: "msg_git_actor", prompt: { text: "coherent actor source" } });
+          await gate.started();
+          const pinned = sameContainer ? container : "git:example.test/replacement";
+          if (change === "remove-after-owned") removeActor = true;
+          else pinContainer(sessionID, pinned, undefined, "authoritative actor");
+          gate.release();
+          await pending;
+          const writes = f.calls.filter((c) => c.path === "/item-and-query");
+          assert.equal(writes.length, change === "same-container" ? 1 : 0);
+          if (change === "same-container") {
+            assert.equal(writes[0].body.actor_ref, "authoritative actor");
+            assert.equal(writes[0].body.container_ref, container);
+          }
+          assert.equal(getPinnedContainer(sessionID), pinned);
+          assert.equal(P.getPinnedActor(sessionID), change === "remove-after-owned" ? null : "authoritative actor");
+        });
+      } finally {
+        await pending; await f.close(); removeSessionPin(sessionID);
+        process.env.PALLIUM_HOOK_ACTOR_REF = previousActor || "fixture-actor";
+      }
+    }
+  } finally {
+    if (previousActor === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
+    else process.env.PALLIUM_HOOK_ACTOR_REF = previousActor;
+  }
+});
+
+test("V2 restore reuses callback-local Git facts in prompt and context", { timeout: 10000 }, async () => {
+  for (const entry of ["prompt", "context"]) {
+    const remote = "https://git.example.test/Team/Repo.git";
+    const ref = "git:git.example.test/team/repo";
+    const registration = { ...relaySession, container_ref: ref };
+    let armed = false;
+    const f = await callerFixture({ list: [[]], fetch: async (route) =>
+      armed && route === "/relay/sessions" ? jsonResponse([registration]) : undefined,
+    response: () => ({ session: registration, wake: snapshot(), deliveries: [delivery] }) });
+    const saved = childProcess.spawn, calls = [], children = [];
+    const directory = mkdtempSync(path.join(profile, "refs-reuse-界-"));
+    removeSessionPin(sessionID);
+    childProcess.spawn = (command, args, options) => {
+      if (command !== "git") return saved(command, args, options);
+      calls.push(args);
+      const child = saved(process.execPath, ["-e", `process.stdout.write(${JSON.stringify(remote)})`],
+        { ...options, cwd: directory });
+      children.push(new Promise((resolve) => child.once("close", resolve)));
+      return child;
+    };
+    syncBuiltinESMExports();
+    try {
+      armed = true;
+      const user = projectedWake();
+      if (entry === "prompt") await f.hooks.prompt({ sessionID, messageID: user.id,
+        metadata: user.metadata, prompt: { text: user.content[0].text } });
+      else {
+        await f.hooks.context({ sessionID, messages: [user] });
+        assert.match(user.content.at(-1).text, /שלום wake payload/);
+      }
+      assert.deepEqual(calls, [["remote", "get-url", "origin"]], `${entry}: restore must not rediscover the same callback's Git facts`);
+      assert.ok(f.calls.some((c) => c.body.operation === "enroll" && c.body.container_ref === ref));
+      assert.equal(f.calls.filter((c) => c.path === "/item-and-query").length, 0);
+    } finally {
+      await Promise.all(children);
+      childProcess.spawn = saved;
+      syncBuiltinESMExports();
+      await f.close();
+      removeSessionPin(sessionID);
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test("V2 checks the original pin after an owned helper returns success", async () => {
+  for (const entry of ["prompt", "context", "assistant"]) {
+    let change = false;
+    const f = await callerFixture({ history: [completedAssistant()], get: async ({ sessionID: id }) => ({
+      id, location: { get directory() {
+        if (change) {
+          change = false;
+          queueMicrotask(() => pinContainer(sessionID, "git:example.test/new", undefined, "new actor"));
+        }
+        return location;
+      } },
+    }) });
+    const boundary = f.calls.length, user = natural("msg_after_owned");
+    const before = structuredClone(user);
+    try {
+      change = true;
+      if (entry === "prompt") await f.hooks.prompt({ sessionID, messageID: user.id, prompt: { text: "original owned work" } });
+      else if (entry === "context") await f.hooks.context({ sessionID, messages: [user] });
+      else await f.hooks.compaction({ sessionID });
+      assert.equal(f.calls.slice(boundary).filter((c) =>
+        ["/relay/turn", "/item-and-query", "/items", "/relay/deliveries/ack"].includes(c.path)).length, 0);
+      assert.deepEqual(user, before);
+      assert.equal(getPinnedContainer(sessionID), "git:example.test/new");
+    } finally { await f.close(); removeSessionPin(sessionID); }
+  }
 });
 
 test("retired prompt ownership continuation cannot capture or pin", async () => {

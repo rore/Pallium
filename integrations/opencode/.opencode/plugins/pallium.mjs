@@ -47,8 +47,7 @@ const RETRY_THRESHOLD = 3;
 const MIN_PROMPT_LEN = 20;
 const POSTTOOL_TRIGGERS_ENABLED = process.env.PALLIUM_POSTTOOL_TRIGGERS === "1";
 
-function structuralWorkRefsPayload(containerRef, discovery, cwd) {
-  const repositoryRef = pallium.repositoryScopeRef(cwd);
+function structuralWorkRefsPayload(containerRef, discovery, repositoryRef) {
   return repositoryRef ? pallium.structuralWorkRefsPayload(containerRef, discovery?.structuralRefs, repositoryRef) : [];
 }
 
@@ -137,14 +136,13 @@ export default async ({ client, directory, worktree } = {}) => {
   // Per-session queue of formatted injection chunks awaiting the next
   // system-prompt transform. Orientation (session.created), per-message memory
   // (chat.message), and opt-in trigger output (tool.execute.after) all enqueue
-  // here; system.transform drains it. All per-session state is bounded: it is
-  // purged on `session.deleted` (see the event hook) so the long-lived server
-  // process does not accumulate entries for closed sessions.
+  // here; system.transform drains it. Deletion purges payloads, but keeps an
+  // empty closed lifetime Map so passive late callbacks cannot reactivate it.
   const pendingInjections = new Map(); // sessionID -> string[]
   const pendingRelay = new Map(); // sessionID -> claimed delivery context
   const orientedSessions = new Set(); // sessionID
   const ingestedBySession = new Map(); // sessionID -> Set(dedupKey)
-  const roleTurnSnapshots = new Map(); // sessionID -> Map(native user message ID -> immutable start snapshot)
+  const roleTurnSnapshots = new Map(); // sessionID -> lifetime Map(native input -> immutable start snapshot)
   const retryCounters = new Map(); // `${sessionID}::${tool}::${target}` -> count
 
   function purgeSession(sessionId) {
@@ -153,11 +151,51 @@ export default async ({ client, directory, worktree } = {}) => {
     pendingRelay.delete(sessionId);
     orientedSessions.delete(sessionId);
     ingestedBySession.delete(sessionId);
-    roleTurnSnapshots.delete(sessionId);
+    roleTurnSnapshots.get(sessionId)?.clear();
     const prefix = `${sessionId}::`;
     for (const k of retryCounters.keys()) {
       if (k.startsWith(prefix)) retryCounters.delete(k);
     }
+  }
+
+  function lifetime(sessionId, activate = false) {
+    if (!sessionId) return null;
+    let life = roleTurnSnapshots.get(sessionId);
+    if (!life || activate && life.phase !== "live") {
+      life = new Map();
+      life.phase = "live";
+      life.abort = new AbortController();
+      roleTurnSnapshots.set(sessionId, life);
+    }
+    return life.phase === "live" ? life : null;
+  }
+  const live = (id, life) => roleTurnSnapshots.get(id) === life && life?.phase === "live";
+  const check = (current) => { if (!current()) throw new Error("V1 callback retired or scope changed"); };
+
+  async function identity(id, life, { orient = false, structural = false, pin = false } = {}) {
+    let pinned = pallium.getPinnedContainer(id);
+    const signal = life.abort.signal;
+    const currentScope = () => live(id, life) && pallium.getPinnedContainer(id) === pinned;
+    check(currentScope);
+    const refs = structural ? await pallium.deriveGitRefs(cwd, signal) : null;
+    const containerRef = orient || !pinned
+      ? refs?.containerRef || await pallium.deriveContainerRef(cwd, signal) : pinned;
+    // A sibling may publish this same derived pin while Git awaits. The
+    // original live Map and every later container/actor check still apply.
+    if (pinned === null && pallium.getPinnedContainer(id) === containerRef) pinned = containerRef;
+    check(currentScope);
+    if (pin) {
+      pallium.pinContainer(id, containerRef, undefined);
+      pinned = pallium.getPinnedContainer(id);
+      if (pinned && pinned !== containerRef) throw new Error("V1 container pin changed");
+    }
+    const previousActorPin = pallium.getPinnedActor(id);
+    const actorRef = await pallium.resolveActorRef(cwd, id, { signal, current: currentScope });
+    check(currentScope);
+    const actorPin = pallium.getPinnedActor(id);
+    if (actorPin ? actorPin !== actorRef : previousActorPin !== null) throw new Error("V1 actor pin changed");
+    const current = () => currentScope() && pallium.getPinnedActor(id) === actorPin;
+    return { containerRef, actorRef, repositoryRef: refs?.repositoryRef, signal, current };
   }
 
   function enqueueInjection(sessionId, text) {
@@ -170,6 +208,7 @@ export default async ({ client, directory, worktree } = {}) => {
 
   function drainInjections(sessionId) {
     const out = [];
+    if (sessionId && !live(sessionId, roleTurnSnapshots.get(sessionId))) return out;
     if (sessionId && pendingInjections.has(sessionId)) {
       out.push(...pendingInjections.get(sessionId));
       pendingInjections.delete(sessionId);
@@ -182,8 +221,10 @@ export default async ({ client, directory, worktree } = {}) => {
     // single-session case); otherwise leave them pending.
     if (!sessionId && pendingInjections.size === 1) {
       for (const [k, v] of pendingInjections) {
-        out.push(...v);
-        pendingInjections.delete(k);
+        if (live(k, roleTurnSnapshots.get(k))) {
+          out.push(...v);
+          pendingInjections.delete(k);
+        }
       }
     }
     return out;
@@ -201,13 +242,14 @@ export default async ({ client, directory, worktree } = {}) => {
   }
 
   async function orient(sessionId) {
-    if (!sessionId || orientedSessions.has(sessionId)) return;
+    const life = lifetime(sessionId, true);
+    if (!life || orientedSessions.has(sessionId)) return;
     orientedSessions.add(sessionId);
     try {
-      const containerRef = pallium.deriveContainerRef(cwd);
-      pallium.pinContainer(sessionId, containerRef, undefined);
-      const actorRef = pallium.resolveActorRef(cwd, sessionId);
-      const queryText = pallium.deriveOrientationQuery(cwd);
+      const { containerRef, actorRef, signal, current } = await identity(sessionId, life, { orient: true, pin: true });
+      if (!current()) return;
+      const queryText = await pallium.deriveOrientationQuery(cwd, signal);
+      if (!current()) return;
       const resp = await pallium.palliumRequest("POST", "/query", {
         text: queryText,
         container_ref: containerRef,
@@ -215,7 +257,8 @@ export default async ({ client, directory, worktree } = {}) => {
         visibility: "private",
         limit: 5,
         trigger_origin: "session_start_orientation",
-      });
+      }, signal);
+      if (!current()) return;
       const blocks = (resp && resp.injectable_blocks) || [];
       const output = pallium.formatInjection(blocks, containerRef, SESSION_START_BUDGET, sessionId, actorRef, pallium.AGENT_REF, "private");
       if (output) enqueueInjection(sessionId, output);
@@ -226,10 +269,15 @@ export default async ({ client, directory, worktree } = {}) => {
 
   async function ingestAssistantTurn(sessionId) {
     if (!sessionId || !client || !client.session || typeof client.session.messages !== "function") return;
+    const life = lifetime(sessionId);
+    if (!life) return;
     let seen;
     let dedupKey;
+    let committed = false;
+    let reserved = false;
     try {
       const res = await client.session.messages({ path: { id: sessionId } });
+      if (!live(sessionId, life)) return;
       const messages = (res && (res.data || res)) || [];
       if (!Array.isArray(messages) || messages.length === 0) return;
 
@@ -261,11 +309,12 @@ export default async ({ client, directory, worktree } = {}) => {
       // request also short-circuits (Node is single-threaded). On failure the
       // key is removed below so a later lifecycle event retries the turn.
       seen.add(dedupKey);
+      reserved = true;
       ingestedBySession.set(sessionId, seen);
 
-      const containerRef = pallium.resolveContainerRef(cwd, sessionId);
+      const { containerRef, actorRef, signal, current } = await identity(sessionId, life);
+      if (!current()) return;
       const discovery = pallium.discoverWorkRefs(cwd);
-      const actorRef = pallium.resolveActorRef(cwd, sessionId);
 
       const item = {
         source_type: pallium.SOURCE_TYPE,
@@ -284,11 +333,14 @@ export default async ({ client, directory, worktree } = {}) => {
       const sourceTurnId = pallium.nativeTurnId(assistantInfo.parentID || assistantInfo.parentId);
       if (sourceTurnId) item.source_turn_id = sourceTurnId;
       const workTrace = pallium.buildWorkTraceMetadata(turn);
-      const workRefsResponse = await pallium.relayRequest("GET", "/relay/sessions/work-refs", { runtime: "opencode", session_ref: sessionId, container_ref: containerRef }, 500);
+      const workRefsResponse = await pallium.relayRequest("GET", "/relay/sessions/work-refs", { runtime: "opencode", session_ref: sessionId, container_ref: containerRef }, 500, signal);
+      if (!current()) return;
       const confirmedRefs = confirmedRegistryWorkRefs(workRefsResponse);
       const workRefsStatus = workRefsResponse && Array.isArray(workRefsResponse.work_refs) ? "complete" : "unavailable";
       item.metadata = { ...buildWorkRefsMetadata(cwd, null, discovery, confirmedRefs, workRefsStatus), ...(workTrace ? { agent_work_trace_turn: workTrace, cwd } : {}) };      if (!Object.keys(item.metadata).length) delete item.metadata;
-      const response = await pallium.palliumRequest("POST", "/items", [item]);
+      const response = await pallium.palliumRequest("POST", "/items", [item], signal);
+      committed = response !== null;
+      if (!current()) return;
       const responseMetadata = Array.isArray(response) ? response[0]?.work_ref_metadata : null;
       const workRefLog = responseMetadata != null ? workRefWarning(responseMetadata) : workRefWarning(item.metadata);
       if (workRefLog) log("warn", workRefLog);
@@ -298,6 +350,8 @@ export default async ({ client, directory, worktree } = {}) => {
     } catch (e) {
       if (seen && dedupKey !== undefined) seen.delete(dedupKey);
       log("error", `assistant-turn ingest failed: ${e && e.message}`);
+    } finally {
+      if (!committed && reserved) seen.delete(dedupKey);
     }
   }
 
@@ -318,8 +372,10 @@ export default async ({ client, directory, worktree } = {}) => {
   }
 
   async function handleToolTrigger(sessionId, toolName, toolInput, outputText, isError) {
-    const containerRef = pallium.resolveContainerRef(cwd, sessionId);
-    const actorRef = pallium.resolveActorRef(cwd, sessionId);
+    const life = lifetime(sessionId);
+    if (!life) return;
+    const { containerRef, actorRef, signal, current } = await identity(sessionId, life);
+    if (!current()) return;
     const exitCode = isError ? 1 : pallium.inferExitCode(outputText);
     const failed = isError || exitCode !== 0;
     const blocks = [];
@@ -337,7 +393,8 @@ export default async ({ client, directory, worktree } = {}) => {
         visibility: "private",
         limit: 3,
         trigger_origin: "post_tool_failure",
-      });
+      }, signal);
+      if (!current()) return;
       if (resp && resp.injectable_blocks) blocks.push(...resp.injectable_blocks);
     }
 
@@ -359,7 +416,8 @@ export default async ({ client, directory, worktree } = {}) => {
           visibility: "private",
           limit: 3,
           trigger_origin: "retry_threshold",
-        });
+        }, signal);
+        if (!current()) return;
         if (resp && resp.injectable_blocks) blocks.push(...resp.injectable_blocks);
       }
     }
@@ -402,6 +460,8 @@ export default async ({ client, directory, worktree } = {}) => {
         if (!output || !Array.isArray(output.messages)) return;
         const user = [...output.messages].reverse().find((item) => item && item.info && item.info.role === "user");
         const sessionId = user && resolveSessionId(user.info);
+        const life = sessionId && roleTurnSnapshots.get(sessionId);
+        if (!live(sessionId, life)) return;
         const pending = sessionId && pendingRelay.get(sessionId);
         const textPart = user && Array.isArray(user.parts) && [...user.parts].reverse()
           .find((part) => part && part.type === "text" && typeof part.text === "string");
@@ -409,7 +469,7 @@ export default async ({ client, directory, worktree } = {}) => {
         textPart.text += `\n\n<system-reminder>\n${pending.text}\n</system-reminder>`;
         pendingRelay.delete(sessionId);
         if (pending.deliveries.length) {
-          await pallium.acknowledgeRelay(pending.deliveries, pending.containerRef);
+          await pallium.acknowledgeRelay(pending.deliveries, pending.containerRef, life.abort.signal);
         }
       } catch (e) {
         log("error", `messages.transform failed: ${e && e.message}`);
@@ -440,11 +500,11 @@ export default async ({ client, directory, worktree } = {}) => {
         const message = (output && output.message) || (input && input.message) || {};
         const parts = (output && output.parts) || [];
         const sessionId = resolveSessionId(output) || resolveSessionId(input) || message.sessionID || "unknown";
+        const life = lifetime(sessionId, true);
         const nativeMessageId = pallium.nativeTurnId(message.id);
         let turnRecord = null;
         if (nativeMessageId) {
-          let turns = roleTurnSnapshots.get(sessionId);
-          if (!turns) roleTurnSnapshots.set(sessionId, turns = new Map());
+          const turns = life;
           turnRecord = turns.get(nativeMessageId);
           if (turnRecord?.captured) return;
           if (!turnRecord) {
@@ -459,9 +519,9 @@ export default async ({ client, directory, worktree } = {}) => {
           }
         }
 
-        const containerRef = pallium.resolveContainerRef(cwd, sessionId);
-        pallium.pinContainer(sessionId, containerRef, undefined);
-        const actorRef = pallium.resolveActorRef(cwd, sessionId);
+        const { containerRef, actorRef, repositoryRef, signal, current } =
+          await identity(sessionId, life, { structural: true, pin: true });
+        if (!current()) return;
         const discovery = pallium.discoverWorkRefs(cwd);
         const currentWorkRef = pallium.injectedWorkRef(discovery);
 
@@ -479,8 +539,9 @@ export default async ({ client, directory, worktree } = {}) => {
               session_ref: sessionId,
               container_ref: containerRef,
               max_chars: RELAY_TURN_BUDGET,
-              structural_work_refs: structuralWorkRefsPayload(containerRef, discovery, cwd),
-            }, pallium.HTTP_TIMEOUT_MS).then((response) => {
+              structural_work_refs: structuralWorkRefsPayload(containerRef, discovery, repositoryRef),
+            }, pallium.HTTP_TIMEOUT_MS, signal).then((response) => {
+              if (!current()) return null;
               turnRecord.response = response;
               turnRecord.snapshot = pallium.relayNameSnapshot(response, sessionId, containerRef);
               return response;
@@ -496,10 +557,11 @@ export default async ({ client, directory, worktree } = {}) => {
             session_ref: sessionId,
             container_ref: containerRef,
             max_chars: RELAY_TURN_BUDGET,
-            structural_work_refs: structuralWorkRefsPayload(containerRef, discovery, cwd),
-          }, pallium.HTTP_TIMEOUT_MS);
+            structural_work_refs: structuralWorkRefsPayload(containerRef, discovery, repositoryRef),
+          }, pallium.HTTP_TIMEOUT_MS, signal);
           shouldQueueRelay = true;
         }
+        if (!current()) return;
         if (relayResponse) {
           confirmedRefs = confirmedRegistryWorkRefs(relayResponse);
           workRefsStatus = ["complete", "unavailable"].includes(relayResponse?.structural_work_refs_status) ? relayResponse.structural_work_refs_status : "unavailable";
@@ -555,7 +617,8 @@ export default async ({ client, directory, worktree } = {}) => {
           metadata: workRefsMetadata,
         };
         if (relayDeliveriesPending && nativeMessageId) {
-          const saved = await pallium.palliumRequest("POST", "/items", [userSource]);
+          const saved = await pallium.palliumRequest("POST", "/items", [userSource], signal);
+          if (!current()) return;
           if (Array.isArray(saved) && saved.length === 1 && turnRecord) turnRecord.captured = true;
           return;
         }
@@ -566,7 +629,8 @@ export default async ({ client, directory, worktree } = {}) => {
           query_limit: 5,
           query_actor_ref: actorRef,
           query_trigger_origin: "user_prompt_submit",
-        });
+        }, signal);
+        if (!current()) return;
         if (!resp) { if (warning) enqueueInjection(sessionId, warning); return; }
         if (turnRecord) turnRecord.captured = true;
         warning = Object.prototype.hasOwnProperty.call(resp, "work_ref_metadata") ? workRefWarning(resp.work_ref_metadata) : warning;
@@ -589,14 +653,29 @@ export default async ({ client, directory, worktree } = {}) => {
           await ingestAssistantTurn(sessionId);
         } else if (type === "session.deleted") {
           if (sessionId) {
-            const containerRef = pallium.resolveContainerRef(cwd, sessionId);
+            const life = lifetime(sessionId);
+            if (!life) return;
+            life.phase = "closing";
+            life.abort.abort();
+            delete life.abort;
+            purgeSession(sessionId);
+            // ponytail: O(deleted IDs) empty markers; use reliable native
+            // existence authority instead if lifetime-long growth matters.
+            const pinned = pallium.getPinnedContainer(sessionId);
+            const actor = pallium.getPinnedActor(sessionId);
+            const closing = () => roleTurnSnapshots.get(sessionId) === life && life.phase === "closing";
+            const current = () => closing() && pallium.getPinnedContainer(sessionId) === pinned &&
+              pallium.getPinnedActor(sessionId) === actor;
+            const containerRef = pinned || await pallium.deriveContainerRef(cwd);
+            if (!current()) { if (closing()) life.phase = "closed"; return; }
             await pallium.relayRequest("POST", "/relay/sessions/close", {
               runtime: "opencode", session_ref: sessionId,
               container_ref: containerRef,
             }, 500);
+            if (!current()) { if (closing()) life.phase = "closed"; return; }
+            pallium.removeSessionPin(sessionId);
+            life.phase = "closed";
           }
-          pallium.removeSessionPin(sessionId);
-          purgeSession(sessionId);
         }
       } catch (e) {
         log("error", `event hook failed: ${e && e.message}`);

@@ -10,6 +10,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { pathToFileURL } from "node:url";
 
 // Redirect the state dir to a temp HOME BEFORE the module is imported, so
@@ -151,31 +153,31 @@ test("pathContainer emits path:<label>:<hash12> and path:<hash12> when label emp
   assert.match(bare, /^path:[0-9a-f]{12}$/);
 });
 
-test("deriveContainerRef returns path:<...> for a non-git dir and is stable", () => {
+test("deriveContainerRef returns path:<...> for a non-git dir and is stable", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-nogit-"));
-  const ref = P.deriveContainerRef(dir);
+  const ref = await P.deriveContainerRef(dir);
   assert.ok(ref.startsWith("path:"), `expected path: prefix, got ${ref}`);
   assert.equal(ref, P.pathContainer(dir));
-  assert.equal(ref, P.deriveContainerRef(dir)); // stable across calls
+  assert.equal(ref, await P.deriveContainerRef(dir)); // stable across calls
 });
 
-test("deriveContainerRef derives a stable ref for this repo checkout", () => {
+test("deriveContainerRef derives a stable ref for this repo checkout", async () => {
   // Runs inside a git checkout; the derivation contract (git:/repo:/path:) is
   // covered above. Assert the shape + determinism rather than the exact remote,
   // so this passes in a fork, a renamed-remote clone, or a git-less tarball.
-  const ref = P.deriveContainerRef(process.cwd());
+  const ref = await P.deriveContainerRef(process.cwd());
   assert.match(ref, /^(git:|repo:|path:)/);
-  assert.equal(ref, P.deriveContainerRef(process.cwd()));
+  assert.equal(ref, await P.deriveContainerRef(process.cwd()));
 });
 
-test("deriveActorRef uses the repository identity when the plugin cwd differs", () => {
+test("deriveActorRef uses the repository identity when the plugin cwd differs", async () => {
   const prior = process.env.PALLIUM_HOOK_ACTOR_REF;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-actor-"));
   try {
     delete process.env.PALLIUM_HOOK_ACTOR_REF;
     execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
     execFileSync("git", ["config", "user.name", "Relay Operator"], { cwd: dir });
-    assert.equal(P.deriveActorRef(dir), "Relay Operator");
+    assert.equal(await P.deriveActorRef(dir), "Relay Operator");
   } finally {
     if (prior === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
     else process.env.PALLIUM_HOOK_ACTOR_REF = prior;
@@ -183,14 +185,14 @@ test("deriveActorRef uses the repository identity when the plugin cwd differs", 
   }
 });
 
-test("deriveActorRef trims the configured actor, while a pinned actor remains authoritative", () => {
+test("deriveActorRef trims the configured actor, while a pinned actor remains authoritative", async () => {
   const prior = process.env.PALLIUM_HOOK_ACTOR_REF;
   try {
     process.env.PALLIUM_HOOK_ACTOR_REF = "  מפעיל 統一  ";
-    assert.equal(P.deriveActorRef(process.cwd()), "מפעיל 統一");
+    assert.equal(await P.deriveActorRef(process.cwd()), "מפעיל 統一");
     P.pinContainer("configured-pin", "path:configured", undefined, "Pinned Actor");
     process.env.PALLIUM_HOOK_ACTOR_REF = "Different Actor";
-    assert.equal(P.resolveActorRef(process.cwd(), "configured-pin"), "Pinned Actor");
+    assert.equal(await P.resolveActorRef(process.cwd(), "configured-pin"), "Pinned Actor");
   } finally {
     if (prior === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
     else process.env.PALLIUM_HOOK_ACTOR_REF = prior;
@@ -243,11 +245,11 @@ test("checkDedup rejects an unsafe session id (no path escape, safe default)", (
 
 // --- session pinning --------------------------------------------------------
 
-test("session scope pins container and actor across resume, then disposes both", () => {
+test("session scope pins container and actor across resume, then disposes both", async () => {
   const sid = "pin-session-1";
   P.pinContainer(sid, "git:example.com/a/b", undefined, "Relay Operator");
-  assert.equal(P.resolveContainerRef("/some/other/dir", sid), "git:example.com/a/b");
-  assert.equal(P.resolveActorRef("/some/other/dir", sid), "Relay Operator");
+  assert.equal(await P.resolveContainerRef("/some/other/dir", sid), "git:example.com/a/b");
+  assert.equal(await P.resolveActorRef("/some/other/dir", sid), "Relay Operator");
   P.pinContainer(sid, "git:example.com/a/b");
   assert.equal(P.getPinnedActor(sid), "Relay Operator");
   P.pinContainer(sid, "git:example.com/x/y", "resume", "Other Operator");
@@ -430,7 +432,7 @@ test("extractToolCall Glob splits and caps output paths", () => {
   assert.deepEqual(call, { tool: "Glob", pattern: "**/*.js", paths: ["a.js", "b.js", "c.js"] });
 });
 
-test("deriveContainerRef returns repo:<hash12> for a git repo with no remote", () => {
+test("deriveContainerRef returns repo:<hash12> for a git repo with no remote", async () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-repo-"));
   const run = (args) => execFileSync("git", args, { cwd: repo, stdio: ["ignore", "pipe", "ignore"] });
   run(["init"]);
@@ -440,9 +442,9 @@ test("deriveContainerRef returns repo:<hash12> for a git repo with no remote", (
   fs.writeFileSync(path.join(repo, "f.txt"), "hi");
   run(["add", "f.txt"]);
   run(["commit", "-m", "init"]);
-  const ref = P.deriveContainerRef(repo);
+  const ref = await P.deriveContainerRef(repo);
   const root = run(["rev-list", "--max-parents=0", "HEAD"]).toString().trim().toLowerCase();
-  assert.equal(P.repositoryScopeRef(repo), "repo:" + root);
+  assert.equal(await P.repositoryScopeRef(repo), "repo:" + root);
   assert.match(ref, /^repo:[0-9a-f]{12}$/, `expected repo:<hash12>, got ${ref}`);
 });
 
@@ -810,5 +812,404 @@ test("shared repository and roadmap vectors stay aligned with Python", () => {
   }
   for (const root of vectors.invalid_roadmap_roots) {
     assert.throws(() => P.roadmapScopeRef(repository, root));
+  }
+});
+
+// Run the actual helper against real owned Node children, without changing Git
+// configuration or adding a production command-injection seam.
+async function withGitProcess(program, run, onChild = () => {}) {
+  const saved = childProcess.spawn;
+  const previousActor = process.env.PALLIUM_HOOK_ACTOR_REF;
+  const calls = [], children = [];
+  delete process.env.PALLIUM_HOOK_ACTOR_REF;
+  childProcess.spawn = (command, args, options) => {
+    if (command !== "git") return saved(command, args, options);
+    calls.push(args);
+    const source = program(args);
+    const child = source === null
+      ? saved(path.join(tmpHome, "missing-bin", "git"), args, options)
+      : saved(process.execPath, ["-e", source], options);
+    const closed = new Promise((resolve) => child.once("close", resolve));
+    children.push({ child, closed });
+    onChild(child, args, options);
+    return child;
+  };
+  syncBuiltinESMExports();
+  try { return await run(calls); }
+  finally {
+    for (const { child } of children) if (child.exitCode === null && child.signalCode === null) child.kill();
+    await Promise.all(children.map(({ closed }) => closed));
+    childProcess.spawn = saved;
+    syncBuiltinESMExports();
+    if (previousActor === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
+    else process.env.PALLIUM_HOOK_ACTOR_REF = previousActor;
+  }
+}
+
+test("async Git shares callback facts without merging container and repository semantics", async () => {
+  const root = "a".repeat(40);
+  for (const [remote, code, containerRef, repositoryRef, probes] of [
+    ["https://git.example.test/Team/Repo.git", 0, "git:git.example.test/team/repo", "git:git.example.test/Team/Repo", 1],
+    ["https://user:password@example.test/Team/Repo.git", 0, "git:example.test/team/repo", "repo:" + root, 2],
+    ["unusable nonzero stdout", 128, "repo:" + root.slice(0, 12), "repo:" + root, 2],
+    [null, 0, P.pathContainer(process.cwd()), "repo:" + root, 2],
+  ]) {
+    await withGitProcess((args) => args[0] === "remote" ? remote === null ? null
+      : `process.stdout.write(${JSON.stringify(remote)},()=>process.exit(${code}))`
+      : `process.stdout.write(${JSON.stringify(root)})`, async (calls) => {
+      assert.deepEqual(await P.deriveGitRefs(process.cwd()), { containerRef, repositoryRef });
+      assert.equal(calls.length, probes, "remote/root results are local to this single discovery");
+      assert.equal(calls.filter((args) => args[0] === "remote").length, 1);
+    });
+  }
+  await withGitProcess(() => null, async (calls) => {
+    assert.equal(await P.deriveContainerRef(process.cwd()), P.pathContainer(process.cwd()));
+    assert.equal(calls.length, 1, "container-only spawn failure must not try a root probe");
+  });
+});
+
+test("async Git enforces byte bounds and ignores stderr rather than truncating identity", async () => {
+  const maximum = 1024 * 1024;
+  for (const [source, expected] of [
+    ["process.stdout.write('')", "local"],
+    ['process.stdout.write("nonzero actor",()=>process.exit(2))', "local"],
+    [`process.stdout.write("é".repeat(${maximum / 2}),()=>process.exit(0))`, "é".repeat(maximum / 2)],
+    [`process.stdout.write("a".repeat(${maximum + 1}),()=>process.exit(0))`, "local"],
+    [`process.stderr.write("x".repeat(${maximum * 2}));process.stdout.write("named actor",()=>process.exit(0))`, "named actor"],
+  ]) {
+    await withGitProcess(() => source, async () => assert.equal(await P.deriveActorRef(process.cwd()), expected));
+  }
+});
+
+test("async Git distinguishes pre-abort, cancellation, signal and timeout outcomes", { timeout: 12000 }, async () => {
+  const before = new AbortController(); before.abort();
+  await withGitProcess(() => "process.exit(0)", async (calls) => {
+    await assert.rejects(() => P.deriveContainerRef(process.cwd(), before.signal), { name: "AbortError" });
+    assert.equal(calls.length, 0);
+  });
+  const owner = new AbortController();
+  await withGitProcess(() => 'process.stdout.write("ready");setInterval(()=>{},50)', async () => {
+    await assert.rejects(() => P.deriveActorRef(process.cwd(), owner.signal), { name: "AbortError" });
+  }, (child) => child.stdout.once("data", () => owner.abort()));
+  await withGitProcess(() => "setInterval(()=>{},50)", async (calls) => {
+    assert.equal(await P.deriveContainerRef(process.cwd()), P.pathContainer(process.cwd()));
+    assert.equal(calls.length, 1, "a killed child is not a numeric nonzero root fallback");
+  }, (child) => child.once("spawn", () => child.kill()));
+  await withGitProcess(() => "setInterval(()=>{},50)", async (calls) => {
+    assert.equal(await P.deriveContainerRef(process.cwd()), P.pathContainer(process.cwd()));
+    assert.equal(calls.length, 1, "the native command timeout keeps the legacy spawn-error class");
+  });
+});
+
+test("async Git bounds owned stdout after parent exit without losing terminal outcomes", { timeout: 25000 }, async () => {
+  const bounded = async (promise, message, ms = 5000) => {
+    let timer;
+    try { return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    })]); } finally { clearTimeout(timer); }
+  };
+  const observe = (child, signal) => {
+    let start = -1, serial = 0, pipeError = false;
+    const at = { exit: -1, close: -1, pipe: -1, error: -1 };
+    const order = { exit: 0, close: 0, pipe: 0, error: 0 };
+    const elapsed = () => start < 0 ? -1 : Math.min(60000, Math.max(0, Math.round(performance.now() - start)));
+    const mark = (name) => { at[name] = elapsed(); order[name] = ++serial; };
+    child.once("spawn", () => { start = performance.now(); });
+    child.once("exit", () => mark("exit"));
+    child.once("close", () => mark("close"));
+    child.once("error", () => mark("error"));
+    child.stdout.once("close", () => mark("pipe"));
+    child.stdout.once("error", () => { pipeError = true; });
+    return (mode, stage, holder = { ready: -1, release: -1, end: -1, terminal: -1 }) => {
+      const code = child.exitCode === null ? "none" : Number.isInteger(child.exitCode) && child.exitCode >= 0 && child.exitCode <= 255
+        ? child.exitCode : "other";
+      const exitSignal = child.signalCode === null ? "none" : child.signalCode === "SIGTERM" ? "term"
+        : child.signalCode === "SIGKILL" ? "kill" : "other";
+      return `Git failure witness stage=${stage} mode=${mode} clock=test_spawn_event elapsed_ms=${elapsed()} exit_ms=${at.exit} exit_n=${order.exit} close_ms=${at.close} close_n=${order.close} pipe_ms=${at.pipe} pipe_n=${order.pipe} error_ms=${at.error} error_n=${order.error} pipe_error=${Number(pipeError)} code=${code} signal=${exitSignal} aborted=${Number(signal.aborted)} destroyed=${Number(child.stdout.destroyed)} ready=${holder.ready} release=${holder.release} end=${holder.end} terminal=${holder.terminal}`;
+    };
+  };
+  const annotate = (error, before, after) => {
+    const stack = error.stack;
+    const context = `${before}\n${after}`;
+    error.message += `\n${context}`;
+    error.stack = `${context}\n${stack}`; // Put safe context before the exporter's bounded failure selection.
+    return error;
+  };
+  const nativeSpawn = childProcess.spawn;
+  const builtins = await import("node:child_process");
+  {
+    let sample = (stage) => `Git failure witness stage=${stage} mode=kill-error clock=test_spawn_event elapsed_ms=-1`;
+    let firstEvidence;
+    try {
+    const owner = new AbortController();
+    let child, nativeKill, closed = false, kills = 0, notify;
+    const attempted = new Promise((resolve) => { notify = resolve; });
+    await withGitProcess(() => 'process.stdout.write("ready");setInterval(()=>{},50)', async () => {
+      let settled = false;
+      const running = P.deriveActorRef(process.cwd(), owner.signal);
+      const outcome = running.then((value) => { settled = true; return { value }; },
+        (error) => { settled = true; return { error }; });
+      try {
+        await bounded(attempted, "abort must attempt native child termination");
+        assert.equal(kills, 1, "a synchronous kill error must not issue a re-entrant kill");
+        assert.equal(child.stdout.destroyed, true, "kill failure still closes owned stdout");
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(settled, false, "pipe cleanup must not complete before the real child closes");
+        assert.equal(child.exitCode, null);
+        nativeKill.call(child); // The fixture, not the failed production kill, ends this real child.
+        const result = await bounded(outcome, "owned child must close after fixture termination");
+        assert.equal(result.error?.name, "AbortError", "the first abort outcome survives the later kill error");
+        assert.equal(closed, true);
+        assert.equal(kills, 1);
+      } catch (error) { firstEvidence = sample("failed_check"); throw error; }
+      finally {
+        child.kill = nativeKill;
+        if (child.exitCode === null && child.signalCode === null) nativeKill.call(child);
+        await outcome;
+      }
+    }, (spawned) => {
+      child = spawned; nativeKill = child.kill;
+      const snapshot = observe(child, owner.signal);
+      sample = (stage) => snapshot("kill-error", stage);
+      child.once("close", () => { closed = true; });
+      child.kill = () => {
+        kills++; notify();
+        if (kills > 1) throw new Error("re-entrant fixture kill");
+        child.emit("error", Object.assign(new Error("fixture kill denied"), { code: "EPERM" }));
+        return false;
+      };
+      child.stdout.once("data", () => owner.abort());
+    });
+    assert.equal(childProcess.spawn, nativeSpawn);
+    assert.equal(builtins.spawn, nativeSpawn, "named built-in binding must be restored too");
+    } catch (error) { throw annotate(error, firstEvidence || sample("failed_check"), sample("after_cleanup")); }
+  }
+  for (const mode of ["abort", "timeout", "drain", "nonzero", "fallback-drain"]) {
+    let sample = (stage) => `Git failure witness stage=${stage} mode=${mode} clock=test_spawn_event elapsed_ms=-1`;
+    let firstEvidence;
+    try {
+    const directory = fs.mkdtempSync(path.join(tmpHome, "stdio-界-"));
+    const release = path.join(directory, "release"), pidFile = path.join(directory, "pid");
+    const ended = path.join(directory, "ended");
+    const owner = new AbortController();
+    const forced = mode === "fallback-drain";
+    const forcedError = new Error("fixture primary failure before emergency holder drain");
+    let primaryError, terminalConfirmed = false;
+    const cleanupErrors = [];
+    let root, running, exited, snapshot;
+    sample = (stage) => snapshot ? snapshot(mode, stage, {
+      ready: Number(fs.existsSync(pidFile)), release: Number(fs.existsSync(release)),
+      end: Number(fs.existsSync(ended)), terminal: Number(terminalConfirmed),
+    }) : `Git failure witness stage=${stage} mode=${mode} clock=test_spawn_event elapsed_ms=-1`;
+    const holder = `
+      const fs = require("node:fs");
+      process.once("exit", () => fs.writeFileSync(${JSON.stringify(ended)}, "ended"));
+      process.stdout.on("error", () => process.exit(0));
+      const timer = setInterval(() => {
+        if (!${forced} && fs.existsSync(${JSON.stringify(release)})) {
+          clearInterval(timer);
+          process.stdout.write("/Repo.git", () => process.exit(0));
+        }
+      }, 5);
+      setTimeout(() => process.exit(0), 10000).unref();
+      process.send("ready");
+      process.disconnect();
+    `;
+    const parent = `
+      const fs = require("node:fs");
+      const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(holder)}],
+        { stdio: ["ignore", 1, "ignore", "ipc"], windowsHide: true, detached: true });
+      child.on("message", () => {
+        fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));
+        process.stdout.write("https://git.example.test/Team", () => process.exit(${mode === "nonzero" ? 128 : 0}));
+      });
+    `;
+    try {
+      await withGitProcess((args) => args[0] === "remote" ? parent
+        : `process.stdout.write("${"a".repeat(40)}")`, async (calls) => {
+        running = P.deriveContainerRef(process.cwd(), owner.signal);
+        // Attach a rejection handler before any readiness await.
+        const outcome = running.then((value) => ({ value }), (error) => ({ error }));
+        let actionError;
+        try {
+          await bounded(exited, "the real Git parent must exit");
+          await new Promise((resolve) => setImmediate(resolve)); // after production's exit listener
+          assert.equal(root.stdout.destroyed, false, "root exit alone must not discard buffered stdout");
+          if (mode === "abort" || forced) owner.abort();
+          if (mode === "drain" || mode === "nonzero") {
+            let settled = false;
+            void outcome.then(() => { settled = true; });
+            await new Promise((resolve) => setImmediate(resolve));
+            assert.equal(settled, false, "numeric exit must still wait for owned stdout close");
+            fs.writeFileSync(release, "release");
+          }
+          const result = await bounded(outcome, "owned stdout must close under its original controls");
+          if (mode === "abort" || forced) assert.equal(result.error?.name, "AbortError");
+          else {
+            assert.ifError(result.error);
+            assert.equal(result.value, mode === "timeout" ? P.pathContainer(process.cwd())
+              : mode === "nonzero" ? "repo:" + "a".repeat(12) : "git:git.example.test/team/repo");
+            assert.equal(calls.length, mode === "nonzero" ? 2 : 1,
+              "only numeric nonzero may fall through to the root probe");
+          }
+          assert.equal(root.stdout.destroyed, true, "helper completion is owned-stream close, not root exit");
+          if (mode === "abort" || mode === "timeout" || forced)
+            assert.equal(fs.existsSync(ended), false, "the helper closes only its pipe, not arbitrary descendants");
+          if (forced) throw forcedError;
+        } catch (error) { firstEvidence = sample("failed_check"); actionError = error; throw error; }
+        finally {
+          try { fs.writeFileSync(release, "release"); }
+          catch (error) {
+            firstEvidence ||= sample("cleanup_check");
+            if (actionError) throw new AggregateError([actionError, error], "Git fixture release failed", { cause: actionError });
+            throw error;
+          } finally { await outcome; }
+        }
+      }, (child, args) => {
+        if (args[0] !== "remote") return;
+        root = child;
+        snapshot = observe(child, owner.signal);
+        exited = new Promise((resolve, reject) => { child.once("exit", resolve); child.once("error", reject); });
+      });
+    } catch (error) { firstEvidence ||= sample("failed_check"); primaryError = error; }
+    finally {
+      // This test owns the holder too; production deliberately owns only its pipe.
+      try {
+        if (fs.existsSync(pidFile)) {
+          const pid = Number(fs.readFileSync(pidFile, "utf8"));
+          try {
+            fs.writeFileSync(release, "release");
+            const deadline = Date.now() + (forced ? 0 : 5000);
+            while (!fs.existsSync(ended)) {
+              assert.ok(Date.now() < deadline, "the test-owned stdout holder must finish after release");
+              await new Promise((resolve) => setTimeout(resolve, 5));
+            }
+          } catch (error) {
+            firstEvidence ||= sample("cleanup_check");
+            cleanupErrors.push(error);
+            try { process.kill(pid); }
+            catch (killError) { if (killError.code !== "ESRCH") throw killError; }
+            const deadline = Date.now() + 5000;
+            while (!terminalConfirmed) {
+              try { process.kill(pid, 0); }
+              catch (probeError) {
+                if (probeError.code !== "ESRCH") throw probeError;
+                terminalConfirmed = true;
+              }
+              if (!terminalConfirmed) {
+                assert.ok(Date.now() < deadline, "emergency kill must be followed by holder terminal confirmation");
+                await new Promise((resolve) => setTimeout(resolve, 5));
+              }
+            }
+          }
+        } else fs.writeFileSync(release, "release");
+      } catch (error) { firstEvidence ||= sample("cleanup_check"); cleanupErrors.push(error); }
+      finally { await running?.catch(() => {}); }
+    }
+    const errors = [primaryError, ...cleanupErrors].filter(Boolean);
+    const failure = errors.length > 1 ? new AggregateError(errors, "Git fixture failed with cleanup errors", { cause: primaryError })
+      : errors[0];
+    assert.equal(childProcess.spawn, nativeSpawn);
+    assert.equal(builtins.spawn, nativeSpawn);
+    if (forced) {
+      if (primaryError !== forcedError || cleanupErrors.length !== 1 || !terminalConfirmed)
+        throw failure || new Error("forced emergency drain did not exercise its required path");
+      assert.ok(failure instanceof AggregateError);
+      assert.equal(failure.cause, forcedError, "cleanup must preserve the primary failure");
+      assert.equal(failure.errors[0], forcedError);
+      assert.equal(failure.errors.length, 2, "only the forced primary and release/drain failures are expected");
+      assert.match(failure.errors[1].message, /holder must finish after release/);
+      assert.equal(terminalConfirmed, true, "the emergency path must observe termination, not just send kill");
+    } else if (failure) throw failure;
+    } catch (error) { throw annotate(error, firstEvidence || sample("failed_check"), sample("after_cleanup")); }
+  }
+});
+
+test("async actor resolution checks lifetime and keeps actor and container pins coherent", async () => {
+  const sid = "async-actor-pin";
+  for (const change of ["retire", "new-actor", "new-container", "removed"]) {
+    let current = true;
+    P.removeSessionPin(sid);
+    P.pinContainer(sid, "git:example.test/original");
+    try {
+      await withGitProcess(() => 'process.stdout.write("derived actor");setTimeout(()=>{},50)', async () => {
+        const resolution = P.resolveActorRef(process.cwd(), sid, { current: () => current });
+        if (change === "new-actor") assert.equal(await resolution, "authoritative actor");
+        else await assert.rejects(() => resolution, { name: "AbortError" });
+        assert.notEqual(P.getPinnedActor(sid), "derived actor", "retired/conflicting discovery cannot publish its actor");
+        if (change === "new-container") assert.equal(P.getPinnedContainer(sid), "git:example.test/replacement");
+        if (change === "removed") assert.equal(P.getPinnedContainer(sid), null);
+      }, (child) => child.stdout.once("data", () => {
+        if (change === "retire") current = false;
+        if (change === "new-actor") P.pinContainer(sid, "git:example.test/original", undefined, "authoritative actor");
+        if (change === "new-container") P.pinContainer(sid, "git:example.test/replacement", undefined, "authoritative actor");
+        if (change === "removed") P.removeSessionPin(sid);
+      }));
+    } finally { P.removeSessionPin(sid); }
+  }
+});
+
+test("async Git preserves root validation and first-root container truncation", async () => {
+  for (const root of ["", "not-a-root", "A".repeat(40), "b".repeat(64), "c".repeat(65),
+    "d".repeat(40) + "\n" + "e".repeat(40)]) {
+    await withGitProcess((args) => args[0] === "remote" ? "process.exit(128)"
+      : `process.stdout.write(${JSON.stringify(root)})`, async (calls) => {
+      const first = root.split("\n")[0];
+      assert.deepEqual(await P.deriveGitRefs(process.cwd()), {
+        containerRef: first ? "repo:" + first.slice(0, 12) : P.pathContainer(process.cwd()),
+        repositoryRef: /^[0-9a-f]{40,64}$/i.test(first) ? "repo:" + first.toLowerCase() : null,
+      });
+      assert.equal(calls.length, 2);
+    });
+  }
+});
+
+test("async orientation preserves command order, token order, Unicode, redaction and eight stems", async () => {
+  const outputs = ["feature/lazy-git_fix", " M src/alpha.js\nR  old.js -> new/beta.ts\n?? src/שלום.py\n",
+    "src/alpha.js\nc.txt\nd.txt\ne.txt\nf.txt\ng.txt\nh.txt\n"];
+  await withGitProcess((args) => {
+    const output = args[0] === "rev-parse" ? outputs[0] : args[0] === "status" ? outputs[1] : outputs[2];
+    return `process.stdout.write(${JSON.stringify(output)})`;
+  }, async (calls) => {
+    assert.equal(await P.deriveOrientationQuery(process.cwd()), "feature lazy git fix alpha beta שלום c d e f g");
+    assert.deepEqual(calls, [["rev-parse", "--abbrev-ref", "HEAD"], ["status", "--porcelain"],
+      ["log", "-3", "--name-only", "--pretty=format:"]]);
+  });
+  await withGitProcess((args) => `process.stdout.write(${JSON.stringify(args[0] === "rev-parse" ? "main" : "")})`,
+    async () => assert.equal(await P.deriveOrientationQuery(process.cwd()), P.RETRIEVAL_FALLBACK_QUERY));
+  await withGitProcess((args) => `process.stdout.write(${JSON.stringify(args[0] === "status" ? " M TOKEN=example.txt" : "")})`,
+    async () => assert.equal(await P.deriveOrientationQuery(process.cwd()), "TOKEN=[REDACTED]"));
+});
+
+test("async identity follows Unicode nested cwd and linked worktree Git configuration", async () => {
+  const root = fs.mkdtempSync(path.join(tmpHome, "repo-界-"));
+  const repo = path.join(root, "primary"), linked = path.join(root, "linked-שלום");
+  const previousActor = process.env.PALLIUM_HOOK_ACTOR_REF;
+  const run = (args) => execFileSync("git", args, { cwd: repo, stdio: ["ignore", "pipe", "ignore"] });
+  fs.mkdirSync(repo);
+  delete process.env.PALLIUM_HOOK_ACTOR_REF;
+  try {
+    run(["init"]);
+    run(["config", "user.name", "מפעיל 界"]);
+    run(["config", "user.email", "fixture@example.test"]);
+    run(["config", "commit.gpgsign", "false"]);
+    fs.writeFileSync(path.join(repo, "entry.txt"), "initial");
+    run(["add", "entry.txt"]);
+    run(["commit", "-m", "initial"]);
+    run(["worktree", "add", "--detach", linked]);
+    const nested = path.join(linked, "nested-é");
+    fs.mkdirSync(nested);
+    const hash = run(["rev-list", "--max-parents=0", "HEAD"]).toString().trim();
+    for (const cwd of [repo, nested]) {
+      assert.deepEqual(await P.deriveGitRefs(cwd), { containerRef: "repo:" + hash.slice(0, 12), repositoryRef: "repo:" + hash });
+      assert.equal(await P.deriveActorRef(cwd), "מפעיל 界");
+    }
+    run(["remote", "add", "origin", "https://git.example.test/Team/Repo.git"]);
+    assert.deepEqual(await P.deriveGitRefs(nested),
+      { containerRef: "git:git.example.test/team/repo", repositoryRef: "git:git.example.test/Team/Repo" });
+  } finally {
+    if (previousActor === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
+    else process.env.PALLIUM_HOOK_ACTOR_REF = previousActor;
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
