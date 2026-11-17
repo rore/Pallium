@@ -524,7 +524,7 @@ export async function palliumRequest(method, reqPath, payload, signal) {
   }
 }
 
-export async function relayRequest(method, reqPath, payload, timeoutMs, signal, onHttpError) {
+export async function relayRequest(method, reqPath, payload, timeoutMs, signal, onHttpError, onHeaders) {
   if (signal?.aborted) return null;
   const controller = new AbortController();
   const cancel = () => controller.abort();
@@ -541,6 +541,8 @@ export async function relayRequest(method, reqPath, payload, timeoutMs, signal, 
         body: JSON.stringify(payload),
       }),
     });
+    // Observe before reading the body: a timeout must not erase Retry-After.
+    try { onHeaders?.(resp.status, resp.headers?.get("Retry-After") ?? null); } catch {}
     if (!resp.ok) {
       try {
         if (onHttpError) {
@@ -645,7 +647,7 @@ export function formatRelayContinuation(deliveries, budgetChars = 0) {
 }
 
 
-export async function acknowledgeRelay(deliveries, containerRef, signal) {
+export async function acknowledgeRelay(deliveries, containerRef, signal, observe) {
   const results = [];
   for (const delivery of deliveries || []) {
     if (signal?.aborted) {
@@ -657,14 +659,21 @@ export async function acknowledgeRelay(deliveries, containerRef, signal) {
       results.push({ delivery_id: delivery?.delivery_id ?? null, success: false, error: "invalid_delivery" });
       continue;
     }
+    let status, error;
+    const notify = (observation) => { try { observe?.(delivery, observation); } catch {} };
     const response = await relayRequest("POST", "/relay/deliveries/ack", {
       delivery_id: delivery.delivery_id,
       claim_token: delivery.claim_token,
       container_ref: containerRef,
-    }, 500, signal);
+    }, 500, signal, observe ? (_status, body) => { error = body; } : undefined,
+    observe ? (code, retryAfter) => {
+      status = code;
+      notify({ phase: "headers", status, retryAfter, at: performance.now() });
+    } : undefined);
     const success = response?.delivery_id === delivery.delivery_id && response?.state === "delivered" &&
       typeof response?.already_delivered === "boolean";
     results.push({ delivery_id: delivery.delivery_id, success, ...(success ? {} : { error: "ack_failed" }) });
+    notify({ phase: "outcome", status, error, success, at: performance.now() });
   }
   return results;
 }

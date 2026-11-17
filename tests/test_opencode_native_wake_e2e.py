@@ -238,6 +238,717 @@ try{
         server.server_close()
 
 
+def test_ordinary_delivery_before_delayed_wake_preserves_custody_and_progress(client, tmp_path):
+    """Real plugin/HTTP custody; native promotion and terminal events are controlled."""
+    from tests.test_opencode_relay_wake_e2e import _setup, _send
+
+    node, git = shutil.which("node"), shutil.which("git")
+    assert node and git, "installed Node and Git are required; do not download runtimes"
+    root = Path(__file__).resolve().parents[1]
+    assert Path(create_app.__code__.co_filename).resolve().is_relative_to(root)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() in {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC"}}
+    for key in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+                "XDG_STATE_HOME", "TEMP", "TMP"):
+        directory = tmp_path / key.lower()
+        directory.mkdir()
+        env[key] = str(directory)
+    gitconfig = tmp_path / "gitconfig"
+    gitconfig.write_text("", encoding="utf-8")
+    env.update(GIT_CONFIG_GLOBAL=str(gitconfig), GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0")
+    subprocess.run([git, "init", "-q", str(workspace)], env=env, check=True, timeout=10)
+    subprocess.run([git, "-C", str(workspace), "remote", "add", "origin",
+                    "https://example.test/team/relay.git"], env=env, check=True, timeout=10)
+    base = _setup(client, session="ses_obsolete_wake", location=str(workspace), enroll=False)
+    anchor = _send(client, base, "ANCHOR_שלום_界").json()
+    later = []
+    requests = []
+
+    class JourneyHTTP(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def forward(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            if self.path == "/fixture/later":
+                response = _send(client, base, "LATER_界_שלום")
+                assert response.is_success, response.text
+                later.append(response.json())
+            else:
+                response = client.request(self.command, self.path, content=raw or None,
+                                          headers={"Content-Type": "application/json"})
+            requests.append({"method": self.command, "path": self.path,
+                             "body": json.loads(raw) if raw else None,
+                             "status": response.status_code, "result": response.json()})
+            payload = response.content
+            try:
+                self.send_response(response.status_code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+
+        do_GET = do_POST = forward
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), JourneyHTTP)
+    assert server.server_port != 19836
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    program = tmp_path / "obsolete-wake-caller.mjs"
+    program.write_text(r"""import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
+import {writeFileSync} from 'node:fs';
+const cwd=process.env.JOURNEY_DIRECTORY,sessionID='ses_obsolete_wake';
+const origin='http://localhost:'+process.env.PALLIUM_PORT;
+const anchor=JSON.parse(process.env.JOURNEY_ANCHOR),scope={container_ref:'git:example.test/team/relay'};
+const savedFetch=globalThis.fetch,savedSpawn=childProcess.spawn,children=[],calls=[],prompts=[],history=[],hooks={},disposed=[];
+const defer=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve}};
+const promotion=defer(),jobs=[],logs=[];
+let tick,cleanup,failedContext,terminal=0,waits=0,interrupts=0;
+const pause=()=>new Promise(resolve=>setImmediate(resolve));
+const until=async(check,label)=>{
+ const end=Date.now()+8000;
+ while(!check()){assert.ok(Date.now()<end,label+': '+JSON.stringify(logs));await new Promise(resolve=>setTimeout(resolve,5))}
+ await pause();
+};
+// Same owned-child/close pattern as withGitProcess; no replacement Git or shell.
+childProcess.spawn=(command,args,options)=>{
+ assert.equal(command,'git');assert.equal(options.cwd,cwd);assert.ok(!options.shell);
+ assert.ok([['remote','get-url','origin'],['rev-list','--max-parents=0','HEAD'],['config','user.name']]
+  .some(allowed=>JSON.stringify(allowed)===JSON.stringify(args)));
+ const child=savedSpawn(process.env.JOURNEY_GIT,args,options),entry={child,done:false};
+ entry.closed=new Promise(resolve=>child.once('close',()=>{entry.done=true;resolve()}));
+ children.push(entry);return child;
+};
+syncBuiltinESMExports();
+globalThis.fetch=async(input,init={})=>{
+ const url=new URL(typeof input==='string'?input:input.url);
+ assert.equal(url.origin,origin,'only the fixture-owned loopback port is permitted');
+ const body=init.body?JSON.parse(init.body):null;
+ const response=await savedFetch(input,{...init,redirect:'error'});
+ const result=await response.clone().json();
+ calls.push({path:url.pathname,body,status:response.status,result});
+ if(body?.operation==='terminal'&&response.ok)terminal++;
+ return response;
+};
+globalThis.setInterval=(fn)=>{tick=fn;return{unref(){}}};
+globalThis.clearInterval=()=>{};
+const request=async(method,path,body)=>{
+ const response=await fetch(origin+path,{method,headers:{'Content-Type':'application/json'},
+  ...(body?{body:JSON.stringify(body)}:{})});
+ assert.equal(response.status,200,await response.clone().text());return response.json();
+};
+const status=async(message)=>(await request('GET','/relay/messages/'+message.message_id+'?'+new URLSearchParams(scope))).deliveries[0];
+const acks=()=>calls.filter(c=>c.path==='/relay/deliveries/ack');
+const turns=()=>calls.filter(c=>c.path==='/relay/turn');
+const ctx={location:{directory:cwd},app:{log:entry=>logs.push(entry.message)},session:{
+ hook:async(name,fn)=>{hooks[name]=fn;return{dispose:()=>disposed.push(name)}},
+ get:async({sessionID:id})=>({id,location:{directory:cwd},revert:null}),
+ context:async()=>({data:history}),
+ prompt:input=>{
+  prompts.push(input);
+  const work=(async()=>{
+   assert.equal(input.delivery,'queue');assert.equal(input.sessionID,sessionID);
+   if(prompts.length===1)await promotion.promise;
+   history.push({type:'user',id:input.id,text:input.text,metadata:input.metadata});
+   await hooks.prompt({sessionID,messageID:input.id,prompt:{text:input.text},metadata:input.metadata});
+   const user={id:input.id,role:'user',content:[{type:'text',text:input.text}],metadata:input.metadata};
+   const before={acks:acks().length,turns:turns().length};
+   let error;
+   try{await hooks.context({sessionID,messages:[user]})}catch(caught){error=caught}
+   if(prompts.length===1){
+    assert.equal(error?.message,'Pallium internal wake has no current Relay work');
+    assert.equal(user.content.length,1,'unowned delivered payload must not enter model context');
+    assert.equal(acks().length,before.acks);assert.equal(turns().length,before.turns);
+    failedContext={error:error.message,acks:before.acks,turns:before.turns};
+   }else{
+    assert.ifError(error);assert.match(user.content.at(-1).text,/LATER_界_שלום/);
+    assert.doesNotMatch(user.content.at(-1).text,/ANCHOR_שלום_界/);
+    assert.equal(acks().length,before.acks+1);
+   }
+   // Controlled native boundary turns the actual context result into its idle event.
+   history.push({type:'idle',id:'msg_native_terminal_'+prompts.length,
+    outcome:error?'failed':'succeeded',...(error?{error:{message:error.message}}:{})});
+   return{id:input.id};
+  })();
+  jobs.push(work);return work;
+ },
+ wait:async()=>{waits++;assert.equal(history.at(-1)?.type,'idle')},
+ interrupt:async()=>{interrupts++},
+},event:{subscribe:async function*({signal}){
+ if(!signal.aborted)await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));
+}}};
+let watchdog,report;
+try{
+ const {default:production}=await import(process.env.JOURNEY_PLUGIN);
+ cleanup=await production.setup(ctx);
+ await Promise.race([(async()=>{
+  await until(()=>calls.some(c=>c.body?.operation==='enroll'&&c.status===200),'startup enrollment');
+  tick();await until(()=>prompts.length===1,'reserved native input queued');
+  const first=prompts[0],reservation=calls.find(c=>c.body?.operation==='poll'&&c.result.wake)?.result.wake;
+  assert.equal(reservation.delivery_id,anchor.deliveries[0].delivery_id);
+  assert.equal(first.id,reservation.native_input_id);
+  assert.equal(first.metadata.generation,reservation.generation);
+  assert.equal(first.metadata.delivery_id,reservation.delivery_id);
+  const pending=await status(anchor);assert.equal(pending.state,'pending');assert.equal(pending.attempts,0);
+  assert.equal(history.some(row=>row.id===first.id),false,'native promotion gate must still hold');
+  const ordinary={id:'msg_ordinary',role:'user',content:[{type:'text',text:'ordinary fixture task'}]};
+  history.push({type:'user',id:ordinary.id,text:ordinary.content[0].text});
+  await hooks.prompt({sessionID,messageID:ordinary.id,prompt:{text:ordinary.content[0].text}});
+  await hooks.context({sessionID,messages:[ordinary]});
+  assert.match(ordinary.content.at(-1).text,/ANCHOR_שלום_界/);
+  const delivered=await status(anchor);
+  assert.equal(delivered.state,'delivered');assert.equal(delivered.attempts,1);
+  assert.equal(acks().length,1);assert.equal(turns().length,1);
+  assert.equal(history.some(row=>row.id===first.id),false,'public ACK must precede native promotion');
+  promotion.resolve();
+  await until(()=>terminal===1,'failed native terminal reconciliation');
+  assert.equal(failedContext.error,'Pallium internal wake has no current Relay work');
+  const context=calls.find(c=>c.body?.operation==='context'&&c.body.delivery_id===reservation.delivery_id);
+  assert.equal(context.status,200);assert.deepEqual(context.result.deliveries,[]);
+  assert.equal(context.result.restored,false);
+  const finished=calls.find(c=>c.body?.operation==='terminal');
+  assert.equal(finished.body.generation,reservation.generation);
+  assert.equal(finished.body.native_input_id,first.id);
+  assert.equal(finished.body.delivery_id,reservation.delivery_id);
+  assert.equal(finished.body.terminal_message_id,'msg_native_terminal_1');
+  assert.equal(finished.result.wake.terminal,true);
+  const pollBoundary=calls.length;tick();
+  await until(()=>calls.slice(pollBoundary).some(c=>c.body?.operation==='poll'&&c.result.wake===null),'anchor release');
+  const later=await request('POST','/fixture/later',{});
+  tick();await until(()=>terminal===2,'later independent native delivery and terminal');
+  const progressed=await status(later),unchanged=await status(anchor);
+  assert.equal(progressed.state,'delivered');assert.equal(progressed.attempts,1);
+  assert.deepEqual(unchanged,delivered,'obsolete wake must not mutate the delivered source');
+  assert.equal(prompts.length,2);assert.notEqual(prompts[0].id,prompts[1].id);
+  assert.equal(acks().length,2);assert.equal(turns().length,1);
+  assert.equal(waits,2);assert.equal(interrupts,0);
+  report={characterization:true,native_boundary:'controlled, not installed-host proof',
+   beforePromotion:delivered,anchorAfter:unchanged,laterAfter:progressed,failedContext,
+   nativeIDs:prompts.map(p=>p.id),terminalRequests:calls.filter(c=>c.body?.operation==='terminal')};
+ })(),new Promise((_,reject)=>{watchdog=setTimeout(()=>reject(new Error('owned journey exceeded 45 seconds')),45000)})]);
+}finally{
+ clearTimeout(watchdog);promotion.resolve();await cleanup?.();
+ await Promise.allSettled(jobs);
+ for(const {child} of children)if(child.exitCode===null&&child.signalCode===null)child.kill();
+ await Promise.all(children.map(entry=>entry.closed));
+ writeFileSync(process.env.JOURNEY_REPORT,JSON.stringify({report,logs,
+  cleanup:{pluginDisposed:disposed.length===3,nativeJobsJoined:true,gitChildrenClosed:children.filter(e=>e.done).length},
+  http:calls}));
+ assert.ok(children.every(entry=>entry.done),'owned Git children must close, not merely exit');
+ assert.deepEqual(disposed.sort(),['compaction','context','prompt']);
+}
+""", encoding="utf-8")
+    env.update(PALLIUM_PORT=str(server.server_port), PALLIUM_HOOK_ACTOR_REF="fixture-actor",
+               JOURNEY_PLUGIN=(root / "integrations/opencode/.opencode/plugins/pallium-v2.mjs").as_uri(),
+               JOURNEY_GIT=git, JOURNEY_DIRECTORY=str(workspace),
+               JOURNEY_REPORT=str(tmp_path / "journey-report.json"), JOURNEY_ANCHOR=json.dumps(anchor))
+    try:
+        result = subprocess.run([node, str(program)], env=env, cwd=workspace, capture_output=True,
+                                text=True, encoding="utf-8", errors="replace", timeout=75)
+        (tmp_path / "journey-caller.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+        (tmp_path / "journey-http.json").write_text(json.dumps(requests), encoding="utf-8")
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((tmp_path / "journey-report.json").read_text(encoding="utf-8"))
+        assert report["report"]["characterization"] is True
+        assert len(later) == 1
+        assert report["report"]["beforePromotion"]["delivery_id"] == anchor["deliveries"][0]["delivery_id"]
+        assert report["report"]["laterAfter"]["delivery_id"] == later[0]["deliveries"][0]["delivery_id"]
+        assert report["cleanup"]["gitChildrenClosed"] > 0
+    finally:
+        server.shutdown()
+        thread.join(timeout=10)
+        server.server_close()
+        (tmp_path / "journey-cleanup.json").write_text(json.dumps({
+            "listener_closed": server.fileno() == -1, "server_thread_joined": not thread.is_alive(),
+        }), encoding="utf-8")
+        assert not thread.is_alive() and server.fileno() == -1, "fixture listener must drain"
+
+
+@pytest.mark.parametrize("ack_fault", ["precommit", "postcommit"])
+def test_emitted_ack_faults_preserve_registered_reply_and_progress(client, tmp_path, monkeypatch, ack_fault):
+    """Production context/ACK and registered MCP share the same real isolated app."""
+    import asyncio
+    from datetime import datetime, timezone
+    import httpx
+    from mcp.server.fastmcp.exceptions import ToolError
+    from app.mcp.server import create_server
+    import storage.sqlite_relay as relay_store
+    from tests.test_opencode_relay_wake_e2e import _setup, _send, SCOPE
+    from tests.test_relay_mcp_tools import bind_asgi_post, tool_error_payload
+
+    node, git = shutil.which("node"), shutil.which("git")
+    assert node and git, "installed runtimes are required"
+    root = Path(__file__).resolve().parents[1]
+    assert Path(create_app.__code__.co_filename).resolve().is_relative_to(root)
+    normalize, clock = relay_store._now, [datetime.now(timezone.utc)]
+    monkeypatch.setattr(relay_store, "_now", lambda value=None: normalize(value) if value is not None else clock[0])
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() in {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC"}}
+    for key in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+                "XDG_STATE_HOME", "TEMP", "TMP"):
+        directory = tmp_path / key.lower()
+        directory.mkdir()
+        env[key] = str(directory)
+    gitconfig = tmp_path / "gitconfig"
+    gitconfig.write_text("", encoding="utf-8")
+    env.update(GIT_CONFIG_GLOBAL=str(gitconfig), GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0")
+    subprocess.run([git, "init", "-q", str(workspace)], env=env, check=True, timeout=10)
+    subprocess.run([git, "-C", str(workspace), "remote", "add", "origin",
+                    "https://example.test/team/relay.git"], env=env, check=True, timeout=10)
+    base = _setup(client, session="ses_ack_fault", location=str(workspace), enroll=False)
+    anchor = _send(client, base, "ANCHOR_שלום_界").json()
+    faults, requests, mcp_posts = [], [], []
+
+    async def asgi_post(path, payload):
+        assert path == "/relay/replies" and "receipt" not in payload
+        assert not {"runtime", "session_ref", "sender_runtime", "sender_session_ref"} & payload.keys()
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=client.app),
+                                     base_url="http://fixture", timeout=30) as http:
+            response = await http.post(path, json=payload)
+            mcp_posts.append({"path": path, "body": payload, "status": response.status_code,
+                              "result": response.json()})
+            response.raise_for_status()
+            return response.json()
+
+    # Existing tool-layer binding, not a replacement tool or invented caller metadata.
+    bind_asgi_post(monkeypatch, asgi_post)
+    registered = create_server()
+
+    class AckHTTP(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def respond(self, status, value, body):
+            requests.append({"path": self.path, "body": body, "status": status, "result": value})
+            payload = json.dumps(value).encode()
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+
+        def forward(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = json.loads(raw) if raw else None
+            if self.path == "/fixture/mcp":
+                try:
+                    content, _ = asyncio.run(registered.call_tool("pallium_relay_reply", {
+                        "delivery_id": anchor["deliveries"][0]["delivery_id"],
+                        "message": "ANSWER_שלום_界", **SCOPE,
+                    }))
+                    result = {"result": json.loads(content[0].text)}
+                except ToolError as error:
+                    result = {"error": tool_error_payload(str(error))}
+                return self.respond(200, result, body)
+            if self.path == "/fixture/advance":
+                clock[0] += timedelta(seconds=61)
+                return self.respond(200, {"advanced_seconds": 61}, body)
+            if self.path == "/fixture/later":
+                response = _send(client, base, "LATER_界_שלום")
+                return self.respond(response.status_code, response.json(), body)
+            owned_ack = (self.path == "/relay/deliveries/ack" and
+                         body["delivery_id"] == anchor["deliveries"][0]["delivery_id"] and not faults)
+            if owned_ack and ack_fault == "precommit":
+                value = {"detail": {"code": "relay_busy", "retryable": True}}
+                faults.append({"stage": "precommit", "route_executed": False, "status": 503, "result": value})
+                return self.respond(503, value, body)
+            response = client.request(self.command, self.path, content=raw or None,
+                                      headers={"Content-Type": "application/json"})
+            if owned_ack:
+                assert response.status_code == 200 and response.json()["state"] == "delivered"
+                faults.append({"stage": "postcommit", "route_executed": True,
+                               "status": response.status_code, "result": response.json(),
+                               "response_delivered": False})
+                requests.append({"path": self.path, "body": body, **faults[-1]})
+                self.close_connection = True  # Real route committed; no HTTP response reaches the hook.
+                return
+            self.respond(response.status_code, response.json(), body)
+
+        do_GET = do_POST = forward
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), AckHTTP)
+    assert server.server_port != 19836
+    monkeypatch.setenv("PALLIUM_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+    monkeypatch.setenv("PALLIUM_CONTAINER_REF", SCOPE["container_ref"])
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    program = tmp_path / "ack-fault-caller.mjs"
+    program.write_text(r"""import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
+import {writeFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+const cwd=process.env.ACK_DIRECTORY,mode=process.env.ACK_FAULT,sessionID='ses_ack_fault';
+const anchor=JSON.parse(process.env.ACK_ANCHOR),id=anchor.deliveries[0].delivery_id;
+const origin='http://localhost:'+process.env.PALLIUM_PORT,scope={container_ref:'git:example.test/team/relay'};
+const savedFetch=globalThis.fetch,savedSpawn=childProcess.spawn,calls=[],children=[],hooks={},disposed=[],logs=[];
+const completed=new Set();let current,emittedBeforeAck=false,cleanup,report,watchdog;
+childProcess.spawn=(command,args,options)=>{
+ assert.equal(command,'git');assert.equal(options.cwd,cwd);assert.ok(!options.shell);
+ assert.ok([['remote','get-url','origin'],['rev-list','--max-parents=0','HEAD'],['config','user.name']]
+  .some(allowed=>JSON.stringify(allowed)===JSON.stringify(args)));
+ const child=savedSpawn(process.env.ACK_GIT,args,options),entry={child,done:false};
+ entry.closed=new Promise(resolve=>child.once('close',()=>{entry.done=true;resolve()}));
+ children.push(entry);return child;
+};
+syncBuiltinESMExports();
+globalThis.fetch=async(input,init={})=>{
+ const url=new URL(typeof input==='string'?input:input.url);assert.equal(url.origin,origin);
+ const body=init.body?JSON.parse(init.body):null;
+ if(url.pathname==='/relay/deliveries/ack'&&body.delivery_id===id&&!emittedBeforeAck){
+  assert.match(current.content.at(-1).text,/ANCHOR_שלום_界/);emittedBeforeAck=true;
+ }
+ const entry={path:url.pathname,body};calls.push(entry);
+ try{
+  const response=await savedFetch(input,{...init,redirect:'error'});
+  entry.status=response.status;entry.result=await response.clone().json();return response;
+ }catch(error){entry.error=String(error);throw error}
+};
+globalThis.setInterval=()=>({unref(){}});globalThis.clearInterval=()=>{};
+const request=async(method,path,body,expected=200)=>{
+ const response=await fetch(origin+path,{method,headers:{'Content-Type':'application/json'},
+  ...(body?{body:JSON.stringify(body)}:{})});
+ assert.equal(response.status,expected,await response.clone().text());return response.json();
+};
+const status=async(message)=>(await request('GET','/relay/messages/'+message.message_id+'?'+new URLSearchParams(scope))).deliveries[0];
+const ackCalls=()=>calls.filter(c=>c.path==='/relay/deliveries/ack');
+const ctx={location:{directory:cwd},app:{log:entry=>logs.push(entry.message)},session:{
+ hook:async(name,fn)=>{hooks[name]=fn;return{dispose:()=>disposed.push(name)}},
+ get:async({sessionID:id})=>({id,location:{directory:cwd},revert:null}),
+ context:async()=>({data:[]}),
+},event:{subscribe:async function*({signal}){
+ if(!signal.aborted)await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));
+}}};
+const context=async(input)=>{
+ current={id:input,role:'user',content:[{type:'text',text:'ordinary fixture work'}]};
+ await hooks.prompt({sessionID,messageID:input,prompt:{text:current.content[0].text}});
+ await hooks.context({sessionID,messages:[current]});return current.content.at(-1).text;
+};
+try{
+ const {default:production}=await import(process.env.ACK_PLUGIN);
+ cleanup=await production.setup(ctx);
+ await Promise.race([(async()=>{
+  const first=await context('msg_first');
+  assert.match(first,/ANCHOR_שלום_界/);assert.equal(emittedBeforeAck,true);
+  completed.add(id); // Stand-in completed work; never execute it again on a genuine redelivery.
+  assert.equal(ackCalls().length,1);
+  const before=await status(anchor);
+  assert.equal(before.state,mode==='precommit'?'claimed':'delivered');assert.equal(before.attempts,1);
+  if(mode==='precommit'){
+   assert.equal(ackCalls()[0].status,503);
+   assert.deepEqual(ackCalls()[0].result,{detail:{code:'relay_busy',retryable:true}});
+   const live=await request('POST','/fixture/mcp',{});
+   assert.equal(live.error.status_code,409);
+   assert.equal(live.error.detail.detail,'receipt required when replying from claimed state');
+  }else{
+   assert.ok(ackCalls()[0].error,'committed ACK response must actually be lost at the caller');
+   assert.equal(ackCalls()[0].status,undefined);
+  }
+  assert.equal((await request('POST','/fixture/advance',{})).advanced_seconds,61);
+  const reply=await request('POST','/fixture/mcp',{});
+  const replyID='relay-reply-'+createHash('sha256').update(id).digest('hex');
+  if(mode==='precommit'){
+   assert.equal(reply.error.status_code,409);assert.equal(reply.error.detail.detail,'claim lease has expired');
+   await request('GET','/relay/messages/'+replyID+'?'+new URLSearchParams(scope),null,404);
+  }else{
+   assert.equal(reply.result.message_id,replyID);assert.equal(reply.result.deliveries.length,1);
+   const saved=await request('GET','/relay/messages/'+replyID+'?'+new URLSearchParams(scope));
+   assert.equal(saved.payload,'ANSWER_שלום_界');assert.equal(saved.in_reply_to,anchor.message_id);
+  }
+  const next=await context('msg_genuine_next');
+  const recovered=await status(anchor);
+  if(mode==='precommit'){
+   assert.match(next,/ANCHOR_שלום_界/);
+   assert.match(next,/claim_attempt: 2\npossible_redelivery: true/);
+   assert.equal(completed.has(id),true,'skip the previously completed action');
+   assert.equal(recovered.attempts,2);assert.equal(ackCalls().length,2);
+  }else{
+   assert.doesNotMatch(next,/ANCHOR_שלום_界/);
+   assert.equal(recovered.attempts,1);assert.equal(ackCalls().length,1);
+  }
+  assert.equal(recovered.state,'delivered');assert.equal(completed.size,1);
+  const later=await request('POST','/fixture/later',{});
+  assert.match(await context('msg_later_independent'),/LATER_界_שלום/);
+  completed.add(later.deliveries[0].delivery_id);
+  const progressed=await status(later);
+  assert.equal(progressed.state,'delivered');assert.equal(progressed.attempts,1);
+  assert.equal(completed.size,2);assert.equal(ackCalls().length,mode==='precommit'?3:2);
+  report={mode,emittedBeforeAck,before,recovered,progressed,reply,
+   completedDistinctActions:completed.size,ackCalls:ackCalls()};
+ })(),new Promise((_,reject)=>{watchdog=setTimeout(()=>reject(new Error('owned ACK control exceeded 45 seconds')),45000)})]);
+}finally{
+ clearTimeout(watchdog);await cleanup?.();
+ for(const {child} of children)if(child.exitCode===null&&child.signalCode===null)child.kill();
+ await Promise.all(children.map(entry=>entry.closed));
+ writeFileSync(process.env.ACK_REPORT,JSON.stringify({report,logs,http:calls,
+  cleanup:{pluginDisposed:disposed.length===3,gitChildrenClosed:children.filter(e=>e.done).length}}));
+ assert.ok(children.every(e=>e.done));assert.deepEqual(disposed.sort(),['compaction','context','prompt']);
+}
+""", encoding="utf-8")
+    env.update(PALLIUM_PORT=str(server.server_port), PALLIUM_HOOK_ACTOR_REF="fixture-actor",
+               ACK_PLUGIN=(root / "integrations/opencode/.opencode/plugins/pallium-v2.mjs").as_uri(),
+               ACK_GIT=git, ACK_DIRECTORY=str(workspace), ACK_FAULT=ack_fault,
+               ACK_REPORT=str(tmp_path / "ack-report.json"), ACK_ANCHOR=json.dumps(anchor))
+    try:
+        result = subprocess.run([node, str(program)], env=env, cwd=workspace, capture_output=True,
+                                text=True, encoding="utf-8", errors="replace", timeout=75)
+        (tmp_path / "ack-caller.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+        (tmp_path / "ack-http.json").write_text(json.dumps({"faults": faults, "requests": requests,
+                                                         "registered_mcp_posts": mcp_posts}), encoding="utf-8")
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((tmp_path / "ack-report.json").read_text(encoding="utf-8"))
+        assert len(faults) == 1 and faults[0]["stage"] == ack_fault
+        assert len(mcp_posts) == (2 if ack_fault == "precommit" else 1)
+        assert [p["status"] for p in mcp_posts] == ([409, 409] if ack_fault == "precommit" else [200])
+        assert report["report"]["completedDistinctActions"] == 2
+        assert report["cleanup"]["gitChildrenClosed"] > 0
+    finally:
+        server.shutdown()
+        thread.join(timeout=10)
+        server.server_close()
+        (tmp_path / "ack-cleanup.json").write_text(json.dumps({
+            "listener_closed": server.fileno() == -1, "server_thread_joined": not thread.is_alive(),
+        }), encoding="utf-8")
+        assert not thread.is_alive() and server.fileno() == -1
+
+
+@pytest.mark.parametrize("ack_fault", ["precommit", "postcommit"])
+def test_emitted_ack_maintenance_without_next_prompt(client, tmp_path, monkeypatch, ack_fault):
+    """Actual production interval confirms only emitted custody during held work."""
+    import asyncio
+    from datetime import datetime, timezone
+    import httpx
+    from app.mcp.server import create_server
+    from tests.test_relay_mcp_tools import bind_asgi_post
+    from tests.test_opencode_relay_wake_e2e import _setup, _send, SCOPE
+    import storage.sqlite_relay as relay_store
+
+    node, git = shutil.which("node"), shutil.which("git")
+    assert node and git
+    root = Path(__file__).resolve().parents[1]
+    assert Path(create_app.__code__.co_filename).resolve().is_relative_to(root)
+    normalize, clock = relay_store._now, [datetime.now(timezone.utc)]
+    monkeypatch.setattr(relay_store, "_now", lambda value=None: normalize(value) if value is not None else clock[0])
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() in {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC"}}
+    for key in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+                "XDG_STATE_HOME", "TEMP", "TMP"):
+        directory = tmp_path / key.lower()
+        directory.mkdir()
+        env[key] = str(directory)
+    (tmp_path / "gitconfig").write_text("", encoding="utf-8")
+    env.update(GIT_CONFIG_GLOBAL=str(tmp_path / "gitconfig"), GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0")
+    subprocess.run([git, "init", "-q", str(workspace)], env=env, check=True, timeout=10)
+    subprocess.run([git, "-C", str(workspace), "remote", "add", "origin",
+                    "https://example.test/team/relay.git"], env=env, check=True, timeout=10)
+    base = _setup(client, session="ses_ack_maintenance", location=str(workspace), enroll=False)
+    anchor = _send(client, base, "MAINTENANCE_שלום_界").json()
+    faults, requests, mcp_posts = [], [], []
+
+    async def asgi_post(path, payload):
+        assert path == "/relay/replies" and "receipt" not in payload
+        assert not {"runtime", "session_ref", "sender_runtime", "sender_session_ref"} & payload.keys()
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=client.app),
+                                     base_url="http://fixture", timeout=30) as http:
+            response = await http.post(path, json=payload)
+            mcp_posts.append({"body": payload, "status": response.status_code, "result": response.json()})
+            response.raise_for_status()
+            return response.json()
+
+    bind_asgi_post(monkeypatch, asgi_post)
+    registered = create_server()
+
+    class MaintenanceHTTP(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def respond(self, status, value, body, retry_after=None):
+            requests.append({"path": self.path, "body": body, "status": status, "result": value})
+            payload = json.dumps(value).encode()
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                if retry_after is not None:
+                    self.send_header("Retry-After", retry_after)
+                self.end_headers()
+                self.wfile.write(payload)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+
+        def forward(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = json.loads(raw) if raw else None
+            if self.path == "/fixture/reply":
+                content, _ = asyncio.run(registered.call_tool("pallium_relay_reply", {
+                    "delivery_id": anchor["deliveries"][0]["delivery_id"], "message": "RESULT_שלום_界", **SCOPE,
+                }))
+                return self.respond(200, json.loads(content[0].text), body)
+            if self.path == "/fixture/advance":
+                clock[0] += timedelta(seconds=61)
+                return self.respond(200, {"advanced_seconds": 61}, body)
+            if self.path == "/fixture/later":
+                response = _send(client, base, "LATER_MAINTENANCE_界")
+                return self.respond(response.status_code, response.json(), body)
+            owned_ack = (self.path == "/relay/deliveries/ack" and not faults and
+                         body["delivery_id"] == anchor["deliveries"][0]["delivery_id"])
+            if owned_ack and ack_fault == "precommit":
+                faults.append({"stage": "precommit", "route_executed": False, "status": 503})
+                return self.respond(503, {"detail": {"code": "relay_busy", "retryable": True}}, body, "1")
+            response = client.request(self.command, self.path, content=raw or None,
+                                      headers={"Content-Type": "application/json"})
+            if owned_ack:
+                assert response.status_code == 200 and response.json()["state"] == "delivered"
+                faults.append({"stage": "postcommit", "route_executed": True, "status": 200,
+                               "response_delivered": False, "result": response.json()})
+                requests.append({"path": self.path, "body": body, **faults[-1]})
+                self.close_connection = True
+                return
+            self.respond(response.status_code, response.json(), body)
+
+        do_GET = do_POST = forward
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), MaintenanceHTTP)
+    assert server.server_port != 19836
+    monkeypatch.setenv("PALLIUM_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+    monkeypatch.setenv("PALLIUM_CONTAINER_REF", SCOPE["container_ref"])
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    program = tmp_path / "ack-maintenance.mjs"
+    program.write_text(r"""import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
+import {writeFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+const cwd=process.env.ACK_DIRECTORY,sessionID='ses_ack_maintenance',mode=process.env.ACK_FAULT;
+const anchor=JSON.parse(process.env.ACK_ANCHOR),id=anchor.deliveries[0].delivery_id;
+const origin='http://localhost:'+process.env.PALLIUM_PORT,scope={container_ref:'git:example.test/team/relay'};
+const savedFetch=globalThis.fetch,savedSpawn=childProcess.spawn,calls=[],children=[],hooks={},disposed=[],native=[];
+let current,cleanup,watchdog,emitted=false,completed=0,report;
+let finish;const longWork=new Promise(resolve=>{finish=resolve}).then(()=>{completed++});
+childProcess.spawn=(command,args,options)=>{
+ assert.equal(command,'git');assert.equal(options.cwd,cwd);assert.ok(!options.shell);
+ assert.ok([['remote','get-url','origin'],['rev-list','--max-parents=0','HEAD'],['config','user.name']]
+  .some(allowed=>JSON.stringify(allowed)===JSON.stringify(args)));
+ const child=savedSpawn(process.env.ACK_GIT,args,options),entry={child,done:false};
+ entry.closed=new Promise(resolve=>child.once('close',()=>{entry.done=true;resolve()}));children.push(entry);return child;
+};syncBuiltinESMExports();
+globalThis.fetch=async(input,init={})=>{
+ const url=new URL(typeof input==='string'?input:input.url);assert.equal(url.origin,origin);
+ const body=init.body?JSON.parse(init.body):null,entry={path:url.pathname,body,at:performance.now()};calls.push(entry);
+ if(url.pathname==='/relay/deliveries/ack'&&body.delivery_id===id&&!emitted){
+  assert.match(current.content.at(-1).text,/MAINTENANCE_שלום_界/);emitted=true;
+ }
+ try{
+  const response=await savedFetch(input,{...init,redirect:'error'});
+  entry.status=response.status;entry.result=await response.clone().json();return response;
+ }catch(error){entry.error=String(error);throw error}
+};
+const request=async(method,path,body)=>{
+ const response=await fetch(origin+path,{method,headers:{'Content-Type':'application/json'},
+  ...(body?{body:JSON.stringify(body)}:{})});
+ assert.equal(response.status,200,await response.clone().text());return response.json();
+};
+const status=async(message)=>(await request('GET','/relay/messages/'+message.message_id+'?'+new URLSearchParams(scope))).deliveries[0];
+const acks=()=>calls.filter(c=>c.path==='/relay/deliveries/ack'&&c.body.delivery_id===id);
+const ctx={location:{directory:cwd},app:{log(){}},session:{
+ hook:async(name,fn)=>{hooks[name]=fn;return{dispose:()=>disposed.push(name)}},
+ get:async({sessionID:id})=>({id,location:{directory:cwd},revert:null}),
+ context:async()=>({data:[]}),prompt:async(input)=>{native.push(input);throw new Error('unexpected native input')},
+ wait:async()=>longWork,
+},event:{subscribe:async function*({signal}){
+ if(!signal.aborted)await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));
+}}};
+const context=async(input)=>{
+ current={id:input,role:'user',content:[{type:'text',text:'ordinary long-running work'}]};
+ await hooks.prompt({sessionID,messageID:input,prompt:{text:current.content[0].text}});
+ await hooks.context({sessionID,messages:[current]});return current.content.at(-1).text;
+};
+try{
+ const {default:production}=await import(process.env.ACK_PLUGIN);
+ cleanup=await production.setup(ctx);
+ await Promise.race([(async()=>{
+  const text=await context('msg_long_work'),original=JSON.stringify(current);
+  assert.match(text,/MAINTENANCE_שלום_界/);assert.equal(emitted,true);assert.equal(acks().length,1);
+  const before=await status(anchor);
+  assert.equal(before.state,mode==='precommit'?'claimed':'delivered');assert.equal(before.attempts,1);
+  if(mode==='precommit')assert.equal(acks()[0].status,503);
+  else assert.ok(acks()[0].error,'actual committed response loss');
+  // Only real existing interval callbacks run while this original work is held.
+  const deadline=performance.now()+12000;
+  while(acks().length<2||!acks()[1].result){
+   assert.ok(performance.now()<deadline,'existing lifecycle did not confirm the emitted receipt');
+   await new Promise(resolve=>setTimeout(resolve,25));
+  }
+  const recovered=await status(anchor);
+  assert.equal(recovered.state,'delivered');assert.equal(recovered.attempts,1);
+  assert.deepEqual(acks()[1].body,acks()[0].body);
+  assert.equal(acks()[1].status,200);assert.equal(acks()[1].result.already_delivered,mode==='postcommit');
+  if(mode==='precommit')assert.ok(acks()[1].at-acks()[0].at>=1000,'Retry-After must hold');
+  assert.equal(completed,0);assert.equal(JSON.stringify(current),original,'maintenance cannot change model context');
+  assert.equal(calls.filter(c=>c.path==='/relay/turn').length,1,'no next prompt or new claim');
+  assert.equal(native.length,0,'no native/action replay');
+  await request('POST','/fixture/advance',{});
+  finish();await longWork;assert.equal(completed,1);
+  const reply=await request('POST','/fixture/reply',{});
+  const replyID='relay-reply-'+createHash('sha256').update(id).digest('hex');
+  assert.equal(reply.message_id,replyID);
+  const saved=await request('GET','/relay/messages/'+replyID+'?'+new URLSearchParams(scope));
+  assert.equal(saved.payload,'RESULT_שלום_界');assert.equal(saved.in_reply_to,anchor.message_id);
+  const later=await request('POST','/fixture/later',{});
+  assert.match(await context('msg_later_independent'),/LATER_MAINTENANCE_界/);
+  const progressed=await status(later);assert.equal(progressed.state,'delivered');assert.equal(progressed.attempts,1);
+  report={mode,before,recovered,progressed,reply,completed,acks:acks(),native};
+ })(),new Promise((_,reject)=>{watchdog=setTimeout(()=>reject(new Error('maintenance journey exceeded 30 seconds')),30000)})]);
+}finally{
+ clearTimeout(watchdog);finish();await longWork;await cleanup?.();
+ for(const {child} of children)if(child.exitCode===null&&child.signalCode===null)child.kill();
+ await Promise.all(children.map(entry=>entry.closed));
+ writeFileSync(process.env.ACK_REPORT,JSON.stringify({report,http:calls,
+  cleanup:{pluginDisposed:disposed.length===3,gitChildrenClosed:children.filter(e=>e.done).length}}));
+ assert.ok(children.every(e=>e.done));assert.deepEqual(disposed.sort(),['compaction','context','prompt']);
+}
+""", encoding="utf-8")
+    env.update(PALLIUM_PORT=str(server.server_port), PALLIUM_HOOK_ACTOR_REF="fixture-actor",
+               ACK_PLUGIN=(root / "integrations/opencode/.opencode/plugins/pallium-v2.mjs").as_uri(),
+               ACK_GIT=git, ACK_DIRECTORY=str(workspace), ACK_FAULT=ack_fault,
+               ACK_REPORT=str(tmp_path / "maintenance-report.json"), ACK_ANCHOR=json.dumps(anchor))
+    try:
+        result = subprocess.run([node, str(program)], env=env, cwd=workspace, capture_output=True,
+                                text=True, encoding="utf-8", errors="replace", timeout=45)
+        (tmp_path / "maintenance-caller.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((tmp_path / "maintenance-report.json").read_text(encoding="utf-8"))
+        assert len(faults) == 1 and faults[0]["stage"] == ack_fault
+        assert len(mcp_posts) == 1 and mcp_posts[0]["status"] == 200
+        assert report["report"]["completed"] == 1
+        assert report["cleanup"]["pluginDisposed"] and report["cleanup"]["gitChildrenClosed"] > 0
+    finally:
+        server.shutdown()
+        thread.join(timeout=10)
+        server.server_close()
+        (tmp_path / "maintenance-http.json").write_text(json.dumps({
+            "faults": faults, "requests": requests, "registered_mcp_posts": mcp_posts,
+        }), encoding="utf-8")
+        (tmp_path / "maintenance-cleanup.json").write_text(json.dumps({
+            "listener_closed": server.fileno() == -1, "server_thread_joined": not thread.is_alive(),
+        }), encoding="utf-8")
+        assert not thread.is_alive() and server.fileno() == -1
+
+
 def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, monkeypatch):
     _released_native_journey(client, tmp_path, test_db_url, monkeypatch)
 
