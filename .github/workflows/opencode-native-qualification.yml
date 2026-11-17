@@ -90,6 +90,10 @@ jobs:
         V2 actor wait cannot pair a newer actor with an older container
         V2 checks the original pin after an owned helper returns success
         V2 restore reuses callback-local Git facts in prompt and context
+        async Git bounds owned stdout after parent exit without losing terminal outcomes
+        V2 timer-only scope mismatch re-arms discovery without native callbacks
+        V2 in-flight discovery cannot consume a scope-mismatch re-arm
+        V2 prompt capture reservations retry only unissued original attempts
       HTTP_CASES: |
         test_activation_settlement_preserves_original_authority_before_backlog[semantic-delivered]
         test_activation_settlement_preserves_original_authority_before_backlog[semantic-pending]

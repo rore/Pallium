@@ -47,10 +47,10 @@ async function _runGit(args, cwd, signal) {
     let child, timer, failure = null, size = 0;
     const chunks = [];
     const stop = (reason) => {
-      if (failure) return;
-      failure = reason;
-      chunks.length = 0;
+      if (!failure) { failure = reason; chunks.length = 0; }
       try { child.kill(); } catch { /* close/error still owns completion */ }
+      // Root exit cannot close a pipe inherited elsewhere. Close only our end.
+      child.stdout?.destroy();
     };
     const cancel = () => stop("abort");
     const data = (chunk) => {
@@ -59,10 +59,9 @@ async function _runGit(args, cwd, signal) {
       if (size > 1024 * 1024) stop("spawn");
       else chunks.push(chunk);
     };
-    const error = () => { if (!failure) { failure = "spawn"; chunks.length = 0; } };
+    const error = () => stop("spawn");
     const exit = (_code, killed) => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", cancel);
+      // Timeout and abort still own an open stdout after the root has exited.
       if (killed) error();
     };
     const close = (code, killed) => {

@@ -39,6 +39,7 @@ export default {
     let cleanup;
     let retirement = 0;
     let freshWitnessEnabled = true;
+    let discoveryNeeded = true;
 
     const log = (message) => { try { ctx.app?.log?.({ service: "pallium", level: "warn", message }); } catch {} };
     const state = (id) => {
@@ -124,6 +125,7 @@ export default {
       const container = pinned || refs?.containerRef || await pallium.deriveContainerRef(cwd, signal);
       if (!current() || !await owned(id, item, signal) || !current()) return null;
       if (item.containerRef && item.containerRef !== container) {
+        discoveryNeeded = true;
         await detach(id, item); // Never reuse another container's endpoint/generation.
         return null;
       }
@@ -502,8 +504,10 @@ export default {
             item.wake.delivery_id === event.metadata.delivery_id) return;
       }
       const content = pallium.stripIdeContext(event.prompt?.text || "");
-      if (!content || content.startsWith("/") || item.seen.has(event.messageID)) return;
-      item.seen.add(event.messageID);
+      const captures = item.captures;
+      if (!content || content.startsWith("/") || item.seen.has(event.messageID) || captures.has(event.messageID)) return;
+      captures.add(event.messageID);
+      try {
       const identity = await resolveIdentity(id, item, signal, true, resolved);
       if (!identity?.current()) return;
       const { actor, container, repositoryRef } = identity;
@@ -523,7 +527,7 @@ export default {
       const roleTurn = item.roleTurns.get(event.messageID);
       if (roleTurn?.inputHash !== createHash("sha256").update(content).digest("hex")) return;
       const roleSnapshot = roleTurn?.snapshot || { relay_name: null, relay_attribution_state: "unavailable" };
-      const response = await pallium.palliumRequest("POST", "/item-and-query", {
+      const request = {
         source_type: pallium.SOURCE_TYPE, source_id: pallium.ocNativeMessageSourceId("user", id, event.messageID), content_type: "text/plain",
         content, role: "user", agent_ref: pallium.AGENT_REF, container_ref: container,
         thread_ref: id, actor_ref: actor, visibility: "private", artifact_kind: "message",
@@ -531,11 +535,14 @@ export default {
         relay_name: roleSnapshot.relay_name, relay_attribution_state: roleSnapshot.relay_attribution_state,
         query_text: content.slice(0, 500), query_limit: 5, query_actor_ref: actor,
         query_trigger_origin: "user_prompt_submit", metadata: pallium.buildWorkRefsMetadata(cwd, event.metadata?.pallium_work_refs, discovery),
-      }, signal);
+      };
+      item.seen.add(event.messageID); // Issued writes retain existing uncertain-response semantics.
+      const response = await pallium.palliumRequest("POST", "/item-and-query", request, signal);
       if (!current() || !await owned(id, item, signal) || !current()) return;
       if (!response) item.seen.delete(event.messageID);
       const text = pallium.formatInjection(response?.injectable_blocks || [], container, BUDGET, id, actor, pallium.AGENT_REF, "private", response?.source_item_id);
       if (text) item.memory = { inputId: event.messageID, text };
+      } finally { captures.delete(event.messageID); } // Only this attempt's original Set, never a successor's.
       } catch (error) { log(`V2 user ingest failed: ${String(error)}`); }
     }));
 
@@ -697,7 +704,6 @@ export default {
         for (const item of sessions.values()) item.witness = null;
       }
     })();
-    let discoveryNeeded = true;
     let discovering = false;
     const discover = async () => {
       if (disposed || !discoveryNeeded || discovering) return;

@@ -781,7 +781,33 @@ def test_opencode_settlement_qualification_inventories_every_new_case_and_preser
     expected.add("Git discovery yields to unrelated caller work while child waits")
     assert len(cases) == len(set(cases)) == 45 and set(cases) == expected
     async_cases = workflow["jobs"]["qualify"]["env"]["ASYNC_CASES"].splitlines()
-    assert len(async_cases) == len(set(async_cases)) == 18
+    original_async = [
+        "async Git shares callback facts without merging container and repository semantics",
+        "async Git enforces byte bounds and ignores stderr rather than truncating identity",
+        "async Git distinguishes pre-abort, cancellation, signal and timeout outcomes",
+        "async actor resolution checks lifetime and keeps actor and container pins coherent",
+        "async Git preserves root validation and first-root container truncation",
+        "async orientation preserves command order, token order, Unicode, redaction and eight stems",
+        "async identity follows Unicode nested cwd and linked worktree Git configuration",
+        "V1 lifetime authority covers every first entry and keeps retired callbacks inert",
+        "V1 close response cannot purge an explicit same-ID successor with identical pin values",
+        "V1 assistant captures its original lifetime before native history awaits",
+        "V1 delayed Git cannot publish after deletion and same-ID activation on any caller",
+        "V1 ordinary role, capture and orientation updates do not replace a live Git lifetime",
+        "V1 unpinned close discovery cannot target a recreated same-ID session",
+        "V2 Git waits retain original lifetime, scalar, pin and native owner on every caller",
+        "V2 older Git resolution cannot overwrite concurrent successor scope or capture",
+        "V2 actor wait cannot pair a newer actor with an older container",
+        "V2 checks the original pin after an owned helper returns success",
+        "V2 restore reuses callback-local Git facts in prompt and context",
+    ]
+    assert async_cases == original_async + [
+        "async Git bounds owned stdout after parent exit without losing terminal outcomes",
+        "V2 timer-only scope mismatch re-arms discovery without native callbacks",
+        "V2 in-flight discovery cannot consume a scope-mismatch re-arm",
+        "V2 prompt capture reservations retry only unissued original attempts",
+    ]
+    assert len(async_cases) == len(set(async_cases)) == 22
     sources = "\n".join((root / "integrations/opencode/tests" / file).read_text(encoding="utf-8")
                         for file in ("common.test.mjs", "plugin.test.mjs", "v2-plugin.test.mjs"))
     for case in async_cases:
