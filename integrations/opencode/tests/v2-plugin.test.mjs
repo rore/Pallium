@@ -2487,6 +2487,280 @@ async function holdNativeGit(commandArgs, stdout, run) {
   }
 }
 
+async function withScopeGit(run) {
+  const saved = childProcess.spawn;
+  const directory = mkdtempSync(path.join(profile, "scope-git-界-"));
+  const children = [];
+  let remote = null;
+  childProcess.spawn = (command, args, options) => {
+    if (command !== "git") return saved(command, args, options);
+    const source = args[0] === "remote" && remote !== null
+      ? `process.stdout.write(${JSON.stringify(remote)})` : "process.exit(128)";
+    const child = saved(process.execPath, ["-e", source], { ...options, cwd: directory });
+    children.push({ child, closed: new Promise((resolve) => child.once("close", resolve)) });
+    return child;
+  };
+  syncBuiltinESMExports();
+  try { await run((value) => { remote = value; }); }
+  finally {
+    for (const { child } of children) if (child.exitCode === null && child.signalCode === null) child.kill();
+    await Promise.all(children.map(({ closed }) => closed));
+    childProcess.spawn = saved;
+    syncBuiltinESMExports();
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+test("V2 timer-only scope mismatch re-arms discovery without native callbacks", { timeout: 30000 }, async () => {
+  for (const boundary of ["recover", "delete", "dispose", "native-owner"]) {
+    await withScopeGit(async (setRemote) => {
+      removeSessionPin(sessionID);
+      let registration = relaySession, ownedHere = true, deleted = false;
+      const f = await callerFixture({
+        get: async ({ sessionID: id }) => ({ id, location: { directory: ownedHere ? location : "/tmp/foreign" } }),
+        fetch: async (route) => route === "/relay/sessions" ? jsonResponse(deleted ? [] : [registration]) : undefined,
+        response: (route) => route === "/relay/opencode/wake" ? { session: registration, wake: null, deliveries: [] } : undefined,
+      });
+      try {
+        await until(() => f.calls.some((c) => c.body.operation === "enroll"), "fallback scope must enroll first");
+        assert.equal(getPinnedContainer(sessionID), null, "timer discovery must stay unpinned");
+        const lists = f.calls.filter((c) => c.path === "/relay/sessions").length;
+        if (boundary === "delete") {
+          deleted = true;
+          await f.emit({ type: "session.deleted", data: { sessionID } });
+          await until(() => f.calls.some((c) => c.path === "/relay/sessions/close"), "delete must finish its own close");
+        } else if (boundary === "dispose") await f.dispose();
+        else if (boundary === "native-owner") ownedHere = false;
+        const recovered = "git:git.example.test/team/recovered";
+        registration = { ...relaySession, container_ref: recovered, scope_generation: 1 };
+        setRemote("https://git.example.test/Team/Recovered.git");
+        await f.tick();
+        if (boundary !== "dispose" && boundary !== "delete")
+          await until(() => f.calls.some((c) => c.body.operation === "detach"), "old timer binding must retire");
+        if (boundary === "recover") {
+          const [detach] = f.calls.filter((c) => c.body.operation === "detach");
+          assert.equal(detach.body.container_ref, container);
+          assert.equal(detach.body.scope_generation, 0);
+          await f.tick();
+          await until(() => f.calls.some((c) => c.body.operation === "enroll" && c.body.container_ref === recovered),
+            "a later timer alone must rediscover the recovered scope");
+          await f.tick();
+          await until(() => f.calls.some((c) => c.body.operation === "poll" && c.body.container_ref === recovered),
+            "the recovered registration must actually poll");
+          assert.equal(f.calls.filter((c) => c.path === "/relay/sessions").length, lists + 1);
+          const enrolled = f.calls.filter((c) => c.body.operation === "enroll");
+          assert.deepEqual(enrolled.map((c) => [c.body.container_ref, c.body.scope_generation]), [[container, 0], [recovered, 1]]);
+        } else {
+          await f.tick();
+          assert.equal(f.calls.filter((c) => c.path === "/relay/sessions").length, lists,
+            `${boundary}: ordinary retirement must not start discovery again`);
+          assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, 1);
+        }
+        assert.equal(f.calls.filter((c) => ["/relay/turn", "/item-and-query", "/relay/deliveries/ack"].includes(c.path)).length, 0);
+        assert.deepEqual(f.native, { prompt: [], wait: 0, interrupt: 0 });
+        assert.deepEqual(f.history, []);
+        assert.equal(getPinnedContainer(sessionID), null);
+      } finally { await f.close(); removeSessionPin(sessionID); }
+    });
+  }
+});
+
+test("V2 in-flight discovery cannot consume a scope-mismatch re-arm", { timeout: 30000 }, async () => {
+  for (const boundary of ["git", "list", "ownership"]) {
+    await withScopeGit(async (setRemote) => {
+      removeSessionPin(sessionID);
+      const pollGate = barrier(), discoveryGate = barrier();
+      let armed = false, pollHeld = false, discoveryHeld = false, listStarted = false;
+      let registration = relaySession;
+      const f = await callerFixture({ list: [[]],
+        get: async ({ sessionID: id }) => {
+          if (armed && !pollHeld) { pollHeld = true; await pollGate.wait(); }
+          else if (armed && boundary === "ownership" && listStarted && !discoveryHeld) {
+            discoveryHeld = true; await discoveryGate.wait();
+          }
+          return { id, location: { directory: location } };
+        },
+        fetch: async (route, body) => {
+          if (armed && route === "/relay/sessions" && !body.session_ref) {
+            listStarted = true;
+            if (boundary === "list" && !discoveryHeld) { discoveryHeld = true; await discoveryGate.wait(); }
+            return jsonResponse([registration]);
+          }
+          if (route === "/relay/sessions" && (body.session_ref || registration !== relaySession)) return jsonResponse([registration]);
+        },
+        response: (route) => route === "/relay/opencode/wake" ? { session: registration, wake: null, deliveries: [] } : undefined,
+      });
+      try {
+        // Restore a real old binding without consuming startup's empty-discovery retry.
+        await f.emit({ type: "session.created", data: { sessionID } });
+        await until(() => f.calls.some((c) => c.body.operation === "enroll"), "old scope must finish restore");
+        const recovered = "git:git.example.test/team/recovered";
+        registration = { ...relaySession, container_ref: recovered, scope_generation: 1 };
+        setRemote("https://git.example.test/Team/Recovered.git");
+        const race = async (gitGate) => {
+          armed = true;
+          await f.tick();
+          if (gitGate) await gitGate.started();
+          else await until(() => discoveryHeld, `discovery must reach its ${boundary} boundary`);
+          assert.equal(pollHeld, true);
+          pollGate.release();
+          await until(() => f.calls.some((c) => c.body.operation === "detach"), "concurrent timer poll must retire the mismatched item");
+          if (gitGate) gitGate.release();
+          discoveryGate.release();
+          armed = false;
+          // Real repeated timer ticks, not a sleep claiming the old Git child has closed.
+          const deadline = Date.now() + 5000;
+          while (!f.calls.some((c) => c.body.operation === "enroll" && c.body.container_ref === recovered)) {
+            assert.ok(Date.now() < deadline, `stale ${boundary} discovery cannot consume the new re-arm`);
+            await f.tick();
+          }
+          assert.equal(f.calls.filter((c) => c.body.operation === "enroll").length, 2);
+          assert.equal(f.calls.filter((c) => c.body.operation === "detach").length, 1);
+          await f.tick();
+          await until(() => f.calls.some((c) => c.body.operation === "poll" && c.body.container_ref === recovered),
+            "only the new scope may resume polling");
+          assert.equal(f.calls.filter((c) => ["/relay/turn", "/item-and-query", "/relay/deliveries/ack"].includes(c.path)).length, 0);
+          assert.deepEqual(f.native, { prompt: [], wait: 0, interrupt: 0 });
+        };
+        if (boundary === "git")
+          await holdNativeGit("remote get-url origin", "https://git.example.test/Team/Recovered.git", race);
+        else await race();
+      } finally { pollGate.release(); discoveryGate.release(); await f.close(); removeSessionPin(sessionID); }
+    });
+  }
+});
+
+test("V2 prompt capture reservations retry only unissued original attempts", { timeout: 30000 }, async () => {
+  const event = { sessionID, messageID: "msg_reservation_retry", prompt: { text: "ordinary unicode 界 source" } };
+  for (const failure of ["scope", "after-git", "actor", "actor-pin", "after-claim", "prewrite-error", "null-write"]) {
+    let armed = false, gets = 0, foreign = false;
+    const f = await callerFixture({
+      get: async ({ sessionID: id }) => {
+        const call = armed ? ++gets : 0;
+        if (call === ({ scope: 2, "after-git": 3, actor: 4 })[failure] || foreign)
+          return { id, location: { directory: "/tmp/foreign" } };
+        return { id, location: { get directory() {
+          if (call === 4 && failure === "actor-pin")
+            queueMicrotask(() => { removeSessionPin(sessionID); pinContainer(sessionID, container); });
+          return location;
+        } } };
+      },
+      response: (route) => {
+        if (armed && route === "/relay/turn" && failure === "after-claim") foreign = true;
+        if (armed && route === "/item-and-query" && failure === "null-write") return null;
+      },
+    });
+    try {
+      pinContainer(sessionID, container, undefined, "fixture-actor");
+      armed = true;
+      const metadata = failure === "prewrite-error"
+        ? { get pallium_work_refs() { throw new Error("prewrite metadata failure"); } } : undefined;
+      await f.hooks.prompt({ ...event, metadata });
+      const writes = () => f.calls.filter((c) => c.path === "/item-and-query");
+      assert.equal(writes().length, failure === "null-write" ? 1 : 0, failure);
+      armed = false; foreign = false;
+      pinContainer(sessionID, container, undefined, "fixture-actor");
+      await f.hooks.prompt(event);
+      assert.equal(writes().length, failure === "null-write" ? 2 : 1,
+        `${failure}: the same native ID must retry an uncommitted capture`);
+      const captured = writes().at(-1).body;
+      assert.equal(captured.source_id, ocNativeMessageSourceId("user", sessionID, event.messageID));
+      assert.equal(captured.source_turn_id, event.messageID);
+      assert.equal(captured.content, event.prompt.text);
+      assert.equal(captured.container_ref, container);
+      assert.equal(captured.actor_ref, "fixture-actor");
+      await f.hooks.prompt(event);
+      assert.equal(writes().length, failure === "null-write" ? 2 : 1, "successful capture stays deduplicated");
+      assert.equal(f.calls.filter((c) => c.path === "/relay/turn").length, 1,
+        "retry reuses the immutable claim instead of reserving a new causal turn");
+    } finally { await f.close(); removeSessionPin(sessionID); }
+  }
+  {
+    let rejectCapture = true;
+    const f = await callerFixture({ response: (route) => route === "/item-and-query" && rejectCapture ? null : undefined });
+    try {
+      await f.hooks.prompt(event); // retain its immutable input hash after an explicit failed write
+      rejectCapture = false;
+      await f.hooks.prompt({ ...event, prompt: { text: "different text for the same native ID" } });
+      assert.equal(f.calls.filter((c) => c.path === "/item-and-query").length, 1, "role hash mismatch cannot capture");
+      await f.hooks.prompt(event);
+      assert.equal(f.calls.filter((c) => c.path === "/item-and-query").length, 2,
+        "hash rejection must not poison the original input's retry");
+      assert.equal(f.calls.filter((c) => c.path === "/relay/turn").length, 1);
+    } finally { await f.close(); removeSessionPin(sessionID); }
+  }
+  for (const lifetime of ["generation", "delete", "dispose", "issued-generation"]) {
+    const oldGate = barrier(), newGate = barrier();
+    let phase = null, gets = 0, oldEntered = false, newEntered = false;
+    let registration = relaySession;
+    const f = await callerFixture({
+      get: async ({ sessionID: id }) => {
+        if (phase && ++gets === 4) {
+          if (phase === "old") { oldEntered = true; await oldGate.wait(); }
+          else { newEntered = true; await newGate.wait(); }
+        }
+        return { id, location: { directory: location } };
+      },
+      fetch: async (route) => route === "/relay/sessions" ? jsonResponse([registration]) : undefined,
+      response: async (route) => {
+        if (route === "/item-and-query" && lifetime === "issued-generation") {
+          oldEntered = true; await oldGate.wait();
+          return null; // a retired/uncertain issued write must not be released as unissued
+        }
+        if (route === "/relay/turn" || route === "/relay/opencode/wake")
+          return { session: registration, wake: null, deliveries: [] };
+      },
+    });
+    let old, newer;
+    try {
+      pinContainer(sessionID, container, undefined, "fixture-actor");
+      if (lifetime !== "issued-generation") phase = "old";
+      old = f.hooks.prompt(event);
+      await until(() => oldEntered, "original attempt must reach its owned boundary");
+      phase = null;
+      if (lifetime === "dispose") {
+        await f.dispose(); oldGate.release(); await old;
+        await f.hooks.prompt(event);
+        assert.equal(f.calls.filter((c) => c.path === "/item-and-query").length, 0);
+        continue;
+      }
+      if (lifetime === "delete") {
+        await f.emit({ type: "session.deleted", data: { sessionID } });
+        await until(() => f.calls.some((c) => c.path === "/relay/sessions/close"), "old item must close before recreation");
+      }
+      registration = { ...relaySession, scope_generation: 1 };
+      await f.emit({ type: "session.created", data: { sessionID } });
+      await until(() => f.calls.some((c) => c.body.operation === "enroll" && c.body.scope_generation === 1),
+        "the successor signal must enroll before retry");
+      if (lifetime === "issued-generation") {
+        oldGate.release(); await old;
+        await f.hooks.prompt(event);
+        assert.equal(f.calls.filter((c) => c.path === "/item-and-query").length, 1,
+          "retired null response cannot authorize replay of an already issued capture");
+        continue;
+      }
+      phase = "new"; gets = 0;
+      newer = f.hooks.prompt(event);
+      await until(() => newEntered, "same-ID successor must reserve its own unissued capture");
+      oldGate.release(); await old;
+      phase = null;
+      await f.hooks.prompt(event);
+      assert.equal(f.calls.filter((c) => c.path === "/item-and-query").length, 0,
+        "old cleanup cannot delete the successor reservation or admit an overlapping duplicate");
+      newGate.release(); await newer;
+      await f.hooks.prompt(event);
+      const writes = f.calls.filter((c) => c.path === "/item-and-query");
+      assert.equal(writes.length, 1);
+      assert.equal(writes[0].body.source_turn_id, event.messageID);
+      assert.equal(writes[0].body.content, event.prompt.text);
+    } finally {
+      phase = null; oldGate.release(); newGate.release();
+      await Promise.allSettled([old, newer]);
+      await f.close(); removeSessionPin(sessionID);
+    }
+  }
+});
+
 test("V2 Git waits retain original lifetime, scalar, pin and native owner on every caller", { timeout: 30000 }, async () => {
   for (const entry of ["prompt", "context", "assistant"]) {
     for (const change of ["delete", "dispose", "pin", "generation", "native-owner"]) {

@@ -901,6 +901,103 @@ test("async Git distinguishes pre-abort, cancellation, signal and timeout outcom
   });
 });
 
+test("async Git bounds owned stdout after parent exit without losing terminal outcomes", { timeout: 25000 }, async () => {
+  const bounded = async (promise, message, ms = 5000) => {
+    let timer;
+    try { return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    })]); } finally { clearTimeout(timer); }
+  };
+  for (const mode of ["abort", "timeout", "drain", "nonzero"]) {
+    const directory = fs.mkdtempSync(path.join(tmpHome, "stdio-界-"));
+    const release = path.join(directory, "release"), pidFile = path.join(directory, "pid");
+    const ended = path.join(directory, "ended");
+    const owner = new AbortController();
+    let root, running, exited;
+    const holder = `
+      const fs = require("node:fs");
+      process.once("exit", () => fs.writeFileSync(${JSON.stringify(ended)}, "ended"));
+      process.stdout.on("error", () => process.exit(0));
+      const timer = setInterval(() => {
+        if (fs.existsSync(${JSON.stringify(release)})) {
+          clearInterval(timer);
+          process.stdout.write("/Repo.git", () => process.exit(0));
+        }
+      }, 5);
+      setTimeout(() => process.exit(0), 10000).unref();
+      process.send("ready");
+      process.disconnect();
+    `;
+    const parent = `
+      const fs = require("node:fs");
+      const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(holder)}],
+        { stdio: ["ignore", 1, "ignore", "ipc"], windowsHide: true });
+      child.on("message", () => {
+        fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));
+        process.stdout.write("https://git.example.test/Team", () => process.exit(${mode === "nonzero" ? 128 : 0}));
+      });
+    `;
+    try {
+      await withGitProcess((args) => args[0] === "remote" ? parent
+        : `process.stdout.write("${"a".repeat(40)}")`, async (calls) => {
+        running = P.deriveContainerRef(process.cwd(), owner.signal);
+        // Attach a rejection handler before any readiness await.
+        const outcome = running.then((value) => ({ value }), (error) => ({ error }));
+        try {
+          await bounded(exited, "the real Git parent must exit");
+          await new Promise((resolve) => setImmediate(resolve)); // after production's exit listener
+          assert.equal(root.stdout.destroyed, false, "root exit alone must not discard buffered stdout");
+          if (mode === "abort") owner.abort();
+          if (mode === "drain" || mode === "nonzero") {
+            let settled = false;
+            void outcome.then(() => { settled = true; });
+            await new Promise((resolve) => setImmediate(resolve));
+            assert.equal(settled, false, "numeric exit must still wait for owned stdout close");
+            fs.writeFileSync(release, "release");
+          }
+          const result = await bounded(outcome, "owned stdout must close under its original controls");
+          if (mode === "abort") assert.equal(result.error?.name, "AbortError");
+          else {
+            assert.ifError(result.error);
+            assert.equal(result.value, mode === "timeout" ? P.pathContainer(process.cwd())
+              : mode === "nonzero" ? "repo:" + "a".repeat(12) : "git:git.example.test/team/repo");
+            assert.equal(calls.length, mode === "nonzero" ? 2 : 1,
+              "only numeric nonzero may fall through to the root probe");
+          }
+          assert.equal(root.stdout.destroyed, true, "helper completion is owned-stream close, not root exit");
+          if (mode === "abort" || mode === "timeout")
+            assert.equal(fs.existsSync(ended), false, "the helper closes only its pipe, not arbitrary descendants");
+        } finally {
+          fs.writeFileSync(release, "release");
+          await outcome;
+        }
+      }, (child, args) => {
+        if (args[0] !== "remote") return;
+        root = child;
+        exited = new Promise((resolve, reject) => { child.once("exit", resolve); child.once("error", reject); });
+      });
+    } finally {
+      fs.writeFileSync(release, "release");
+      // This test owns the holder too; production deliberately owns only its pipe.
+      try {
+        if (fs.existsSync(pidFile)) {
+          const deadline = Date.now() + 5000;
+          while (!fs.existsSync(ended)) {
+            assert.ok(Date.now() < deadline, "the test-owned stdout holder must finish after release");
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+        }
+      } finally {
+        if (fs.existsSync(pidFile) && !fs.existsSync(ended)) {
+          try { process.kill(Number(fs.readFileSync(pidFile, "utf8"))); }
+          catch (error) { if (error.code !== "ESRCH") throw error; }
+        }
+        await running?.catch(() => {});
+      }
+    }
+  }
+});
+
 test("async actor resolution checks lifetime and keeps actor and container pins coherent", async () => {
   const sid = "async-actor-pin";
   for (const change of ["retire", "new-actor", "new-container", "removed"]) {
