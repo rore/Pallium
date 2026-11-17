@@ -169,8 +169,16 @@ timeout and a 1 MiB stdout byte limit. It shares Git facts within a callback, no
 across sessions. Cancellation does not publish fallback identity or late pins.
 This removes synchronous Git from the server event loop; it does not set an
 aggregate hook-latency budget or guarantee descendant-process drain.
-The asynchronous change has authored regressions; its hosted qualification is
-still pending. The accepted recovery results below describe the earlier revision.
+[Qualification run43990204772](https://github.com/rore/Pallium/actions/runs/43990204772)
+at `cfceda20` passed strict4 baseline RED/candidate GREEN and the full package:
+237 cases, 230 passed, zero failures and seven existing Windows skips. All45
+required cases and the separate18 async cases passed unskipped. The whole released
+OpenCode 2.3.0 journey passed all13 native checks and HTTP25, including original
+payload non-replay before fresh input and four distinct NEW automatic wakes.
+Source11/binary bookends and normal/final owned drain passed. Real-child caller
+tests establish Git responsiveness separately; they do not inject delayed Git
+inside the released host. This is hosted qualification, not installed/loaded-host
+recovery or downstream-task completion.
 
 V1 deletion clears pending payloads and invalidates its original callback
 lifetime before close. It retains one empty closed Map per deleted session ID
@@ -356,7 +364,7 @@ and verifies successor delivery after claim-lease recovery.
   query.
 - Session orientation runs on `session.created`, not on every resumed session.
 - Git timeout and output bounds are per command, not an aggregate hook budget.
-  Asynchronous discovery qualification is pending as noted above.
+  The hosted qualification above adds no aggregate-latency or descendant-drain guarantee.
 - There is no `pallium setup opencode` command. Plugin, MCP, and guidance setup
   remain manual.
 

@@ -15,13 +15,13 @@
 {"source":"roadmap/features/fix-opencode-plugin-reliability.md, OC-6; original task-owner assignment retained privately","outcome":"OpenCode integration Git discovery does not block the server event loop or repeat a Git probe within one callback, while preserving V1/V2 scope, repository, actor, pin, ownership, cancellation and accepted OC1 proof/admission/non-replay behavior.","scope":"integrations/opencode/.opencode/plugins/pallium-common.mjs, pallium.mjs and pallium-v2.mjs; existing integrations/opencode/tests/common.test.mjs, plugin.test.mjs and v2-plugin.test.mjs; tests/test_stable_actor_identity_e2e.py; existing tests/test_opencode_native_wake_e2e.py only if caller-surface HTTP/liveness coverage needs it, preserving the entire accepted OC1 native journey and oracles. Existing qualification workflow and tests/test_ci_workflow.py only for the separately reviewed exact test mapping under parent-released hosted bounds, not new jobs or unsafe cap changes. Integration README carries already-accepted qualification blob and later honest OC6 result; this NEW Work Record owns OC6. No old OC1 record, roadmap, backend/API/storage, selector, configuration, dependencies or installed files.","constraints":"Use native Node/Bun-compatible child_process with argv/no shell, unchanged inherited Git config/env/cwd, explicit existing3s command and bounded-output behavior. No global cache, registry, process framework or manual Git-config parser. Preserve numeric nonzero versus spawn/timeout/signal/overflow outcomes; caller cancellation cannot publish fallback identity or late pin/HTTP/native effects. Keep container versus repository normalization/root fallback distinct and actor override/pin side effects authoritative. Never make V2 scope/base/remember/current return promises or add a yield after final proof before action. Preserve pre-first-await U/G reservation, original lifetime/signal/revision/flight fences, known-binding disposal and V1 compatibility. Reuse exact accepted OC1 native812/whole journey/pre-U non-replay/four NEW, all44 package cases and strict3 RED/GREEN assertions. Static-only locally; no app tests/imports/collection/probes/native host, live environment change, raw logs, cleanup or unchanged OC1 retry. Parent owns canonical roadmap/reviewer resumption/hosted envelope/combined acceptance/normal merge.","completion_criteria":"Actual caller tests demonstrate that unrelated event/native-session work progresses while real Git subprocess work is delayed; baseline blocking behavior has a precise expected RED and the corrected caller is GREEN. Existing and new E2E cover remote/root/path and actor normalization, Unicode/linked worktree/cwd, empty/max/over-max output, missing command, numeric nonzero, timeout/signal/abort/overflow, pre-abort no spawn, concurrent sessions and pin/owner retirement without stale writes or identity changes. V1 create/turn/orient/capture/delete/recreate and stable-actor real HTTP lifecycle remain correct. Accepted OC1 released-host13 checks and HTTP25 pass unchanged with original oracles/four NEW. Required affected/full non-slow once/Windows/governance and independent plan/source/result reviews have actual evidence under a parent-approved bounded hosted envelope. README reports only accepted evidence; installed recovery and downstream task completion remain separate."}
 
 **Relationships:**
-{"schema_version":1,"sources":[{"provider":"minimap","scope_ref":"roadmap:v1:git:github.com/rore/pallium#roadmap","local_ref":"item:v1:fix-opencode-plugin-reliability"}],"pull_requests":[]}
+{"schema_version":1,"sources":[{"provider":"minimap","scope_ref":"roadmap:v1:git:github.com/rore/pallium#roadmap","local_ref":"item:v1:fix-opencode-plugin-reliability"}],"pull_requests":["https://github.com/rore/Pallium/pull/415"]}
 
 **Risk:** High
 
 **Complexity:** Moderate
 
-**Reason:** High/Moderate retained for scope/actor pin authority and OC1 causal/lifetime boundaries. The first changed-source qualification failed four caller/package cases. The task owner authorized bounded static diagnosis and minimum local repair after recording concrete causes. Existing plan and assertions remain authoritative; exact successor source review and a new changed-candidate validation disposition are required before any further push or run.
+**Reason:** High/Moderate retained for scope/actor pin authority and OC1 causal/lifetime boundaries. Exact cfceda205aa9a15eb2c0f34b629e76d61eafcd9d passed targeted qualification and independent source/result review. The task owner accepted the narrow nonblocking ordinary-failure disposition for OC6, not overall CI or generic Codex safety. This closure changes factual documentation only; tested content and dependencies remain unchanged. Final documentation publication and normal merge await the parent's preflight acceptance.
 
 **Discovery:** Independent OC-6 source/caller inventory consumed and retained privately. Baseline common44 runs execFileSync; repository172/container193/actor207/resolve296-305 and orientation1150-1200 are affected. V1 orientation/assistant/tool/chat/deletion and V2 scope/base/current/restore/discovery/capture/context/natural turns reach them. V1/V2 and stable-actor embedded JS callers were inspected against9ab; no product drift from accepted9a. Windows work-reference discovery already avoids Git and stays unchanged. Discovery is source evidence, not measured live latency.
 
@@ -35,8 +35,10 @@
 
 **Approvals:** Approved by user 2026-11-16: "you have approval to drive this till end". This minimal task-authorization excerpt preserves the existing approval; its full context remains private. The manager assigned this existing issue, accepted the narrow H1 marker ceiling and released the conditional hosted envelope below. No local application execution/live changes/cleanup/old OC1 retry or unapproved cap/job changes.
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
+
+Historical checkpoints below retain their contemporaneous blockers and authority limits; they are not current instructions. Current next action, Verification and Result review describe the accepted result.
 
 ## Assignment and preserved work
 
@@ -113,7 +115,9 @@ Reviewer explicitly accepts this ordered real-child/production-caller evidence a
 
 ## Current next action
 
-Make only the bounded local repair recorded below: correct the V1 retry barrier/drain and no-ID dedup fixture, correct the generation-specific V2 rebound fence, and allow only a matching pin installed within the same original live V1 lifetime. Preserve all accepted assertions and rejection fences. Obtain exact successor source review and parent changed-candidate validation disposition. No further push, label cycle or run is authorized.
+Submit the minimum two-file documentation closure and exact tested-content identity proof for parent preflight acceptance. Implementation, qualification and independent result review are accepted at cfceda205aa9a15eb2c0f34b629e76d61eafcd9d. No documentation push or further application campaign is authorized yet. The parent owns canonical roadmap alignment, final PR/main/thread checks and normal merge. Installed activation and downstream recovery remain separate.
+
+### Planning checkpoint evidence (2026-11-16)
 
 Static pre-review checks PASS for exact baseline/context/relationships, first-step Workflow ordering, scope/privacy and unchanged product/test/workflow/README/old OC1 record against9ab. Current self confirmed unnamed; exact Minimap CLI tuple matches existing explicit feature association, reused without duplicate attachment. Intended-path Redline GRAY/no boundary/checkpoint/protected-path edit, with High judgment for authority/proof risk. Static Workflow initially blocks on the not-yet-committed new baseline and the intentionally pending High technical plan review; first record commit resolves only baseline provenance, not review. No application code imported or tests executed. Evidence stays ignored under build/oc6-plan-20261116/.
 
@@ -199,9 +203,9 @@ All six changed JavaScript modules and the inline H2 child pass syntax-only chec
 
 At that publication-preparation checkpoint, State was Blocked on the parent's final safe-ancestry acceptance and hosted runtime/result gates. No publication or hosted admission had yet occurred. The later failure and consumed budgets are recorded below.
 
-## First qualification failure and bounded repair
+## First qualification failure and bounded repair (2026-11-16–17)
 
-The publication and ordinary entry gates subsequently passed. [PR415](https://github.com/rore/Pallium/pull/415) remains at bb9c36d5761c0d66d56800f19a1a318ed4078565. Both ordinary Linux lanes completed with 9,190 passed, zero failures, 106 skipped and two expected failures. Each passed the affected actor lifecycle, 30 workflow checks and 19 protected checks unskipped. Windows smoke and fresh boundary/governance passed. The parent accepted this ordinary entry evidence, not Node/native qualification.
+At this checkpoint, the publication and ordinary entry gates had passed and [PR415](https://github.com/rore/Pallium/pull/415) was at bb9c36d5761c0d66d56800f19a1a318ed4078565. Both ordinary Linux lanes completed with 9,190 passed, zero failures, 106 skipped and two expected failures. Each passed the affected actor lifecycle, 30 workflow checks and 19 protected checks unskipped. Windows smoke and fresh boundary/governance passed. The parent accepted this ordinary entry evidence, not Node/native qualification.
 
 The single admitted [qualification run43970083380](https://github.com/rore/Pallium/actions/runs/43970083380), job133659622916, failed. The observer reported 143 seconds from admission; the independent review found 126 seconds between API creation and completion. Actual strict4 expected RED and focused4 GREEN passed. The full package had237 cases:226 passed, four failed and seven existing skips. All45 required entries passed; the separate async18 inventory had17 passed and one failed. Native and HTTP phases were skipped and remain unqualified. Source11/binary bookends and normal/final drain passed. The source export hashes match the explicit Windows CRLF projection of the immutable Git blobs, not raw LF blob hashes.
 
@@ -271,3 +275,48 @@ The existing bounded local authority covers this exact correction. Before editin
 The caller now drains its turn and both callbacks and removes its pin in a nested `finally`, regardless of gate-release success. The added release-failure mode holds a real Git child while the sibling waits on Relay, throws the same release error from the caller's gate, and requires two completed captures before that exact error object is reported. Existing negative-control assertions also require pin cleanup, owned-child close and default/named built-in restoration. The accepted shared readiness helper and all other cases are unchanged.
 
 Static verification passed: V1 test syntax, diff whitespace, complete two-path delta and existing-case reconstruction, unchanged case names/order/inventories, functional baseline and privacy. Whole-change Workflow is clean0 and Redline is GRAY/advisory1 with zero violations/checkpoints using unchanged authenticated graph evidence. Selector FULL remains unexecuted. No runtime coverage, timing fit or correction success is claimed. State is Blocked only on the exact narrow successor review and parent changed-candidate disposition. Published bb9 and both exhausted admissions remain unchanged; no push, rerun, label cycle or live action occurred.
+
+## Verification (2026-11-17)
+
+Qualified source: [cfceda205aa9a15eb2c0f34b629e76d61eafcd9d](https://github.com/rore/Pallium/tree/cfceda205aa9a15eb2c0f34b629e76d61eafcd9d). [Run43990204772](https://github.com/rore/Pallium/actions/runs/43990204772), attempt1/job133728537919, completed successfully with no cancellation or retry. The observer's 266 seconds measure the label cycle, not API-created elapsed time.
+
+| Surface | Actual result |
+|---|---|
+| Strict baseline/focused | Four exact expected assertion RED; four candidate GREEN; no skips. Original messages/values retained. |
+| Full package | 237 cases:230 passed, zero failures, seven existing Windows skips. All45 required cases and separate async18 individually passed unskipped. |
+| Released OpenCode 2.3.0 | Whole native case passed unskipped; all13 checks true. Original812 assertion, pre-input original-payload non-replay, four distinct NEW automatic wakes and full tail retained. |
+| HTTP | All25 required cases individually passed unskipped. |
+| Identity and drain | All11 exports match explicit Windows CRLF projections of exact Git blobs, not raw LF hashes. Source/binary bookends unchanged; normal/final owned drain true. |
+| Phase duration | Baseline3s, focused2s, package64s, native77s, HTTP34s; unchanged package120/native120/HTTP60 caps and 900-second total bound. |
+
+The official host reported2.3.0. Archive SHA256 is `2e14eee53f4abad803d55fdc472c1b12dc3802d687ae204f81e7908bd2ab1895`; binary SHA256 is `38153a142354634c82b5cfe6c00b19df15a71e6cf8c17ef5f5c1a4cc684a6917`. The sanitized artifact ZIP SHA256 was recomputed as `f2ad85d62c1d560c05896d6dd06f9fc0aa41127480f9392ba5a0d2533f8fdc5c` and matched authenticated metadata.
+
+The three older retry/rebound cases are unconditional in the successful full package and are not among the seven skips. The summary does not export individual maps for those older cases. Baseline runtime frames remain missing; expected messages and values, not invented frames, establish the observed RED. Real-child production-caller liveness and released-host OC1 safety remain distinct evidence.
+
+### Ordinary results and retained failures
+
+[Ordinary43981133370](https://github.com/rore/Pallium/actions/runs/43981133370) remains failed. Attempt1 Python3.12 had3,226 passes/one failure/29 skips/one xfail; Python3.13 had4,195 passes/one failure/37 skips/one xfail. A follow-up Codex message returned503 `relay_busy`; Hermes seed lookup returned an empty list. The separately authorized job-only Python3.12 attempt2 had8,490 passes/one failure/105 skips/two xfails. Both earlier failing cases passed there, but participant seed registration returned503. Both attempts stopped before stable-actor coverage and full completion. Inherited job rows in attempt2 were not new executions.
+
+[Manual43987206960](https://github.com/rore/Pallium/actions/runs/43987206960) completed the exact9,298-case Linux3.13 inventory without fail-fast:9,189 passed, one failed,106 skipped and two xfails. Stable-actor real HTTP1, workflow30, protected19 and all three earlier failure nodes passed unskipped. Windows smoke passed; same-source fresh boundary and governance [43981133311](https://github.com/rore/Pallium/actions/runs/43981133311) passed. Once the full report and affected coverage were safely retained, the remaining matrix was cancelled under the approved cost limit. Overall manual status is CANCELLED and its CI result FAILED, not green. Linux3.12 and remaining Windows selections are unestablished.
+
+The Linux failure missed a one-second hook callback join during a Codex owner response; the asserted lock cause is not established. Partial Windows serial coverage had79 passes/two skips on3.12 and78 passes/one failure/two skips on3.13. The3.13 retained source returned EOF on service-epoch resume, not an established eight-second timeout. Reconnect continuity after that point is unproved; preceding foreign-source refusal checks passed. Its3.12 counterpart passed. Neither observation proves flakiness or a physical cause.
+
+Both failing tests, Codex bridge, backend, fixtures and configuration match bb9 and qualified cf. Independent review traced Codex Python/bridge execution and found no path from the repaired OpenCode JavaScript to either failure. With direct OC6, actor and native/HTTP coverage, the task owner accepted a narrow nonblocking OC6 release-risk disposition. Callback-progress and reconnect-continuity risks remain unresolved Codex follow-ups, not claims of generic safety or causal independence. The first bb9 package failure/native-HTTP skips and all ordinary failures remain preserved.
+
+## Result review
+
+Agent technical review: independent non-implementer SOURCE and ACTUAL RESULT GO for [PR415's qualified source](https://github.com/rore/Pallium/tree/cfceda205aa9a15eb2c0f34b629e76d61eafcd9d); full review retained privately.
+
+Reviewed revision: cfceda205aa9a15eb2c0f34b629e76d61eafcd9d
+
+Verification adequacy: GO for OC6 caller/identity and released native/HTTP contracts, including independent artifact, inventory and ordinary-failure risk review. Overall CI, generic Codex safety and installed/downstream recovery are not claimed.
+
+Independent technical PLAN GO at cbd8149f713dcb45dd2119db9c072433d3d5f6c7, exact successor SOURCE GO and ACTUAL RESULT GO at cfceda205aa9a15eb2c0f34b629e76d61eafcd9d are complete. The same non-implementing reviewer independently checked artifact bytes, case inventories, source identity, native/HTTP contracts and ordinary-failure dispositions. The task owner accepted this OC6 result. Overall CI, full Windows, arbitrary later versions/platforms, installed or loaded-host recovery and downstream-task success are not established.
+
+### Documentation closure
+
+This factual closure changes only this record and `integrations/opencode/README.md`. Every other raw NUL-terminated Git-tree entry must match qualified cf exactly, including paths, modes, blob IDs, order and final NUL. The expected SHA256 excluding only those two documents is `0977ea1108cdda1b4fd85ff1e8b9a9490e70bea3f5f934d9ee0d21518450a567`. All11 qualified source blobs, tested content and dependencies remain unchanged.
+
+Under `docs/testing-conventions.md`, the accepted hosted evidence above is reused for that identical tested content. The whole-change selector remains FULL; it is not changed or waived. Documentation preparation uses only static privacy, baseline, identity, Redline, Workflow and selector checks with application imports denied. No application/package/native campaign is repeated for factual prose. The final documentation commit identity and actual static results are retained in the local proof receipt and handed to the parent before any push. Canonical roadmap alignment, final publication and normal merge remain parent-owned.
+
+Documentation static verification passed: exact two-path delta, unchanged qualified source11 and non-document tree, privacy, functional baseline, approval and relationship readback. Whole-change Redline is GRAY/advisory1 with zero boundary violations/checkpoints using authenticated unchanged-graph evidence; Workflow is clean0. The initial Workflow check required the standard explicit result-review fields; those now record the existing independent verdict without a new review. The selector still reports FULL and `python -m pytest tests/ -x -q`; no application command was rerun.
