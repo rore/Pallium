@@ -181,12 +181,14 @@ export default {
       item.wakeRevision = {}; // Null releases also advance freshness; null itself can recur.
       return true;
     };
-    const enroll = async (id, item) => {
+    const enroll = async (id, item, recovery = null) => {
       const signal = item?.abort.signal;
       const current = scopeCurrent(id, item, signal);
       if (!current() || !scope(id) || !item.endpointId || !await owned(id, item, signal) || !current()) return;
+      if (recovery && !recovery.current()) return;
       const request = wakeResponseContext(id, item);
       const response = await wakeRequest(id, item, "enroll");
+      if (recovery && !recovery.accept(request, response)) return;
       if (applyWakeResponse(id, item, request, response)) return response;
     };
     const terminalAfter = (messages, inputId) => {
@@ -581,13 +583,45 @@ export default {
         return;
       }
       wake = reservedWake();
-      let response;
+      let response, recovery;
       if (wake) {
         if (maxChars === 1) throw new Error("Pallium internal wake has no Relay output budget");
-        response = await wakeRequest(id, item, "context", {
+        const binding = Object.freeze(base(id, item)), known = Object.freeze({ ...item.wake });
+        const fields = Object.freeze({
           generation: user.metadata.generation, delivery_id: user.metadata.delivery_id,
           native_input_id: user.id, max_chars: maxChars, max_messages: 3,
         });
+        const bound = () => current() && live(id, item, signal) &&
+          Object.entries(binding).every(([key, value]) => base(id, item)[key] === value);
+        const proof = () => bound() && known.admitted === true && known.terminal === false &&
+          sameWake(known, item.wake) && currentUser(event.messages) === user && internal(user) &&
+          user.id === fields.native_input_id && user.metadata.generation === fields.generation &&
+          user.metadata.delivery_id === fields.delivery_id;
+        const sessionMatches = (session) => session?.runtime === "opencode" &&
+          session.session_ref === id && session.container_ref === binding.container_ref &&
+          session.endpoint_id === binding.endpoint_id && Number.isInteger(session.scope_generation) &&
+          session.state === "recent" && session.destination_health === "active";
+        let registrationMissing = false;
+        response = await wakeRequest(id, item, "context", fields, (status, error) => {
+          registrationMissing = status === 409 && error?.detail === "OpenCode registration is missing or stale";
+        });
+        if (!response && registrationMissing && proof()) {
+          recovery = { current: proof, accept: (request, result) => {
+            if (!bound() || request.signal !== signal || !sessionMatches(result?.session)) return false;
+            // Preserve lifetime retirement, never adopt a higher-scope wake body.
+            if (result.session.scope_generation > binding.scope_generation) return true;
+            return proof() && request.revision === item.wakeRevision &&
+              result.session.scope_generation === binding.scope_generation && sameWake(known, result.wake) &&
+              (!item.witness || sameWake(item.witness.wake, known));
+          } };
+          const restored = await enroll(id, item, recovery);
+          if (!restored || !proof() || !await owned(id, item, signal) || !proof())
+            throw new Error("Pallium internal wake registration recovery refused");
+          response = await wakeRequest(id, item, "context", fields);
+          if (!proof() || !sessionMatches(response?.session) ||
+              response.session.scope_generation !== binding.scope_generation || !sameWake(known, response.wake))
+            throw new Error("Pallium internal wake registration recovery refused");
+        }
         if (response?.deliveries?.[0]?.delivery_id !== user.metadata.delivery_id)
           throw new Error("Pallium internal wake has no current Relay work");
       } else if (!internal(user)) {
@@ -604,7 +638,7 @@ export default {
       // Unproven marker inputs remain fail-open but cannot register or claim.
       // This also fences an overtaken real wake without treating a forged marker
       // as authority to abort somebody's ordinary work.
-      if (!current() || !await owned(id, item, signal) || !current()) {
+      if (!current() || !await owned(id, item, signal) || !current() || recovery && !recovery.current()) {
         if (wake) throw new Error("Pallium internal wake owner retired");
         return;
       }

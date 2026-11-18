@@ -192,6 +192,20 @@ and a separate ACK for each attached message. If the claim response is lost,
 continuation restores only the trigger. Unobserved siblings keep their original
 leases and can be collected by an existing turn or wake once eligible.
 
+For a known admitted, nonterminal wake, a repeated same-input context callback
+can restore an expired registration after the explicit registration-stale409.
+It makes at most one enrollment and one exact context retry per callback.
+Current native ownership, scope, input and wake authority must still match.
+Delivered context stays tokenless and is not ACKed again. Empty, stale, terminal,
+unowned or ambiguous responses still reject; no task or native input is replayed.
+This does not extend claim leases, message TTLs or request timeouts.
+
+A newer poll response can conservatively make the enrollment reply stale and
+refuse this one-shot repair. Recovery is not guaranteed during that race.
+Long native waits alone do not stop heartbeat polling; a stalled ownership or
+HTTP phase can still let registration expire. Isolated caller coverage is not
+proof of the cause of a historical installed-host failure.
+
 ### Coalesced wake settlement and recovery (hosted qualification)
 
 V2 preserves its ordinary same-input terminal correlation. The native wake path
