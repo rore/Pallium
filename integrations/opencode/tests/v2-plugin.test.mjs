@@ -835,6 +835,272 @@ for (const failure of ["wait", "context", "terminal-rejected", "terminal-reply-l
   });
 }
 
+async function contextRecoveryFixture(options = {}) {
+  const known = snapshot({ admitted: true });
+  const count = { context: 0, enroll: 0 };
+  let armed = false, phase = "setup", backend = { session: relaySession, wake: known };
+  const result = (value) => ({ ...value, restored: true,
+    deliveries: [{ ...delivery, claim_token: undefined, receipt: undefined }] });
+  const encoded = (value, next) => ({ ok: true, text: async () => {
+    const raw = JSON.stringify(value); phase = next; return raw;
+  } });
+  const f = await callerFixture({ wake: known, history: [{ type: "user", id: nativeID,
+    text: projectedWake().content[0].text, metadata: projectedWake().metadata }],
+    get: (input) => options.get?.(input, phase) ?? { id: input.sessionID, location: { directory: location } },
+    wait: options.wait,
+    fetch: async (route, body, init) => {
+      if (!armed || route !== "/relay/opencode/wake") return;
+      if (body.operation === "poll") return await options.poll?.(body) ?? jsonResponse(backend);
+      if (body.operation === "enroll") {
+        count.enroll++; phase = "enroll-response";
+        return await options.enroll?.(body, count.enroll, init) ?? encoded(backend, "pre-retry-get");
+      }
+      if (body.operation === "context") {
+        count.context++;
+        if (count.context <= (options.initialCount || 1)) {
+          phase = "enroll-get";
+          return options.initial ? options.initial(body) : { ok: false, status: 409,
+            text: async () => JSON.stringify({ detail: "OpenCode registration is missing or stale" }) };
+        }
+        phase = "retry-response";
+        return await options.retry?.(body) ?? encoded(result(backend), "final-get");
+      }
+      if (body.operation === "terminal") {
+        backend = { ...backend, wake: { ...backend.wake, terminal: true } };
+        return jsonResponse(backend);
+      }
+    } });
+  await until(() => f.calls.some((c) => c.body.operation === "enroll"), "seed enrollment");
+  await pause(); armed = true;
+  return { ...f, count, known, result, setBackend: (value) => { backend = value; },
+    run: (user = projectedWake()) => f.hooks.context({ sessionID, messages: [user] }),
+    acks: () => f.calls.filter((c) => c.path === "/relay/deliveries/ack").length };
+}
+
+for (const fault of ["registration", "empty", "snapshot", "closed", "404", "503", "other",
+  "truncated", "unreadable", "null", "transport"]) {
+  test(`context recovery accepts only an explicit registration conflict: ${fault}`, async () => {
+    const initial = fault === "registration" ? undefined : () => {
+      if (fault === "transport") throw new Error("transport");
+      if (fault === "empty") return jsonResponse({ session: relaySession, wake: snapshot(), deliveries: [] });
+      if (fault === "null") return jsonResponse(null);
+      const detail = fault === "snapshot" ? "OpenCode native wake snapshot is stale" :
+        fault === "closed" ? "OpenCode endpoint is closed or its scope changed" : "other";
+      return { ok: false, status: ["404", "503"].includes(fault) ? Number(fault) : 409,
+        text: async () => { if (fault === "unreadable") throw new Error("body");
+          return fault === "truncated" ? '{"detail":' : JSON.stringify({ detail }); } };
+    };
+    const f = await contextRecoveryFixture({ initial }), user = projectedWake(), before = structuredClone(user);
+    try {
+      if (fault === "registration") {
+        await f.run(user); assert.match(user.content.at(-1).text, /שלום wake payload/);
+      } else { await assert.rejects(f.run(user)); assert.deepEqual(user, before); }
+      assert.deepEqual(f.count, { context: fault === "registration" ? 2 : 1, enroll: fault === "registration" ? 1 : 0 });
+      assert.equal(f.acks(), 0); assert.equal(f.native.prompt.length, 0);
+    } finally { await f.close(); }
+  });
+}
+
+for (const phase of ["enroll", "retry"]) for (const fault of ["409", "503", "malformed"]) {
+  test(`context recovery stops after one enrollment and one exact retry: ${phase}/${fault}`, async () => {
+    const fail = () => fault === "malformed" ? jsonResponse(phase === "enroll" ? {} :
+      { session: relaySession, wake: snapshot({ admitted: true }), deliveries: [] }) :
+      { ok: false, status: Number(fault), text: async () => JSON.stringify({
+        detail: "OpenCode registration is missing or stale" }) };
+    const f = await contextRecoveryFixture({ [phase]: fail }), user = projectedWake(), before = structuredClone(user);
+    try {
+      await assert.rejects(f.run(user));
+      assert.deepEqual(f.count, { context: phase === "enroll" ? 1 : 2, enroll: 1 });
+      assert.deepEqual(user, before); assert.equal(f.acks(), 0);
+      assert.equal(f.native.prompt.length, 0);
+    } finally { await f.close(); }
+  });
+}
+
+for (const change of ["terminal", "generation", "dispose"]) {
+  test(`context recovery guards enrollment internal ownership await: ${change}`, async () => {
+    const gate = barrier(); let held = false;
+    const f = await contextRecoveryFixture({ get: async (input, phase) => {
+      if (phase === "enroll-get" && !held) { held = true; await gate.wait(); }
+      return { id: input.sessionID, location: { directory: location } };
+    } }), user = projectedWake(), before = structuredClone(user);
+    const outcome = f.run(user).then(() => null, (error) => error);
+    try {
+      await gate.entered;
+      if (change === "dispose") await f.dispose();
+      else {
+        f.setBackend({ session: relaySession, wake: snapshot({ admitted: true,
+          ...(change === "terminal" ? { terminal: true } : { generation: 2, native_input_id: "msg_successor" }) }) });
+        await f.tick();
+      }
+      gate.release(); assert.ok(await outcome);
+      assert.deepEqual(f.count, { context: 1, enroll: 0 });
+      assert.deepEqual(user, before); assert.equal(f.acks(), 0); assert.equal(f.native.prompt.length, 0);
+    } finally { gate.release(); await outcome; await f.close(); }
+  });
+}
+
+for (const first of ["enroll", "poll"]) {
+  test(`context recovery preserves equivalent poll progress in either response order: ${first}`, async () => {
+    const enrollment = barrier(), polling = barrier(), waiting = barrier();
+    let holdPoll = false;
+    const value = { session: relaySession, wake: snapshot({ admitted: true }) };
+    const f = await contextRecoveryFixture({ enroll: async () => { await enrollment.wait(); return jsonResponse(value); },
+      poll: async () => { if (holdPoll) await polling.wait(); return jsonResponse(value); },
+      wait: () => waiting.wait() });
+    const user = projectedWake(), before = structuredClone(user);
+    let outcome;
+    try {
+      await f.tick(); await waiting.entered;
+      outcome = f.run(user).then(() => null, (error) => error); await enrollment.entered;
+      holdPoll = true; await f.tick(); await polling.entered;
+      (first === "enroll" ? enrollment : polling).release(); await pause();
+      (first === "enroll" ? polling : enrollment).release();
+      const error = await outcome; await pause(); holdPoll = false;
+      assert.equal(Boolean(error), first === "poll");
+      if (error) assert.deepEqual(user, before); else assert.match(user.content.at(-1).text, /שלום wake payload/);
+      assert.deepEqual(f.count, { context: first === "poll" ? 1 : 2, enroll: 1 });
+      await f.tick(); assert.equal(f.native.wait, 1); assert.equal(f.acks(), 0);
+      f.history.push({ type: "idle", id: "msg_preserved_terminal", outcome: "succeeded" });
+      waiting.release(); await until(() => terminals(f).length === 1, "preserved flight terminal");
+    } finally { enrollment.release(); polling.release(); waiting.release(); await outcome; await f.close(); }
+  });
+}
+
+for (const shape of ["terminal", "null", "replacement"]) for (const first of ["enroll", "poll"]) {
+  test(`context recovery discards terminal null and replacement enrollment replies: ${shape}/${first}`, async () => {
+    const gate = barrier(), original = snapshot({ admitted: true });
+    const changed = shape === "null" ? null : { ...original,
+      ...(shape === "terminal" ? { terminal: true } : { generation: 2, native_input_id: "msg_successor" }) };
+    const f = await contextRecoveryFixture({ enroll: async () => {
+      await gate.wait(); return jsonResponse({ session: relaySession, wake: changed });
+    } }), user = projectedWake(), before = structuredClone(user);
+    const outcome = f.run(user).then(() => null, (error) => error);
+    try {
+      await gate.entered;
+      if (first === "poll") { f.setBackend({ session: relaySession, wake: changed }); await f.tick(); }
+      gate.release(); assert.ok(await outcome);
+      assert.deepEqual(f.count, { context: 1, enroll: 1 }); assert.deepEqual(user, before);
+      assert.equal(f.acks(), 0); assert.equal(f.native.prompt.length, 0);
+      if (first === "enroll") {
+        const stillCurrent = projectedWake(); await f.run(stillCurrent);
+        assert.match(stillCurrent.content.at(-1).text, /שלום wake payload/,
+          "rejected reply must not adopt terminal/null/replacement authority");
+        f.setBackend({ session: relaySession, wake: changed }); await f.tick();
+      }
+    } finally { gate.release(); await outcome; await f.close(); }
+  });
+}
+
+for (const successor of [false, true]) {
+  test(`context recovery preserves higher-scope retirement and newer lifetimes: ${successor}`, async () => {
+    const gate = barrier(), pending = barrier();
+    const f = await contextRecoveryFixture({ enroll: async () => {
+      await gate.wait(); return jsonResponse({ session: { ...relaySession, scope_generation: 1 }, wake: snapshot() });
+    }, retry: async () => { await pending.wait(); } }), user = projectedWake(), before = structuredClone(user);
+    const outcome = f.run(user).then(() => null, (error) => error);
+    let active;
+    try {
+      await gate.entered;
+      active = f.run(projectedWake()).then(() => null, (error) => error);
+      await pending.entered;
+      if (successor) {
+        f.setBackend({ session: { ...relaySession, scope_generation: 2 }, wake: null });
+        await f.tick();
+      }
+      gate.release(); assert.ok(await outcome);
+      assert.deepEqual(user, before); assert.deepEqual(f.count, { context: 2, enroll: 1 });
+      assert.equal(f.calls.filter((c) => c.body.operation === "context").at(-1).signal.aborted, true);
+      pending.release(); assert.ok(await active);
+      const scopeGeneration = successor ? 2 : 1;
+      f.setBackend({ session: { ...relaySession, scope_generation: scopeGeneration }, wake: null });
+      await f.tick();
+      assert.equal(f.calls.filter((c) => c.body.operation === "poll").at(-1).body.scope_generation, scopeGeneration);
+      assert.equal(f.acks(), 0); assert.equal(f.native.prompt.length, 0);
+    } finally { gate.release(); pending.release(); await outcome; await active; await f.close(); }
+  });
+}
+
+test("context recovery discards malformed enrollment without clearing proof", async () => {
+  const responseGate = barrier(), waitGate = barrier(); let first = true;
+  const value = { session: relaySession, wake: snapshot({ admitted: true }) };
+  const f = await contextRecoveryFixture({ enroll: async () => {
+    if (first) { first = false; await responseGate.wait(); return jsonResponse({}); }
+    return jsonResponse(value);
+  }, wait: () => waitGate.wait() }), user = projectedWake(), before = structuredClone(user);
+  const outcome = f.run(user).then(() => null, (error) => error);
+  try {
+    await responseGate.entered;
+    f.history.splice(0); await observePrompt(f); f.history.push(freshUser());
+    await f.tick(); await waitGate.entered;
+    responseGate.release(); assert.ok(await outcome);
+    assert.deepEqual(user, before); assert.equal(f.count.context, 1); assert.equal(f.acks(), 0);
+    await f.tick(); assert.equal(f.native.wait, 1); assert.equal(terminals(f).length, 0);
+    f.history.push(freshIdle()); waitGate.release();
+    await until(() => terminals(f).length === 1, "successor witness survives old malformed reply");
+    assert.equal(terminals(f)[0].body.native_input_id, nativeID);
+    assert.equal(terminals(f)[0].body.terminal_message_id, freshIdle().id);
+    assert.equal(f.native.prompt.length, 0);
+  } finally { responseGate.release(); waitGate.release(); await outcome; await f.close(); }
+});
+
+for (const [point, change] of [["retry-response", "terminal"], ["retry-response", "generation"],
+  ["pre-retry-get", "scope"], ["final-get", "generation"], ["final-get", "location"], ["final-get", "dispose"]]) {
+  test(`context recovery fences retry and final attachment awaits: ${point}/${change}`, async () => {
+    const gate = barrier(); let held = false, moved = false;
+    const f = await contextRecoveryFixture({
+      get: async (input, phase) => {
+        if (phase === point && !held) { held = true; await gate.wait(); }
+        return { id: input.sessionID, location: { directory: moved ? location + "/other" : location } };
+      },
+      retry: point === "retry-response" ? async () => { await gate.wait(); } : undefined,
+    }), user = projectedWake(), before = structuredClone(user);
+    const outcome = f.run(user).then(() => null, (error) => error);
+    try {
+      await gate.entered;
+      if (change === "dispose") await f.dispose();
+      else if (change === "location") moved = true;
+      else {
+        const scopeGeneration = change === "scope" ? 1 : 0;
+        f.setBackend({ session: { ...relaySession, scope_generation: scopeGeneration },
+          wake: snapshot({ admitted: true, scope_generation: scopeGeneration,
+            ...(change === "terminal" ? { terminal: true } : { generation: 2, native_input_id: "msg_fence_new" }) }) });
+        await f.tick();
+      }
+      gate.release(); assert.ok(await outcome);
+      assert.deepEqual(user, before); assert.equal(f.acks(), 0);
+      assert.deepEqual(f.count, { enroll: 1, context: point === "pre-retry-get" ? 1 : 2 });
+      if (["generation", "scope"].includes(change)) {
+        f.history.push({ type: "user", id: "msg_fence_new", text: projectedWake().content[0].text,
+          metadata: { ...projectedWake().metadata, generation: 2 } },
+        { type: "idle", id: "msg_fence_terminal", outcome: "succeeded" });
+        await f.tick(); await until(() => terminals(f).length === 1, "successor still progresses");
+        assert.equal(terminals(f)[0].body.native_input_id, "msg_fence_new");
+        assert.equal(terminals(f)[0].body.scope_generation, change === "scope" ? 1 : 0);
+      }
+      assert.equal(f.native.prompt.length, 0);
+    } finally { gate.release(); await outcome; await f.close(); }
+  });
+}
+
+test("overlapping context recoveries retain per-invocation bounds", async () => {
+  const gates = [barrier(), barrier()];
+  const f = await contextRecoveryFixture({ initialCount: 2, enroll: async (_body, count) => {
+    await gates[count - 1].wait();
+    return jsonResponse({ session: relaySession, wake: snapshot({ admitted: true }) });
+  } }), users = [projectedWake(), projectedWake()];
+  const outcomes = users.map((user) => f.run(user).then(() => null, (error) => error));
+  try {
+    await Promise.all(gates.map((gate) => gate.entered));
+    gates[0].release(); await pause(); gates[1].release();
+    const errors = await Promise.all(outcomes);
+    assert.equal(errors.filter(Boolean).length, 1);
+    assert.equal(users.filter((user) => user.content.length === 2).length, 1);
+    assert.deepEqual(f.count, { context: 3, enroll: 2 });
+    assert.equal(f.acks(), 0); assert.equal(f.native.prompt.length, 0);
+  } finally { gates.forEach((gate) => gate.release()); await Promise.all(outcomes); await f.close(); }
+});
+
 test("committed empty wake fails visibly while newer natural work remains usable", async () => {
   const f = await callerFixture({ wake: snapshot() });
   try {
