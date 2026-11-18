@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import shlex
 import subprocess
 import sys
+import tomllib
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -14,6 +17,23 @@ def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=repo, check=True, capture_output=True, text=True,
     ).stdout.strip()
+
+
+def test_redline_installs_locked_import_linter() -> None:
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    versions = [package["version"] for package in lock["package"] if package["name"] == "import-linter"]
+    assert len(versions) == 1
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/agent-workflow.yml").read_text(encoding="utf-8"),
+    )
+    installs = [
+        step["run"] for step in workflow["jobs"]["redline"]["steps"]
+        if step.get("run", "").startswith("pip install ")
+    ]
+    assert len(installs) == 1
+    arguments = shlex.split(installs[0])
+    requirements = [argument for argument in arguments[2:] if argument.startswith("import-linter")]
+    assert requirements == [f"import-linter=={versions[0]}"]
 
 
 def test_changed_file_jobs_use_pr_head_and_merge_base(tmp_path: Path) -> None:

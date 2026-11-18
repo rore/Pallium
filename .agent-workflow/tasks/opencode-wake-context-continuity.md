@@ -15,7 +15,7 @@
 {"source":"roadmap/features/add-wake-first-relay-delivery.md; task-owner request to fix repeated live same-input wake failure","outcome":"A valid admitted Relay wake can continue across a long same-input model/tool turn without losing model-bound context, while empty, stale and unowned wakes remain refused.","scope":"Trace and repair reusable integration lifecycle failures across repeated context callbacks for the same native input, including registration freshness, owner/generation authority, terminal state and HTTP outcomes.","constraints":"Preserve exact native input, delivery, owner, endpoint, scope, generation, claim-attempt and model-attachment authority. No payload without proof, implicit ACK, task/native-input replay, takeover, timeout or lease expansion. Keep ordinary receipt recovery and other unfinished work separate.","completion_criteria":"Caller-surface E2E coverage proves safe same-input continuation across more than two model/tool steps and long work, explicit handling of expiry, owner conflict, stale/incomplete/null responses, genuine empty/unowned refusal, lifecycle disposal and later-message progress. Required independent review and repository validation establish the fix and its limits before release."}
 
 **Relationships:**
-{"schema_version":1,"sources":[{"provider":"minimap","scope_ref":"roadmap:v1:git:github.com/rore/pallium#roadmap","local_ref":"item:v1:add-wake-first-relay-delivery"}],"pull_requests":[]}
+{"schema_version":1,"sources":[{"provider":"minimap","scope_ref":"roadmap:v1:git:github.com/rore/pallium#roadmap","local_ref":"item:v1:add-wake-first-relay-delivery"}],"pull_requests":["https://github.com/rore/Pallium/pull/417"]}
 
 **Risk:** Elevated
 
@@ -98,9 +98,41 @@ native-host skips remain limits. Later unexecuted full-suite cases are unknown.
 
 Detailed raw evidence remains private. This public projection preserves the
 requirements and actual outcomes, not machine-specific operational records.
-Publication checks pass: whole-change selector requires FULL, import boundaries
-and Agent Workflow pass, and Redline reports a GRAY review advisory.
+Initial publication checks passed: whole-change selector required FULL, import
+boundaries and Agent Workflow passed, and Redline reported a GRAY advisory.
 Required platform CI still applies. The draft is
 blocked pending validation disposition; it is not merged, installed or claimed
 to explain the historical incident. The separate receipt-recovery contribution
 and broader roadmap remain unfinished.
+
+## Draft publication
+
+Draft PR: [#417](https://github.com/rore/Pallium/pull/417).
+Initial candidate: `80f7208e10eadf3a62859e43c4c019f7880b66ea`, one commit
+above the stated base, containing the five approved feature paths.
+The PR relationship is carried forward from the owning tool's returned URL.
+The next independently reviewed prerequisite commit adds only the CI pin,
+governance contract and approved record metadata. All four reviewed feature
+file identities remain unchanged. Required current CI and validation disposition
+remain pending. No merge or installation.
+
+Hosted governance [run](https://github.com/rore/Pallium/actions/runs/44303988832)
+failed before producing Redline evidence: the import-linter adapter references
+missing `_register_contract_types`. Agent Workflow then blocks on missing
+Redline/behavior-contract evidence. The same-commit Work Record warning is
+advisory, not that blocking failure. Local passing governance does not replace
+the failed hosted check. First-head application
+[CI](https://github.com/rore/Pallium/actions/runs/44303987306) completed:
+Linux 3.12 passed with 9,190 passes, 106 skips and two xfails; Windows smoke passed.
+Linux 3.13 failed with 3,892 passes, one failure, 29 skips and one xfail.
+The dashboard fixed-window test's second setup send returned `503` at
+`late_begin`, with 449 ms `begin_immediate`, before the paging oracle.
+Physical cause and baseline reproducibility remain unknown. No oracle, fixture,
+timing budget or unchanged-head retry was used to hide the failure.
+
+The separate [validation prerequisite record](opencode-wake-validation-prerequisites.md)
+owns the reviewed pin to the existing locked import-linter 2.15 and one governance
+contract. Its actual architecture/source/adequacy review passed. This restores a
+validation-tool prerequisite, not dashboard behavior or the historical incident.
+Fresh hosted governance and application CI must report actual outcomes; earlier
+failures remain retained even if a later run passes.
