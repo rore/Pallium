@@ -26,6 +26,479 @@ const delivery = { delivery_id: deliveryID, claim_token: "claim-token", message_
   sender_runtime: "codex", sender_session_ref: "sender", payload: "שלום wake payload",
   created_at: "2026-10-07T00:00:00Z", attempts: 1 };
 
+test("receipt policy uses strict UTC calendars, original request age and conservative fractional rounding", async () => {
+  const { relayReceiptTiming: timing, relayAckNotBefore: due } = await import("../.opencode/plugins/pallium-v2.mjs");
+  const base = { claimed_at: "2026-11-17T00:00:00.000001Z", lease_expires_at: "2026-11-17T00:01:00.999999Z", expires_at: null };
+  const result = timing(base, 1000, 9000);
+  assert.equal(result.deadline, 61998);
+  assert.equal(result.deadline - 27000, 34998, "body/cache/emission age is not added back");
+  for (const suffix of ["", "Z", "+00:00"]) {
+    assert.equal(timing({ ...base, claimed_at: "2026-11-17T00:00:00" + suffix,
+      lease_expires_at: "2026-11-17T00:01:00" + suffix }, 1000, 9000).deadline, 61000);
+  }
+  assert.equal(timing({ ...base, claimed_at: "2026-11-17T02:00:00+02:00",
+    lease_expires_at: "2026-11-16T23:01:00-01:00" }, 1000, 9000).deadline, 61000);
+  assert.equal(timing({ ...base, expires_at: "2026-11-17T00:00:30Z" }, 1000, 9000).deadline, 30999);
+  for (const invalid of [undefined, "", "2026-02-29T00:00:00Z", "2026-04-31T00:00:00Z", "0000-01-01T00:00:00Z",
+    "2026-11-17T24:00:00Z", "2026-11-17T00:00:60Z", "2026-11-17T00:00:00+24:00",
+    "2026-11-17T00:00:00+00:60", "2026-11-17T00:00:00.1234567Z", " 2026-11-17T00:00:00Z",
+    "2026-11-17T00:00:00Z\n", "2026-11-17 00:00:00"]) {
+    assert.equal(timing({ ...base, claimed_at: invalid }, 1000, 9000), null, String(invalid));
+  }
+  for (const patch of [{ expires_at: undefined }, { expires_at: "bad" }, { expires_at: "2026-11-16T00:00:00Z" },
+    { lease_expires_at: base.claimed_at }]) assert.equal(timing({ ...base, ...patch }, 1000, 9000), null);
+  assert.equal(timing(base, 1000, 999), null);
+  assert.equal(timing(base, Infinity, 9000), null);
+  assert.equal(due(" \t0002\t ", 10000, result), 12000);
+  assert.equal(due("0", 10000, result), 10000);
+  assert.equal(due("", 10000, result), -Infinity);
+  assert.equal(due(null, 10000, result), -Infinity);
+  const date = "Tue, 17 Nov 2026 00:00:10 GMT";
+  assert.equal(due(date, 16000, result), 19000);
+  assert.equal(due("Tue, 17 Nov 2026 00:00:00 GMT", 16000, result), 16000);
+  for (const invalid of ["-1", "+1", "1.5", "1e3", "Infinity", "9".repeat(100), "Mon, 17 Nov 2026 00:00:10 GMT",
+    "Tuesday, 17-Nov-26 00:00:10 GMT", "Tue Nov 17 00:00:10 2026", "Tue, 17 Nov 2026 24:00:00 GMT", "\n2\n", "2\n"]) {
+    assert.equal(due(invalid, 10000, result), null, invalid);
+  }
+  const oldNow = Date.now;
+  try {
+    for (const wall of [0, 1e15, -1e15]) {
+      Date.now = () => wall;
+      assert.deepEqual(timing(base, 1000, 9000), result);
+      assert.equal(due(date, 16000, result), 19000);
+    }
+  } finally { Date.now = oldNow; }
+});
+
+test("ordinary emitted receipt coalesces repeated contexts and recovers on the existing interval", async () => {
+  const ackCalls = [];
+  const receipt = { ...delivery, claimed_at: "2026-11-17T00:00:00Z",
+    lease_expires_at: "2026-11-17T00:01:00Z", expires_at: null };
+  const f = await callerFixture({ response: (pathname, body) => {
+    if (pathname === "/relay/turn") return { session: relaySession, deliveries: [receipt] };
+    if (pathname === "/relay/deliveries/ack") {
+      ackCalls.push(body);
+      return ackCalls.length === 1 ? null : { delivery_id: body.delivery_id, state: "delivered", already_delivered: false };
+    }
+  } });
+  const projected = () => ({ id: "msg_receipt", role: "user", content: [{ type: "text", text: "ordinary work" }] });
+  try {
+    const first = projected();
+    await f.hooks.context({ sessionID, messages: [first] });
+    assert.equal(ackCalls.length, 1);
+    const repeated = projected();
+    await f.hooks.context({ sessionID, messages: [repeated] });
+    assert.equal(repeated.content.at(-1).text, first.content.at(-1).text);
+    assert.equal(ackCalls.length, 1, "a repeated context cannot restart the initial ACK");
+    await f.tick();
+    assert.equal(ackCalls.length, 2, "the existing interval must recover without a new prompt");
+    assert.deepEqual(ackCalls[1], ackCalls[0]);
+    const confirmed = projected();
+    await f.hooks.context({ sessionID, messages: [confirmed] });
+    assert.equal(confirmed.content.at(-1).text, first.content.at(-1).text);
+    await f.tick();
+    assert.equal(ackCalls.length, 2);
+    assert.equal(f.native.prompt.length, 0);
+  } finally { await f.close(); }
+});
+
+const receiptDelivery = (letter = "a", overrides = {}) => ({
+  ...delivery, delivery_id: "relay-delivery-" + letter.repeat(32), claim_token: "token-" + letter,
+  claimed_at: "2026-11-17T00:00:00Z", lease_expires_at: "2026-11-17T00:01:00Z", expires_at: null, ...overrides,
+});
+const ordinaryProjection = (id = "msg_receipt_policy") => ({
+  id, role: "user", content: [{ type: "text", text: "ordinary receipt work" }],
+});
+const deferredReceipt = () => {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+};
+const receiptSuccess = (body, already_delivered = false) => ({
+  ok: true, status: 200, text: async () => JSON.stringify({ delivery_id: body.delivery_id, state: "delivered", already_delivered }),
+});
+
+test("receipt headers survive unknown bodies, contexts cannot reset due time or revive stops", async () => {
+  const oldPerformance = globalThis.performance;
+  let mono = 1000;
+  globalThis.performance = { now: () => mono };
+  try {
+    for (const hint of ["2", "invalid", "9".repeat(100), "Tue, 17 Nov 2026 00:00:03 GMT"]) {
+      let attempts = 0;
+      const f = await callerFixture({ fetch: (pathname, body) => {
+        if (pathname === "/relay/turn") return { ok: true, text: async () => {
+          mono = 1500; // The original response body's lag is retained.
+          return JSON.stringify({ session: relaySession, deliveries: [receiptDelivery()] });
+        } };
+        if (pathname === "/relay/deliveries/ack") {
+          attempts++;
+          if (attempts > 1) return receiptSuccess(body, true);
+          return { ok: false, status: 503, headers: { get: () => hint },
+            text: async () => { mono = 2000; throw new Error("body lost after headers"); }, body: { cancel: async () => {} } };
+        }
+      } });
+      try {
+        mono = 1000;
+        await f.hooks.context({ sessionID, messages: [ordinaryProjection()] });
+        for (const time of [2000, 3499]) {
+          mono = time;
+          await f.hooks.context({ sessionID, messages: [ordinaryProjection()] });
+          await f.tick();
+          assert.equal(attempts, 1, hint);
+        }
+        mono = 4500;
+        await f.tick();
+        assert.equal(attempts, hint === "2" || hint.startsWith("Tue") ? 2 : 1);
+        mono = 5000;
+        await f.hooks.context({ sessionID, messages: [ordinaryProjection()] });
+        await f.tick();
+        assert.equal(attempts, hint === "2" || hint.startsWith("Tue") ? 2 : 1);
+      } finally { await f.close(); }
+    }
+  } finally { globalThis.performance = oldPerformance; }
+});
+
+test("receipt expiry includes claim-body and emission lag and rechecks the strict full slot after ownership", async () => {
+  const oldPerformance = globalThis.performance;
+  let mono = 1000;
+  globalThis.performance = { now: () => mono };
+  try {
+    for (const remaining of [501, 500, 499, 0]) {
+      let attempts = 0, held = false;
+      const get = deferredReceipt();
+      const f = await callerFixture({
+        get: async ({ sessionID: id }) => {
+          if (held) await get.promise;
+          return { id, location: { directory: location } };
+        },
+        fetch: (pathname) => pathname === "/relay/turn" ? { ok: true, text: async () => {
+          mono = 20000;
+          return JSON.stringify({ session: relaySession, deliveries: [receiptDelivery()] });
+        } } : undefined,
+        response: (pathname, body) => {
+          if (pathname === "/relay/deliveries/ack") {
+            attempts++;
+            return attempts === 1 ? null : { delivery_id: body.delivery_id, state: "delivered", already_delivered: false };
+          }
+        },
+      });
+      try {
+        mono = 1000;
+        await f.hooks.prompt({ sessionID, messageID: "msg_receipt_policy", prompt: { text: "ordinary receipt work" } });
+        mono = 27000; // Cached response and model emission do not restart the lease.
+        await f.hooks.context({ sessionID, messages: [ordinaryProjection()] });
+        assert.equal(attempts, 1);
+        held = true;
+        await f.tick();
+        mono = 61000 - remaining;
+        get.resolve();
+        await pause();
+        assert.equal(attempts, remaining > 500 ? 2 : 1, String(remaining));
+        mono = 1000; // A later apparent clock improvement cannot revive a stopped entry.
+        held = false;
+        await f.hooks.context({ sessionID, messages: [ordinaryProjection()] });
+        await f.tick();
+        assert.equal(attempts, remaining > 500 ? 2 : 1);
+      } finally { get.resolve(); await f.close(); removeSessionPin(sessionID); }
+    }
+  } finally { globalThis.performance = oldPerformance; }
+});
+
+test("overlapping contexts never join an initial or recovery receipt flight", async () => {
+  let attempts = 0, gate = deferredReceipt();
+  const f = await callerFixture({ fetch: (pathname, body) => {
+    if (pathname === "/relay/turn") return { ok: true, text: async () => JSON.stringify({
+      session: relaySession, deliveries: [receiptDelivery()],
+    }) };
+    if (pathname === "/relay/deliveries/ack") {
+      attempts++;
+      const original = gate;
+      return original.promise.then((success) => success ? receiptSuccess(body) : { ok: false });
+    }
+  } });
+  try {
+    const first = f.hooks.context({ sessionID, messages: [ordinaryProjection()] });
+    await until(() => attempts === 1, "initial ACK must be held");
+    await f.hooks.context({ sessionID, messages: [ordinaryProjection()] });
+    await f.tick();
+    assert.equal(attempts, 1);
+    gate.resolve(false);
+    await first;
+    gate = deferredReceipt();
+    await f.tick();
+    assert.equal(attempts, 2);
+    await f.hooks.context({ sessionID, messages: [ordinaryProjection()] });
+    for (let n = 0; n < 10; n++) await f.tick();
+    assert.equal(attempts, 2);
+    gate.resolve(true);
+    await pause();
+    await f.hooks.context({ sessionID, messages: [ordinaryProjection()] });
+    await f.tick();
+    assert.equal(attempts, 2);
+  } finally { gate.resolve(false); await f.close(); }
+});
+
+test("maintenance reserves the whole ownership flight, remains independent of poll and rotates three receipts", async () => {
+  let hold = false, gets = 0;
+  const gate = deferredReceipt(), inventory = [];
+  const batch = ["a", "b", "c"].map((letter) => receiptDelivery(letter, { payload: letter }));
+  const f = await callerFixture({
+    get: async ({ sessionID: id }) => { if (hold) { gets++; await gate.promise; } return { id, location: { directory: location } }; },
+    response: (pathname, body) => {
+      if (pathname === "/relay/turn") return { session: relaySession, deliveries: [...batch] };
+      if (pathname === "/relay/deliveries/ack") { inventory.push(body.claim_token); return null; }
+    },
+  });
+  try {
+    // Three small envelopes fit only if scope is short enough; independent
+    // claims also exercise the same cursor across cached-claim boundaries.
+    for (let n = 0; n < 3; n++) {
+      batch.splice(0, batch.length, receiptDelivery("abc"[n], { payload: "abc"[n] }));
+      await f.hooks.context({ sessionID, messages: [ordinaryProjection("msg_fair_" + n)] });
+    }
+    assert.deepEqual(inventory, ["token-a", "token-b", "token-c"]);
+    hold = true;
+    for (let n = 0; n < 10; n++) await f.tick();
+    assert.equal(gets, 2, "one maintenance ownership plus one independently held poll, not ten queued flights");
+    assert.equal(inventory.length, 3);
+    hold = false;
+    gate.resolve();
+    await pause();
+    await f.tick();
+    await f.tick();
+    assert.deepEqual(inventory.slice(3), ["token-a", "token-b", "token-c"]);
+    assert.equal(f.native.prompt.length, 0);
+  } finally { hold = false; gate.resolve(); await f.close(); }
+});
+
+test("ordinary receipt rendering preserves every partial-batch and budget transition", async () => {
+  const P = await import("../.opencode/plugins/pallium-common.mjs");
+  const oldActor = process.env.PALLIUM_HOOK_ACTOR_REF;
+  const a = receiptDelivery("a", { payload: "A_שלום" }), b = receiptDelivery("b", { payload: "B_界" });
+  const scopeFor = (actor) => P.formatInjection([], container, 2300, sessionID, actor, P.AGENT_REF, "private");
+  const renderedFor = (actor) => {
+    const budget = 2300 - scopeFor(actor).length - 2;
+    let rendered = P.formatRelay([a, b], budget, 1), omitted = 0;
+    while (omitted < 2 - rendered.deliveries.length) {
+      omitted = 2 - rendered.deliveries.length;
+      rendered = P.formatRelay([a, b], budget, 1 + omitted);
+    }
+    return rendered;
+  };
+  const shortActor = "fixture-actor";
+  const longActor = Array.from({ length: 1500 }, (_, n) => "x".repeat(n + 1))
+    .find((actor) => renderedFor(actor).deliveries.length === 1);
+  assert.ok(longActor);
+  assert.equal(renderedFor(shortActor).deliveries.length, 2);
+  const expected = (actor, continuation) => {
+    const scopeText = scopeFor(actor), budget = 2300 - scopeText.length - 2;
+    const text = continuation ? P.formatRelayContinuation([a, b], budget) : renderedFor(actor).text;
+    return `\n\n<system-reminder>\n${[text, scopeText].filter(Boolean).join("\n\n")}\n</system-reminder>`;
+  };
+  try {
+    for (const scenario of ["partial", "shrink-promotes", "omitted", "grow-pending", "terminal"]) {
+      removeSessionPin(sessionID);
+      const tokens = [], counts = new Map();
+      const f = await callerFixture({ fetch: (pathname, body) => {
+        if (pathname === "/relay/deliveries/ack") {
+          tokens.push(body.claim_token);
+          counts.set(body.claim_token, (counts.get(body.claim_token) || 0) + 1);
+          const failedInitial = scenario === "grow-pending" ? body.claim_token === "token-a" :
+            ["partial", "shrink-promotes", "terminal"].includes(scenario) && body.claim_token === "token-b";
+          if (failedInitial && counts.get(body.claim_token) === 1) return {
+            ok: false, status: scenario === "terminal" ? 409 : 503, text: async () => '{"detail":"refused"}',
+          };
+          return receiptSuccess(body);
+        }
+      }, response: (pathname) => pathname === "/relay/turn"
+        ? { session: relaySession, deliveries: [a, b], has_more: true, remaining_count: 1 } : undefined });
+      const render = async (actor, continuation) => {
+        process.env.PALLIUM_HOOK_ACTOR_REF = actor;
+        const user = ordinaryProjection();
+        await f.hooks.context({ sessionID, messages: [user] });
+        assert.equal(user.content.at(-1).text, expected(actor, continuation), scenario);
+        assert.ok(tokens.every((token) => !user.content.at(-1).text.includes(token)));
+      };
+      try {
+        const initiallySmall = scenario === "omitted" || scenario === "grow-pending";
+        await render(initiallySmall ? longActor : shortActor, false);
+        assert.deepEqual(tokens, initiallySmall ? ["token-a"] : ["token-a", "token-b"]);
+        if (scenario === "omitted") {
+          await render(shortActor, true); // Legacy omitted-B continuation, no B authority.
+          await render(longActor, true);
+          await f.tick();
+          assert.deepEqual(tokens, ["token-a"]);
+        } else if (scenario === "shrink-promotes") {
+          await render(longActor, false); // Context promotes A-only while emitted B is pending.
+          await render(shortActor, true);
+          assert.deepEqual(tokens, ["token-a", "token-b"]);
+          await f.tick();
+          assert.deepEqual(tokens, ["token-a", "token-b", "token-b"]);
+          await render(shortActor, true);
+        } else if (scenario === "grow-pending") {
+          await render(shortActor, false); // B first becomes freshly emitted here.
+          assert.deepEqual(tokens, ["token-a", "token-b"]);
+          await render(shortActor, false); // Pending A does not get another initial ACK.
+          await f.tick();
+          assert.deepEqual(tokens, ["token-a", "token-b", "token-a"]);
+          await render(shortActor, false); // Maintenance did not promote claim.acked.
+          await render(longActor, true);
+        } else {
+          await render(shortActor, false);
+          assert.deepEqual(tokens, ["token-a", "token-b"]);
+          await f.tick();
+          if (scenario === "terminal") {
+            await render(shortActor, false);
+            assert.deepEqual(tokens, ["token-a", "token-b"]);
+          } else {
+            assert.deepEqual(tokens, ["token-a", "token-b", "token-b"]);
+            await render(shortActor, false);
+            await render(shortActor, true);
+          }
+        }
+      } finally { await f.close(); }
+    }
+  } finally { process.env.PALLIUM_HOOK_ACTOR_REF = oldActor; removeSessionPin(sessionID); }
+});
+
+test("retirement fences held ownership and late ACKs without waiting or mutating same-ID successor", async () => {
+  for (const phase of ["ownership", "ack"]) {
+    let hold = false, successor = false, attempts = 0, gets = 0;
+    const gate = deferredReceipt();
+    const f = await callerFixture({
+      get: async ({ sessionID: id }) => { if (hold && phase === "ownership") { gets++; await gate.promise; } return { id, location: { directory: location } }; },
+      fetch: async (pathname, body) => {
+        if (pathname === "/relay/turn") return { ok: true, text: async () => JSON.stringify({
+          session: relaySession, deliveries: [receiptDelivery("a", { claim_token: successor ? "successor" : "original" })],
+        }) };
+        if (pathname === "/relay/deliveries/ack") {
+          attempts++;
+          if (hold && phase === "ack" && body.claim_token === "original") {
+            await gate.promise; // Deliberately ignores AbortSignal to exercise late callback fencing.
+            return receiptSuccess(body, true);
+          }
+          if (body.claim_token === "successor") return receiptSuccess(body);
+          return { ok: false };
+        }
+      },
+    });
+    try {
+      await f.hooks.context({ sessionID, messages: [ordinaryProjection()] });
+      hold = true;
+      await f.tick();
+      assert.equal(attempts, phase === "ack" ? 2 : 1);
+      assert.equal(gets, phase === "ownership" ? 2 : 0);
+      await f.emit({ type: "session.deleted", data: { sessionID } });
+      hold = false; successor = true; // Successor never joins the retired native get/ACK.
+      await f.hooks.context({ sessionID, messages: [ordinaryProjection("msg_successor")] });
+      const before = attempts;
+      gate.resolve();
+      hold = false;
+      await pause();
+      await f.tick();
+      assert.equal(attempts, before);
+      const tokenInventory = f.calls.filter((c) => c.path === "/relay/deliveries/ack").map((c) => c.body.claim_token);
+      assert.equal(tokenInventory.filter((t) => t === "original").length, phase === "ack" ? 2 : 1);
+      assert.equal(tokenInventory.filter((t) => t === "successor").length, 1);
+    } finally { gate.resolve(); await f.close(); removeSessionPin(sessionID); }
+  }
+});
+
+test("receipt recovery progresses during a held native wake wait and a held poll", async () => {
+  const work = deferredReceipt(), poll = deferredReceipt();
+  let attempts = 0, holdPoll = false;
+  const f = await callerFixture({ wake: snapshot(),
+    wait: async () => work.promise,
+    fetch: async (pathname, body) => {
+      if (pathname === "/relay/opencode/wake" && body.operation === "poll" && holdPoll) await poll.promise;
+      if (pathname === "/relay/turn") return { ok: true, text: async () => JSON.stringify({
+        session: relaySession, deliveries: [receiptDelivery()],
+      }) };
+      if (pathname === "/relay/deliveries/ack") return ++attempts === 1 ? { ok: false } : receiptSuccess(body);
+    },
+  });
+  try {
+    await f.tick();
+    await until(() => f.native.wait === 1, "native work must be held");
+    const user = ordinaryProjection();
+    await f.hooks.context({ sessionID, messages: [user] });
+    const original = JSON.stringify(user);
+    assert.equal(attempts, 1);
+    holdPoll = true;
+    await f.tick();
+    assert.equal(attempts, 2, "wakeBusy and a pending poll do not own receipt maintenance");
+    for (let n = 0; n < 3; n++) await f.tick();
+    assert.equal(attempts, 2);
+    assert.equal(JSON.stringify(user), original);
+    assert.equal(f.native.wait, 1);
+    assert.equal(f.native.prompt.length, 1, "only the original unrelated wake");
+  } finally { holdPoll = false; work.resolve(); poll.resolve(); await pause(); await f.close(); }
+});
+
+test("missing authority and no feasible Retry-After slot cannot be revived by cached contexts", async () => {
+  for (const reason of ["missing", "no-slot"]) {
+    let attempts = 0;
+    const f = await callerFixture({ fetch: (pathname, body) => {
+      if (pathname === "/relay/turn") return { ok: true, text: async () => JSON.stringify({
+        session: relaySession, deliveries: [receiptDelivery("a", reason === "missing" ? { expires_at: undefined } : {})],
+      }) };
+      if (pathname === "/relay/deliveries/ack") {
+        attempts++;
+        return { ok: false, status: 503, headers: { get: () => reason === "no-slot" ? "60" : null },
+          text: async () => '{"detail":{"code":"relay_busy","retryable":true}}' };
+      }
+    } });
+    try {
+      await f.hooks.context({ sessionID, messages: [ordinaryProjection()] });
+      assert.equal(attempts, 1, "the legacy initial allowance does not depend on recovery metadata");
+      await f.tick();
+      removeSessionPin(sessionID);
+      await f.hooks.context({ sessionID, messages: [ordinaryProjection()] });
+      await f.tick();
+      assert.equal(attempts, 1, reason);
+    } finally { removeSessionPin(sessionID); await f.close(); }
+  }
+});
+
+test("ordinary receipt maintenance fences pins, generation replacement and disposal during native ownership", async () => {
+  for (const change of ["pin", "generation", "dispose"]) {
+    let held = false, generation = 0, gets = 0;
+    const gate = deferredReceipt(), inventory = [];
+    const f = await callerFixture({
+      get: async ({ sessionID: id }) => {
+        if (held) { gets++; await gate.promise; }
+        return { id, location: { directory: location } };
+      },
+      fetch: (pathname, body) => {
+        if (pathname === "/relay/turn") return { ok: true, text: async () => JSON.stringify({
+          session: { ...relaySession, scope_generation: generation },
+          deliveries: [receiptDelivery("a", { claim_token: generation ? "replacement" : "original" })],
+        }) };
+        if (pathname === "/relay/deliveries/ack") {
+          inventory.push(body.claim_token);
+          return body.claim_token === "replacement" ? receiptSuccess(body) : { ok: false };
+        }
+      },
+    });
+    try {
+      await f.hooks.context({ sessionID, messages: [ordinaryProjection()] });
+      held = true;
+      await f.tick();
+      assert.equal(gets, 2);
+      if (change === "dispose") await f.dispose(); // Must finish while unabortable SDK get remains held.
+      else if (change === "pin") pinContainer(sessionID, "path:replacement:123", undefined, "fixture-actor");
+      else {
+        generation = 1; held = false;
+        await f.hooks.context({ sessionID, messages: [ordinaryProjection("msg_new_generation")] });
+        await f.hooks.context({ sessionID, messages: [ordinaryProjection("msg_new_generation")] });
+      }
+      held = false; gate.resolve();
+      await pause();
+      assert.deepEqual(inventory, change === "generation" ? ["original", "replacement"] : ["original"]);
+    } finally { held = false; gate.resolve(); removeSessionPin(sessionID); await f.close(); }
+  }
+});
+
 test("package keeps V1 default and exports the V2 raw plugin", () => {
   assert.equal(typeof v1, "function");
   assert.equal(v2.id, "pallium-v2");

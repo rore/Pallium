@@ -26,6 +26,53 @@ const currentUser = (messages) => [...(messages || [])].reverse().find((m) => m?
 const internal = (message) => message?.metadata?.pallium_relay_wake === true && message?.content?.[0]?.text === WAKE_TEXT &&
   validInput(message.id) && validDelivery(message.metadata.delivery_id) && Number.isInteger(message.metadata.generation) && message.metadata.generation >= 1;
 
+// Storage's naive timestamps are UTC. Validate the calendar before applying an
+// offset; Date.parse alone accepts normalized invalid dates and local time.
+const receiptTimestamp = (value) => {
+  const match = typeof value === "string" && /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})?$/.exec(value);
+  if (!match || match[0] !== value) return null;
+  const [, y, mo, d, h, mi, s, fraction = "", zone = "Z"] = match;
+  const parts = [y, mo, d, h, mi, s].map(Number);
+  if (+y < 1 || +mo < 1 || +mo > 12 || +d < 1 || +d > 31 || +h > 23 || +mi > 59 || +s > 59) return null;
+  const date = new Date(0);
+  date.setUTCFullYear(+y, +mo - 1, +d);
+  date.setUTCHours(+h, +mi, +s, 0);
+  if ([date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds()]
+    .some((part, index) => part !== parts[index])) return null;
+  let offset = 0;
+  if (zone !== "Z") {
+    if (+zone.slice(1, 3) > 23 || +zone.slice(4) > 59) return null;
+    offset = (zone[0] === "+" ? 1 : -1) * (+zone.slice(1, 3) * 60 + +zone.slice(4)) * 60000;
+  }
+  const micros = Number(fraction.padEnd(6, "0"));
+  const base = date.getTime() - offset;
+  return { floor: base + Math.floor(micros / 1000), ceil: base + Math.ceil(micros / 1000) };
+};
+
+export function relayReceiptTiming(delivery, issuedAt, receivedAt) {
+  const claimed = receiptTimestamp(delivery?.claimed_at), lease = receiptTimestamp(delivery?.lease_expires_at);
+  const expiry = delivery?.expires_at === null ? { floor: Infinity } : receiptTimestamp(delivery?.expires_at);
+  if (!claimed || !lease || !expiry || !Number.isFinite(issuedAt) || !Number.isFinite(receivedAt) || receivedAt < issuedAt) return null;
+  const duration = Math.min(lease.floor - claimed.ceil, expiry.floor - claimed.ceil);
+  const deadline = issuedAt + duration;
+  return duration > 0 && Number.isFinite(deadline) ? { deadline, claimedFloor: claimed.floor, receivedAt } : null;
+}
+
+export function relayAckNotBefore(value, at, timing) {
+  if (value == null || value === "") return -Infinity;
+  const text = typeof value === "string" ? value.replace(/^[ \t]+|[ \t]+$/g, "") : "";
+  if (!text) return typeof value === "string" ? -Infinity : null;
+  if (!/\D/.test(text)) {
+    const seconds = Number(text), candidate = at + seconds * 1000;
+    return Number.isSafeInteger(seconds) && seconds * 1000 <= Number.MAX_SAFE_INTEGER &&
+      Number.isFinite(candidate) && candidate <= Number.MAX_SAFE_INTEGER ? candidate : null;
+  }
+  if (!timing || !/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(text)) return null;
+  const date = new Date(text);
+  return Number.isFinite(date.getTime()) && date.toUTCString() === text
+    ? Math.max(at, timing.receivedAt + Math.max(0, date.getTime() - timing.claimedFloor)) : null;
+}
+
 export default {
   id: "pallium-v2",
   async setup(ctx) {
@@ -90,6 +137,8 @@ export default {
         // Relay claims are generation-scoped; role snapshots remain immutable
         // so delayed assistant output can still bind to its original input.
         item.naturalClaims = new Map();
+        item.ackMaintenanceFlight = null;
+        item.ackCursor = null;
         item.memory = null;
         item.wake = null;
         item.wakeRevision = {};
@@ -360,11 +409,13 @@ export default {
         const current = scopeCurrent(id, item, signal);
         if (!current() || !scope(id)) return null;
         const maxChars = relayClaimBudget(relayBudget);
+        claim.issuedAt = performance.now();
         const response = await pallium.relayRequest("POST", "/relay/turn", {
           runtime: "opencode", session_ref: id, container_ref: scope(id), max_chars: maxChars,
           structural_work_refs: discovery.repositoryRef
             ? pallium.structuralWorkRefsPayload(scope(id), discovery.structuralRefs, discovery.repositoryRef) : [],
         }, pallium.HTTP_TIMEOUT_MS, signal);
+        claim.receivedAt = performance.now();
         if (!current()) return null;
         if (response?.session) {
           if (!remember(id, item, response.session)) return null;
@@ -383,6 +434,87 @@ export default {
       const clearPending = () => { if (claim.promise === pending) claim.promise = null; };
       void pending.then(clearPending, clearPending);
       return pending;
+    };
+    const receiptReady = (entry) => {
+      if (entry.state !== "pending") return false;
+      if (!entry.current() || entry.disabled || !entry.timing ||
+          Math.max(performance.now(), entry.notBefore) + 500 >= entry.timing.deadline) {
+        entry.state = "stopped";
+        return false;
+      }
+      return performance.now() >= entry.notBefore;
+    };
+    const sendReceipt = async (entry, flight) => {
+      const current = () => entry.current() && entry.flight === flight && entry.state === "flight";
+      if (!current()) return { delivery_id: entry.delivery.delivery_id, success: false };
+      const [result] = await pallium.acknowledgeRelay([entry.delivery], entry.container, entry.signal, (_delivery, observation) => {
+        if (!current()) return;
+        if (observation.phase === "headers") {
+          const due = relayAckNotBefore(observation.retryAfter, observation.at, entry.timing);
+          if (due === null) entry.disabled = true;
+          else entry.notBefore = Math.max(entry.notBefore, due);
+        } else {
+          entry.notBefore = Math.max(entry.notBefore, observation.at);
+          if (observation.success) entry.state = "confirmed";
+          else {
+            const terminal = observation.status >= 400 && observation.status < 500 &&
+              ![408, 429].includes(observation.status) && observation.error?.detail?.code !== "relay_busy";
+            entry.state = terminal || entry.disabled ? "stopped" : "pending";
+            receiptReady(entry); // Expiry/missing authority is a retained tombstone.
+          }
+        }
+      });
+      if (entry.flight === flight) entry.flight = null;
+      return result;
+    };
+    const acknowledgeOrdinary = async (id, item, inputId, claim, deliveries, identity) => {
+      claim.receipts ||= new Map();
+      // Reserve the entire rendered subset before yielding, including later
+      // entries in this legacy sequential initial ACK batch.
+      const entries = deliveries.map((delivery) => {
+        let entry = claim.receipts.get(delivery.delivery_id);
+        if (entry) return { entry };
+        const token = delivery.claim_token, attempt = delivery.attempts, signal = item.abort.signal;
+        const binding = base(id, item), response = claim.response, flight = {};
+        entry = { delivery, container: identity.container, signal, state: "flight", flight,
+          timing: relayReceiptTiming(delivery, claim.issuedAt, claim.receivedAt), notBefore: -Infinity, disabled: false };
+        entry.current = () => identity.current() && live(id, item, signal) &&
+          Object.entries(binding).every(([key, value]) => base(id, item)[key] === value) &&
+          item.naturalClaims.get(inputId) === claim && claim.response === response &&
+          claim.receipts.get(delivery.delivery_id) === entry && response?.deliveries?.includes(delivery) &&
+          delivery.claim_token === token && delivery.attempts === attempt;
+        claim.receipts.set(delivery.delivery_id, entry);
+        return { entry, flight };
+      });
+      const results = [];
+      for (const { entry, flight } of entries) {
+        results.push(flight ? await sendReceipt(entry, flight) :
+          { delivery_id: entry.delivery.delivery_id, success: entry.current() && entry.state === "confirmed" });
+      }
+      return results;
+    };
+    const maintainReceipts = async (id, item) => {
+      if (!live(id, item) || item.ackMaintenanceFlight) return;
+      const flight = {}, signal = item.abort.signal;
+      item.ackMaintenanceFlight = flight; // BEFORE selection or native ownership.
+      const current = () => live(id, item, signal) && item.ackMaintenanceFlight === flight;
+      try {
+        const entries = [...item.naturalClaims.values()].flatMap((claim) => [...(claim.receipts?.values() || [])]);
+        const start = entries.indexOf(item.ackCursor) + 1;
+        for (let n = 0; n < entries.length; n++) {
+          const entry = entries[(start + n) % entries.length];
+          if (!receiptReady(entry)) continue;
+          item.ackCursor = entry;
+          if (!await owned(id, item, signal) || !current() || !receiptReady(entry)) return;
+          const receiptFlight = {};
+          // No await between the full-slot/authority recheck and dispatch.
+          entry.flight = receiptFlight;
+          entry.state = "flight";
+          await sendReceipt(entry, receiptFlight);
+          return;
+        }
+      } catch (error) { if (current()) log(`V2 receipt maintenance deferred: ${String(error)}`); }
+      finally { if (current()) item.ackMaintenanceFlight = null; }
     };
     const ensureNaturalTurn = (id, item, inputId, promptText, relayBudget, discovery) => {
       const inputHash = createHash("sha256").update(String(promptText || "")).digest("hex");
@@ -666,7 +798,8 @@ export default {
       if (!text) return;
       user.content = [...(user.content || []), { type: "text", text: `\n\n<system-reminder>\n${text}\n</system-reminder>` }];
       if (!continuation && rendered.deliveries.length) {
-        const results = await pallium.acknowledgeRelay(rendered.deliveries, container, signal);
+        const results = wake ? await pallium.acknowledgeRelay(rendered.deliveries, container, signal) :
+          await acknowledgeOrdinary(id, item, user.id, claim, rendered.deliveries, identity);
         if (!current()) return;
         if (!wake && claim && results.every((result) => result.success)) claim.acked = true;
       }
@@ -767,7 +900,10 @@ export default {
       finally { discovering = false; }
     };
     void discover();
-    const timer = setInterval(() => { void discover(); for (const id of sessions.keys()) void poll(id); }, POLL_MS);
+    const timer = setInterval(() => {
+      void discover();
+      for (const [id, item] of sessions) { void maintainReceipts(id, item); void poll(id); }
+    }, POLL_MS);
     timer.unref?.();
     return () => {
       if (cleanup) return cleanup;

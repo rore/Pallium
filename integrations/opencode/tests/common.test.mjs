@@ -525,6 +525,34 @@ test("acknowledgeRelay reports successful, failed, and malformed outcomes", asyn
   }
 });
 
+test("ACK observation retains response headers before an unreadable body without changing results", async () => {
+  const previousFetch = globalThis.fetch;
+  const delivery = { delivery_id: "observed", claim_token: "secret" };
+  try {
+    for (const [status, body] of [[503, "lost"], [200, "lost"], [200, "malformed"], [503, "timeout"], [200, "timeout"]]) {
+      const observations = [];
+      globalThis.fetch = async (_url, { signal }) => ({
+        ok: status === 200, status, headers: new Headers({ "Retry-After": "12" }),
+        text: async () => {
+          if (body === "timeout") return new Promise((_, reject) => signal.addEventListener("abort",
+            () => reject(new Error("body timed out")), { once: true }));
+          if (body === "malformed") return "{";
+          throw new Error("body lost");
+        }, body: { cancel: async () => {} },
+      });
+    assert.deepEqual(await P.acknowledgeRelay([delivery], "container", undefined,
+      (item, observation) => { assert.equal(item, delivery); observations.push(observation); }),
+    [{ delivery_id: "observed", success: false, error: "ack_failed" }]);
+    assert.deepEqual(observations.map(({ at, ...row }) => row), [
+      { phase: "headers", status, retryAfter: "12" },
+      { phase: "outcome", status, error: undefined, success: false },
+    ]);
+    assert.ok(observations[1].at >= observations[0].at);
+    assert.equal(JSON.stringify(observations).includes("secret"), false);
+    }
+  } finally { globalThis.fetch = previousFetch; }
+});
+
 test("formatRelay normalizes claim attempts and retains payloads with unknown metadata", () => {
   const base = {
     delivery_id: "relay-Ünicode-😀", claim_token: "claim-1", message_id: "m-1",
