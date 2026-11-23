@@ -949,6 +949,381 @@ try{
         assert not thread.is_alive() and server.fileno() == -1
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_same_input_wake_context_recovers_stale_registration(
+    client, tmp_path, monkeypatch, relay_admission_clock,
+):
+    _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admission_clock, "delivered")
+
+
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_context_recovery_preserves_replacement_owner(client, tmp_path, monkeypatch, relay_admission_clock):
+    _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admission_clock, "competing-owner")
+
+
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+@pytest.mark.parametrize("state", ["terminal", "rotated"])
+def test_context_recovery_rejects_obsolete_backend_context(client, tmp_path, monkeypatch, relay_admission_clock, state):
+    _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admission_clock, state)
+
+
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+@pytest.mark.parametrize("expiry", ["lease", "ttl"])
+def test_context_recovery_does_not_renew_unconfirmed_context(client, tmp_path, monkeypatch, relay_admission_clock, expiry):
+    _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admission_clock, expiry)
+
+
+def _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admission_clock, scenario):
+    """Real plugin/HTTP; native ownership and backend time are controlled boundaries."""
+    from datetime import datetime, timezone
+    import storage.sqlite_relay as sqlite_relay
+    from tests.test_opencode_relay_wake_e2e import _setup, _send
+
+    node, git = shutil.which("node"), shutil.which("git")
+    assert node and git, "use existing runtimes, never download a test prerequisite"
+    root = Path(__file__).resolve().parents[1]
+    assert Path(create_app.__code__.co_filename).resolve().is_relative_to(root)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() in {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC"}}
+    for key in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+                "XDG_STATE_HOME", "TEMP", "TMP"):
+        directory = tmp_path / key.lower()
+        directory.mkdir()
+        env[key] = str(directory)
+    gitconfig = tmp_path / "gitconfig"
+    gitconfig.write_text("", encoding="utf-8")
+    env.update(GIT_CONFIG_GLOBAL=str(gitconfig), GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0")
+    subprocess.run([git, "init", "-q", str(workspace)], env=env, check=True, timeout=10)
+    subprocess.run([git, "-C", str(workspace), "remote", "add", "origin",
+                    "https://example.test/team/relay.git"], env=env, check=True, timeout=10)
+    real_now = sqlite_relay._now
+    clock = [datetime.now(timezone.utc)]
+    monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: real_now(value) if value is not None else clock[0])
+    base = _setup(client, session="ses_repeat_context", location=str(workspace),
+                  relay_admission_clock=relay_admission_clock, enroll=False)
+    sent = _send(client, base, "CONTINUITY_שלום_界", expires_in_seconds=60 if scenario == "ttl" else 86400,
+                 relay_admission_clock=relay_admission_clock)
+    assert sent.status_code == 200, sent.text
+    anchor, requests, later, controls = sent.json(), [], [], []
+    controlled = False
+
+    def control(body):
+        nonlocal controlled
+        controlled = True
+        owner = {key: body[key] for key in ("session_ref", "container_ref", "endpoint_id",
+                                           "scope_generation", "native_location", "owner_id")}
+        if scenario == "competing-owner":
+            owner["owner_id"] = "opencode-owner-" + "f" * 32
+        renewed = client.post("/relay/opencode/wake", json={**owner, "operation": "enroll"})
+        controls.append({"operation": "enroll", "status": renewed.status_code, "result": renewed.json()})
+        assert renewed.status_code == 200, renewed.text
+        if scenario in ("terminal", "rotated"):
+            terminal = client.post("/relay/opencode/wake", json={**owner, "operation": "terminal",
+                **{key: body[key] for key in ("generation", "delivery_id", "native_input_id")},
+                "terminal_message_id": "msg_control_terminal"})
+            controls.append({"operation": "terminal", "status": terminal.status_code, "result": terminal.json()})
+            assert terminal.status_code == 200, terminal.text
+            if scenario == "rotated":
+                clock[0] += timedelta(seconds=3)
+                queued = _send(client, base, "OBSOLETE_SUCCESSOR_界")
+                assert queued.status_code == 200, queued.text
+                rotated = client.post("/relay/opencode/wake", json={**owner, "operation": "poll"})
+                controls.append({"operation": "poll", "status": rotated.status_code, "result": rotated.json()})
+                assert rotated.status_code == 200, rotated.text
+                assert rotated.json()["wake"]["generation"] > body["generation"]
+
+    class JourneyHTTP(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def forward(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = json.loads(raw) if raw else None
+            if self.path == "/relay/deliveries/ack" and scenario in ("lease", "ttl"):
+                payload, status = b'{"detail":{"code":"relay_busy","retryable":true}}', 503
+            elif self.path == "/fixture/advance":
+                assert body["seconds"] in (14, 16)
+                clock[0] += timedelta(seconds=body["seconds"])
+                payload, status = json.dumps({"now": clock[0].isoformat()}).encode(), 200
+            else:
+                if self.path == "/fixture/later":
+                    response = _send(client, base, "FOLLOWUP_界_שלום")
+                    if response.is_success:
+                        later.append(response.json())
+                else:
+                    response = client.request(self.command, self.path, content=raw or None,
+                                              headers={"Content-Type": "application/json"})
+                payload, status = response.content, response.status_code
+                if (not controlled and scenario in ("competing-owner", "terminal", "rotated")
+                        and body and body.get("operation") == "context" and status == 409
+                        and response.json().get("detail") == "OpenCode registration is missing or stale"):
+                    control(body)
+            requests.append({"method": self.command, "path": self.path, "body": body,
+                             "status": status, "result": json.loads(payload),
+                             "backend_time": clock[0].isoformat()})
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+
+        do_GET = do_POST = forward
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), JourneyHTTP)
+    assert server.server_port != 19836
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    program = tmp_path / "repeat-context-caller.mjs"
+    program.write_text(r"""import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
+import {writeFileSync} from 'node:fs';
+const cwd=process.env.JOURNEY_DIRECTORY,sessionID='ses_repeat_context';
+const origin='http://localhost:'+process.env.PALLIUM_PORT;
+const anchor=JSON.parse(process.env.JOURNEY_ANCHOR),scope={container_ref:'git:example.test/team/relay'};
+const scenario=process.env.JOURNEY_SCENARIO,unconfirmed=['lease','ttl'].includes(scenario);
+const savedFetch=globalThis.fetch,savedSpawn=childProcess.spawn,children=[],calls=[],prompts=[],history=[],hooks={},disposed=[];
+const defer=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve}};
+const nativeRelease=defer(),ownedEntered=defer(),ownedRelease=defer(),logs=[],contexts=[];
+let tick,cleanup,watchdog,activeUser,armOwned=false,waits=0,waitReturns=0,interrupts=0,report;
+const pause=()=>new Promise(resolve=>setImmediate(resolve));
+const until=async(check,label)=>{
+ const end=Date.now()+8000;
+ while(!check()){assert.ok(Date.now()<end,label+': '+JSON.stringify(logs));await new Promise(resolve=>setTimeout(resolve,5))}
+ await pause();
+};
+// Reuse the existing owned Git process/close observer; no shell or replacement Git.
+childProcess.spawn=(command,args,options)=>{
+ assert.equal(command,'git');assert.equal(options.cwd,cwd);assert.ok(!options.shell);
+ assert.ok([['remote','get-url','origin'],['rev-list','--max-parents=0','HEAD'],['config','user.name']]
+  .some(allowed=>JSON.stringify(allowed)===JSON.stringify(args)));
+ const child=savedSpawn(process.env.JOURNEY_GIT,args,options),entry={child,done:false};
+ entry.closed=new Promise(resolve=>child.once('close',()=>{entry.done=true;resolve()}));
+ children.push(entry);return child;
+};
+syncBuiltinESMExports();
+globalThis.fetch=async(input,init={})=>{
+ const url=new URL(typeof input==='string'?input:input.url);
+ assert.equal(url.origin,origin,'only fixture-owned loopback HTTP is permitted');
+ const body=init.body?JSON.parse(init.body):null;
+ if(url.pathname==='/relay/deliveries/ack'){
+  assert.ok(activeUser?.content.at(-1).text.includes(body.delivery_id));
+  assert.match(activeUser.content.at(-1).text,/Lower-authority context/);
+ }
+ const response=await savedFetch(input,{...init,redirect:'error'});
+ calls.push({path:url.pathname,body,status:response.status,result:await response.clone().json()});
+ return response;
+};
+globalThis.setInterval=(fn)=>{tick=fn;return{unref(){}}};
+globalThis.clearInterval=()=>{};
+const request=async(method,path,body)=>{
+ const response=await fetch(origin+path,{method,headers:{'Content-Type':'application/json'},
+  ...(body?{body:JSON.stringify(body)}:{})});
+ assert.equal(response.status,200,await response.clone().text());return response.json();
+};
+const status=async(message)=>(await request('GET','/relay/messages/'+message.message_id+'?'+new URLSearchParams(scope))).deliveries[0];
+const acks=()=>calls.filter(c=>c.path==='/relay/deliveries/ack');
+const operations=op=>calls.filter(c=>c.body?.operation===op);
+const heartbeat=async()=>{
+ const before=operations('poll').length;tick();
+ await until(()=>operations('poll').length>before,'poll completed while native wait held');
+ return operations('poll').at(-1);
+};
+const ctx={location:{directory:cwd},app:{log:entry=>logs.push(entry.message)},session:{
+ hook:async(name,fn)=>{hooks[name]=fn;return{dispose:()=>disposed.push(name)}},
+ get:async({sessionID:id})=>{
+  if(armOwned){armOwned=false;ownedEntered.resolve();await ownedRelease.promise}
+  return{id,location:{directory:cwd},revert:null};
+ },
+ context:async()=>({data:history}),
+ prompt:async input=>{
+  assert.equal(input.delivery,'queue');assert.equal(input.sessionID,sessionID);
+  prompts.push(input);history.push({type:'user',id:input.id,text:input.text,metadata:input.metadata});
+  await hooks.prompt({sessionID,messageID:input.id,prompt:{text:input.text},metadata:input.metadata});
+  return{id:input.id};
+ },
+ wait:async()=>{waits++;await nativeRelease.promise;waitReturns++},
+ interrupt:async()=>{interrupts++},
+},event:{subscribe:async function*({signal}){
+ if(!signal.aborted)await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));
+}}};
+const context=async(input,expected,payload='CONTINUITY_שלום_界')=>{
+ const user={id:input.id,role:'user',content:[{type:'text',text:input.text}],metadata:input.metadata};
+ const before=acks().length;activeUser=user;
+ let error;
+ try{await hooks.context({sessionID,messages:[user]})}catch(caught){error=caught}
+ finally{activeUser=null}
+ const last=operations('context').at(-1);
+ contexts.push({input:input.id,error:error?.message??null,status:last?.status,
+  response:last?.result,attached:user.content.length===2,acks:acks().length-before});
+ if(expected==='refused'){
+  assert.ok(error,'unsafe backend context must remain visibly refused');
+  assert.equal(user.content.length,1);assert.equal(acks().length,before);
+ }else{
+  assert.ifError(error);assert.equal(last.status,200);
+  assert.match(user.content.at(-1).text,new RegExp(payload));
+  assert.equal(last.result.restored,expected==='restored');
+  assert.equal(acks().length,before+(expected==='initial'?1:0));
+  if(expected==='restored')assert.doesNotMatch(user.content.at(-1).text,/claim_token:/);
+ }
+ return last;
+};
+try{
+ const {default:production}=await import(process.env.JOURNEY_PLUGIN);
+ cleanup=await production.setup(ctx);
+ await Promise.race([(async()=>{
+  await until(()=>operations('enroll').some(c=>c.status===200),'startup enrollment');
+  await heartbeat();await until(()=>waits===1,'original native wait entered');
+  const first=prompts[0],snapshot=operations('poll')[0].result.wake;
+  assert.equal(prompts.length,1);assert.equal(first.id,snapshot.native_input_id);
+  assert.equal(first.metadata.generation,snapshot.generation);
+  assert.equal(first.metadata.delivery_id,anchor.deliveries[0].delivery_id);
+  const initial=await context(first,'initial');
+  const delivered=await status(anchor);
+  assert.equal(delivered.state,unconfirmed?'claimed':'delivered');assert.equal(delivered.attempts,1);
+  assert.equal(acks().length,1);assert.equal(waitReturns,0);
+  // More than two same-input model/tool context steps, beyond the original60s claim lease.
+  for(let step=1;step<=12;step++){
+   await request('POST','/fixture/advance',{seconds:14});
+   assert.equal((await heartbeat()).status,200);
+   assert.equal(waitReturns,0,'runWake wait must remain held during successful polling');
+   if(!unconfirmed&&(step===1||step===12)){
+    history.push({type:'assistant',id:'msg_tool_step_'+step,time:{completed:step},
+     content:[{type:'tool',name:'fixture_step',state:{status:'completed'}}]});
+    const restored=await context(first,'restored');
+    assert.equal(restored.result.deliveries[0].attempts,1);
+    assert.equal(restored.body.generation,initial.body.generation);
+   }
+  }
+  assert.equal(operations('enroll').length,1,'long native wait alone needs no enrollment repair');
+  assert.equal(operations('terminal').length,0);assert.equal(prompts.length,1);
+  // Stall ONE poll-owned native check, not runWake.wait; later context ownership reads still work.
+  const pollBoundary=operations('poll').length;
+  armOwned=true;tick();await ownedEntered.promise;
+  await request('POST','/fixture/advance',{seconds:16});
+  tick();await pause();assert.equal(operations('poll').length,pollBoundary,'busy poll cannot heartbeat');
+  const listed=await request('GET','/relay/sessions?'+new URLSearchParams({...scope,runtime:'opencode'}));
+  assert.equal(listed[0].activation.behavior,'passive');
+  if(['terminal','rotated'].includes(scenario))
+   history.push({type:'idle',id:'msg_control_terminal',outcome:'failed'});
+  const contextBoundary=operations('context').length;
+  await context(first,scenario==='delivered'?'restored':'refused');
+  assert.equal(operations('enroll').length,2,'one recovery enrollment before poll release');
+  assert.equal(operations('poll').length,pollBoundary,'recovery must not depend on held poll');
+  if(scenario!=='delivered'){
+   assert.equal(operations('context').length,contextBoundary+(unconfirmed?2:1));
+   const original=operations('context')[0].body;
+   const owner=Object.fromEntries(['session_ref','container_ref','endpoint_id','scope_generation',
+    'native_location','owner_id'].map(key=>[key,original[key]]));
+   const probe=async body=>{
+    const response=await fetch(origin+'/relay/opencode/wake',{method:'POST',
+     headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    return{status:response.status,result:await response.json()};
+   };
+   let proof;
+   if(scenario==='competing-owner'){
+    assert.equal(operations('enroll').at(-1).status,409);
+    const replacement=await probe({...owner,owner_id:'opencode-owner-'+'f'.repeat(32),operation:'poll'});
+    const denied=await probe({...owner,operation:'poll'});
+    assert.equal(replacement.status,200);assert.equal(denied.status,409);
+    proof={replacement,denied};
+   }else if(['terminal','rotated'].includes(scenario)){
+    assert.equal(operations('enroll').at(-1).status,200);
+    proof=await probe(original);
+    assert.equal(proof.status,scenario==='terminal'?200:409);
+    if(scenario==='terminal')assert.deepEqual(proof.result.deliveries,[]);
+   }else{
+    assert.equal(operations('enroll').at(-1).status,200);
+    assert.equal(operations('context').at(-1).status,200);
+    assert.deepEqual(operations('context').at(-1).result.deliveries,[]);
+   }
+   const final=await status(anchor);
+   // Status preserves a stored unconfirmed claim; expiry alone does not re-claim it.
+   assert.equal(final.state,scenario==='lease'?'claimed':scenario==='ttl'?'expired':'delivered');
+   if(scenario==='lease')assert.equal(final.claim_token,delivered.claim_token);
+   assert.equal(final.attempts,1);
+   for(const key of ['claimed_at','lease_expires_at','expires_at'])assert.equal(final[key],delivered[key],key);
+   assert.equal(prompts.length,1);assert.equal(acks().length,1);assert.equal(waitReturns,0);
+   report={scenarioPassed:true,scenario,contexts,delivered,final,proof,
+    native:{prompts:prompts.length,waits,waitReturns,interrupts}};
+   return;
+  }
+  assert.equal(prompts.length,1);assert.equal(waitReturns,0);
+  assert.equal(operations('terminal').length,0);assert.equal(acks().length,1);
+  const beforeRecovery=await status(anchor);
+  assert.equal(beforeRecovery.state,'delivered');assert.equal(beforeRecovery.attempts,1);
+  // Existing poll recovery independently proves the original admitted snapshot can be restored.
+  ownedRelease.resolve();
+  await until(()=>operations('poll').length>pollBoundary,'held poll resumes after context recovery');
+  assert.equal(operations('poll').at(-1).status,200);
+  assert.equal(operations('enroll').at(-1).status,200);
+  const after=await context(first,'restored');
+  for(const key of ['owner_id','endpoint_id','scope_generation','generation','delivery_id','native_input_id'])
+   assert.equal(after.body[key],initial.body[key],key+' must not change during recovery');
+  assert.equal(acks().length,1);assert.equal(prompts.length,1);
+  history.push({type:'idle',id:'msg_first_terminal',outcome:'succeeded'});
+  nativeRelease.resolve();await until(()=>waitReturns>0,'original native wait released');
+  await heartbeat();await until(()=>operations('terminal').some(c=>c.status===200),'original terminal');
+  const later=await request('POST','/fixture/later',{});
+  await heartbeat();await until(()=>prompts.length===2,'later native input');
+  const second=prompts[1];
+  // This input's runWake may finish its already-resolved wait before manual context.
+  await context(second,'initial','FOLLOWUP_界_שלום');
+  history.push({type:'idle',id:'msg_second_terminal',outcome:'succeeded'});
+  await heartbeat();await until(()=>operations('terminal').filter(c=>c.status===200).length===2,'later terminal');
+  const unchanged=await status(anchor),progressed=await status(later);
+  assert.equal(unchanged.state,'delivered');assert.equal(unchanged.attempts,1);
+  assert.equal(progressed.state,'delivered');assert.equal(progressed.attempts,1);
+  assert.equal(acks().length,2);assert.equal(prompts.length,2);assert.equal(interrupts,0);
+  assert.equal(calls.filter(c=>c.path==='/relay/turn').length,0);
+  report={scenarioPassed:true,scenario,controlledBackendSeconds:184,firstInput:first.id,contexts,
+   delivered,unchanged,progressed,native:{prompts:prompts.length,waits,waitReturns,interrupts},
+   initialSnapshot:snapshot,recoveredSnapshot:operations('enroll').at(-1).result.wake};
+ })(),new Promise((_,reject)=>{watchdog=setTimeout(()=>reject(new Error('owned journey exceeded45s')),45000)})]);
+}finally{
+ clearTimeout(watchdog);ownedRelease.resolve();nativeRelease.resolve();await cleanup?.();
+ for(const {child} of children)if(child.exitCode===null&&child.signalCode===null)child.kill();
+ await Promise.all(children.map(entry=>entry.closed));
+ writeFileSync(process.env.JOURNEY_REPORT,JSON.stringify({report,contexts,logs,http:calls,
+  cleanup:{pluginDisposed:disposed.length===3,gitChildrenClosed:children.filter(e=>e.done).length}}));
+ assert.ok(children.every(entry=>entry.done));
+ assert.deepEqual(disposed.sort(),['compaction','context','prompt']);
+}
+""", encoding="utf-8")
+    env.update(PALLIUM_PORT=str(server.server_port), PALLIUM_HOOK_ACTOR_REF="fixture-actor",
+               JOURNEY_PLUGIN=(root / "integrations/opencode/.opencode/plugins/pallium-v2.mjs").as_uri(),
+               JOURNEY_GIT=git, JOURNEY_DIRECTORY=str(workspace),
+               JOURNEY_REPORT=str(tmp_path / "journey-report.json"), JOURNEY_ANCHOR=json.dumps(anchor),
+               JOURNEY_SCENARIO=scenario)
+    try:
+        result = subprocess.run([node, str(program)], env=env, cwd=workspace, capture_output=True,
+                                text=True, encoding="utf-8", errors="replace", timeout=75)
+        (tmp_path / "journey-caller.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+        (tmp_path / "journey-http.json").write_text(json.dumps(requests), encoding="utf-8")
+        (tmp_path / "journey-controls.json").write_text(json.dumps(controls), encoding="utf-8")
+        assert result.returncode == 0, result.stdout + result.stderr
+        result = json.loads((tmp_path / "journey-report.json").read_text(encoding="utf-8"))
+        assert result["report"]["scenarioPassed"] is True
+        if scenario == "lease":
+            deadline = datetime.fromisoformat(result["report"]["final"]["lease_expires_at"]).replace(tzinfo=timezone.utc)
+            assert deadline <= clock[0]
+        if scenario == "delivered":
+            assert len(later) == 1 and result["report"]["progressed"]["delivery_id"] == later[0]["deliveries"][0]["delivery_id"]
+        else:
+            assert not later
+        assert result["cleanup"]["gitChildrenClosed"] > 0
+    finally:
+        server.shutdown()
+        thread.join(timeout=10)
+        server.server_close()
+        assert not thread.is_alive() and server.fileno() == -1
+
+
 def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, monkeypatch):
     _released_native_journey(client, tmp_path, test_db_url, monkeypatch)
 

@@ -49,7 +49,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - run: pip install -e "." pyyaml jsonschema import-linter
+      - run: pip install -e "." pyyaml jsonschema import-linter==2.15
 
       - name: Run import-linter boundary check
         run: |
