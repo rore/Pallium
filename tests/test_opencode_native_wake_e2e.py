@@ -957,6 +957,32 @@ def test_same_input_wake_context_recovers_stale_registration(
 
 
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_same_input_wake_context_recovers_after_outage(
+    client, tmp_path, monkeypatch, relay_admission_clock,
+):
+    _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admission_clock, "outage")
+
+
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+@pytest.mark.parametrize("fault", ["http503", "transport"])
+def test_same_pending_wake_context_resumes_two_tools_after_outage(
+    client, tmp_path, monkeypatch, relay_admission_clock, fault,
+):
+    _same_input_wake_context_journey(
+        client, tmp_path, monkeypatch, relay_admission_clock, "outage-recover-" + fault,
+    )
+
+
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_context_bootstrap_restores_admitted_wake_after_local_reload(
+    client, tmp_path, monkeypatch, relay_admission_clock,
+):
+    _same_input_wake_context_journey(
+        client, tmp_path, monkeypatch, relay_admission_clock, "bootstrap-restored",
+    )
+
+
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_context_recovery_preserves_replacement_owner(client, tmp_path, monkeypatch, relay_admission_clock):
     _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admission_clock, "competing-owner")
 
@@ -977,6 +1003,7 @@ def _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admiss
     """Real plugin/HTTP; native ownership and backend time are controlled boundaries."""
     from datetime import datetime, timezone
     import storage.sqlite_relay as sqlite_relay
+    import socket
     from tests.test_opencode_relay_wake_e2e import _setup, _send
 
     node, git = shutil.which("node"), shutil.which("git")
@@ -1008,6 +1035,10 @@ def _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admiss
     assert sent.status_code == 200, sent.text
     anchor, requests, later, controls = sent.json(), [], [], []
     controlled = False
+    outage_active, outage_observed = threading.Event(), threading.Event()
+    outage_faults, tool_actions = [], []
+    recovery_journey = scenario.startswith("outage-recover-")
+    hide_discovery = False
 
     def control(body):
         nonlocal controlled
@@ -1039,9 +1070,36 @@ def _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admiss
             pass
 
         def forward(self):
+            nonlocal hide_discovery
             raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
             body = json.loads(raw) if raw else None
-            if self.path == "/relay/deliveries/ack" and scenario in ("lease", "ttl"):
+            outage_response = (scenario.startswith("outage") and outage_active.is_set()
+                               and self.path == "/relay/opencode/wake" and body
+                               and body.get("operation") == "context")
+            if self.path == "/fixture/bootstrap" and scenario == "bootstrap-restored":
+                hide_discovery = True
+                payload, status = b'{"hide_next_discovery":true}', 200
+            elif self.path.startswith("/relay/sessions?") and hide_discovery:
+                hide_discovery = False
+                payload, status = b"[]", 200
+            elif self.path == "/fixture/outage" and scenario.startswith("outage"):
+                assert not outage_active.is_set() and not outage_observed.is_set()
+                outage_active.set()
+                payload, status = b'{"outage":"armed"}', 200
+            elif self.path == "/fixture/tool" and scenario.startswith("outage"):
+                assert body["step"] in (("completed-first-step", "completed-second-step")
+                                        if recovery_journey else ("completed-first-step",))
+                tool_actions.append(body["step"])
+                payload, status = json.dumps(body).encode(), 200
+            elif self.path == "/fixture/recover" and scenario.startswith("outage"):
+                assert outage_active.is_set() and outage_observed.is_set()
+                assert len(outage_faults) == (2 if recovery_journey else 1)
+                outage_active.clear()
+                payload, status = b'{"outage":"released-after-observed-context"}', 200
+            elif outage_response:
+                payload = b'{"detail":{"code":"relay_busy","retryable":true}}'
+                status = None if scenario == "outage-recover-transport" else 503
+            elif self.path == "/relay/deliveries/ack" and scenario in ("lease", "ttl"):
                 payload, status = b'{"detail":{"code":"relay_busy","retryable":true}}', 503
             elif self.path == "/fixture/advance":
                 assert body["seconds"] in (14, 16)
@@ -1063,6 +1121,14 @@ def _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admiss
             requests.append({"method": self.command, "path": self.path, "body": body,
                              "status": status, "result": json.loads(payload),
                              "backend_time": clock[0].isoformat()})
+            if outage_response:
+                outage_faults.append({"status": status, "body": body})
+                outage_observed.set()
+                if status is None:
+                    self.close_connection = True
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                    self.connection.close()
+                    return
             try:
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
@@ -1087,9 +1153,13 @@ const cwd=process.env.JOURNEY_DIRECTORY,sessionID='ses_repeat_context';
 const origin='http://localhost:'+process.env.PALLIUM_PORT;
 const anchor=JSON.parse(process.env.JOURNEY_ANCHOR),scope={container_ref:'git:example.test/team/relay'};
 const scenario=process.env.JOURNEY_SCENARIO,unconfirmed=['lease','ttl'].includes(scenario);
+const recoveryJourney=scenario.startsWith('outage-recover-');
 const savedFetch=globalThis.fetch,savedSpawn=childProcess.spawn,children=[],calls=[],prompts=[],history=[],hooks={},disposed=[];
 const defer=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve}};
 const nativeRelease=defer(),ownedEntered=defer(),ownedRelease=defer(),logs=[],contexts=[];
+const toolActions=[];
+const originalPerformance=globalThis.performance;
+let outageFailures=0,outageMono=1000;
 let tick,cleanup,watchdog,activeUser,armOwned=false,waits=0,waitReturns=0,interrupts=0,report;
 const pause=()=>new Promise(resolve=>setImmediate(resolve));
 const until=async(check,label)=>{
@@ -1115,9 +1185,23 @@ globalThis.fetch=async(input,init={})=>{
   assert.ok(activeUser?.content.at(-1).text.includes(body.delivery_id));
   assert.match(activeUser.content.at(-1).text,/Lower-authority context/);
  }
- const response=await savedFetch(input,{...init,redirect:'error'});
- calls.push({path:url.pathname,body,status:response.status,result:await response.clone().json()});
- return response;
+  let response;
+  try{response=await savedFetch(input,{...init,redirect:'error'})}
+  catch(error){
+   if(recoveryJourney&&url.pathname==='/relay/opencode/wake'&&body?.operation==='context'){
+    calls.push({path:url.pathname,body,status:null,result:null,error:'headerless transport failure'});
+    outageMono+=45000;
+    if(++outageFailures===2)await request('POST','/fixture/recover',{});
+   }
+   throw error;
+  }
+  calls.push({path:url.pathname,body,status:response.status,result:await response.clone().json()});
+  if(scenario.startsWith('outage')&&url.pathname==='/relay/opencode/wake'&&body?.operation==='context'&&response.status===503){
+   // Release only after this caller has received the real isolated HTTP failure.
+   if(recoveryJourney)outageMono+=45000;
+   if(!recoveryJourney||++outageFailures===2)await request('POST','/fixture/recover',{});
+  }
+  return response;
 };
 globalThis.setInterval=(fn)=>{tick=fn;return{unref(){}}};
 globalThis.clearInterval=()=>{};
@@ -1164,12 +1248,15 @@ const context=async(input,expected,payload='CONTINUITY_שלום_界')=>{
  if(expected==='refused'){
   assert.ok(error,'unsafe backend context must remain visibly refused');
   assert.equal(user.content.length,1);assert.equal(acks().length,before);
- }else{
+  }else if(expected!=='outage'){
   assert.ifError(error);assert.equal(last.status,200);
   assert.match(user.content.at(-1).text,new RegExp(payload));
   assert.equal(last.result.restored,expected==='restored');
   assert.equal(acks().length,before+(expected==='initial'?1:0));
-  if(expected==='restored')assert.doesNotMatch(user.content.at(-1).text,/claim_token:/);
+   if(expected==='restored')assert.doesNotMatch(user.content.at(-1).text,/claim_token:/);
+  }else if(!error){
+   assert.match(user.content.at(-1).text,new RegExp(payload));
+   assert.doesNotMatch(user.content.at(-1).text,/claim_token:/);
  }
  return last;
 };
@@ -1185,9 +1272,94 @@ try{
   assert.equal(first.metadata.delivery_id,anchor.deliveries[0].delivery_id);
   const initial=await context(first,'initial');
   const delivered=await status(anchor);
-  assert.equal(delivered.state,unconfirmed?'claimed':'delivered');assert.equal(delivered.attempts,1);
-  assert.equal(acks().length,1);assert.equal(waitReturns,0);
-  // More than two same-input model/tool context steps, beyond the original60s claim lease.
+   assert.equal(delivered.state,unconfirmed?'claimed':'delivered');assert.equal(delivered.attempts,1);
+   assert.equal(acks().length,1);assert.equal(waitReturns,0);
+   if(scenario==='bootstrap-restored'){
+    await cleanup();
+    await request('POST','/fixture/bootstrap',{});
+    const listed=calls.filter(c=>c.path==='/relay/sessions').length;
+    cleanup=await production.setup(ctx);
+    await until(()=>calls.filter(c=>c.path==='/relay/sessions').length>listed,'new plugin observed empty startup list');
+    assert.equal(operations('enroll').length,1,'startup has no local endpoint/wake');
+    const restored=await context(first,'restored');
+    assert.equal(restored.result.deliveries[0].attempts,1);
+    assert.equal(restored.result.deliveries[0].delivery_id,delivered.delivery_id);
+    assert.equal(operations('enroll').length,2,'context owns restoration enrollment');
+    assert.notEqual(operations('enroll')[0].body.owner_id,operations('enroll')[1].body.owner_id);
+    assert.equal(prompts.length,1);assert.equal(acks().length,1);
+    history.push({type:'idle',id:'msg_bootstrap_terminal',outcome:'succeeded'});
+    nativeRelease.resolve();await until(()=>waitReturns>0,'original wait released after bootstrap');
+    await heartbeat();await until(()=>operations('terminal').some(c=>c.status===200),'restored input terminal');
+    const final=await status(anchor);
+    assert.equal(final.state,'delivered');assert.equal(final.attempts,1);
+    assert.equal(prompts.length,1);assert.equal(acks().length,1);assert.equal(interrupts,0);
+    assert.equal(calls.filter(c=>c.path==='/relay/turn').length,0);
+    report={scenarioPassed:true,scenario,contexts,delivered,final,
+     native:{prompts:prompts.length,waits,waitReturns,interrupts}};
+    return;
+   }
+    if(scenario.startsWith('outage')){
+    const toolResult=await request('POST','/fixture/tool',{step:'completed-first-step'});
+    toolActions.push(toolResult.step);
+     history.push({type:'assistant',id:'msg_before_outage',time:{completed:1},
+      content:[{type:'tool',name:'fixture_step',state:{status:'completed'}}]});
+     if(recoveryJourney)globalThis.performance={now:()=>outageMono};
+    await request('POST','/fixture/outage',{});
+    const next=await context(first,'outage'),outcome=contexts.at(-1);
+    // This direct unchanged read is a fixture observation, NOT plugin recovery.
+     const recoverable=recoveryJourney?null:await request('POST','/relay/opencode/wake',initial.body);
+     if(recoverable){
+      assert.equal(recoverable.restored,true);assert.equal(recoverable.deliveries.length,1);
+      assert.equal(recoverable.deliveries[0].delivery_id,delivered.delivery_id);
+      assert.equal(recoverable.deliveries[0].attempts,1);
+     }
+    const unchanged=await status(anchor);
+    for(const key of ['state','attempts','claimed_at','lease_expires_at','expires_at'])
+     assert.equal(unchanged[key],delivered[key],key+' unchanged by outage/probe');
+     const failures=operations('context').filter(c=>c.status===503||c.status===null);
+     assert.equal(failures.length,recoveryJourney?2:1);
+     assert.ok(failures.every(c=>c.status===(scenario==='outage-recover-transport'?null:503)));
+    assert.equal(calls.filter(c=>c.path==='/fixture/recover').length,1);
+    assert.equal(calls.filter(c=>c.path==='/fixture/tool').length,1);
+    assert.equal(prompts.length,1);assert.equal(acks().length,1);assert.equal(waitReturns,0);
+    assert.equal(operations('terminal').length,0);
+    assert.deepEqual(toolActions,['completed-first-step']);
+    for(const key of ['owner_id','endpoint_id','scope_generation','generation','delivery_id','native_input_id'])
+     assert.equal(next.body[key],initial.body[key],key+' unchanged during outage');
+    report={scenarioPassed:false,scenario,firstInput:first.id,contexts,delivered,unchanged,
+     recoverable,toolActions,native:{prompts:prompts.length,waits,waitReturns,interrupts}};
+    assert.equal(outcome.error,null,'same-input callback must recover after the observed outage');
+    assert.equal(outcome.attached,true);assert.equal(next.status,200);
+    assert.equal(next.result.restored,true);
+     assert.equal(next.result.deliveries[0].delivery_id,delivered.delivery_id);
+     assert.equal(outcome.acks,0);
+     if(recoveryJourney){
+      assert.equal(outageFailures,2);assert.equal(outageMono-1000,90000);
+      const secondTool=await request('POST','/fixture/tool',{step:'completed-second-step'});
+      toolActions.push(secondTool.step);
+      history.push({type:'assistant',id:'msg_after_outage',time:{completed:2},
+       content:[{type:'tool',name:'fixture_second_step',state:{status:'completed'}}]});
+     }
+    history.push({type:'idle',id:'msg_outage_terminal',outcome:'succeeded'});
+    nativeRelease.resolve();await until(()=>waitReturns>0,'original outage input finishes');
+    await heartbeat();await until(()=>operations('terminal').some(c=>c.status===200),'outage input terminal');
+    const later=await request('POST','/fixture/later',{});
+    await heartbeat();await until(()=>prompts.length===2,'later input after outage');
+    await context(prompts[1],'initial','FOLLOWUP_界_שלום');
+    history.push({type:'idle',id:'msg_later_terminal',outcome:'succeeded'});
+    await heartbeat();await until(()=>operations('terminal').filter(c=>c.status===200).length===2,'later terminal');
+    const progressed=await status(later),final=await status(anchor);
+    assert.equal(final.state,'delivered');assert.equal(final.attempts,1);
+    assert.equal(progressed.state,'delivered');assert.equal(progressed.attempts,1);
+    assert.equal(acks().length,2);assert.equal(prompts.length,2);assert.equal(interrupts,0);
+     assert.deepEqual(toolActions,recoveryJourney?['completed-first-step','completed-second-step']:['completed-first-step']);
+     assert.equal(calls.filter(c=>c.path==='/fixture/tool').length,recoveryJourney?2:1);
+    assert.equal(calls.filter(c=>c.path==='/relay/turn').length,0);
+     report={...report,scenarioPassed:true,final,progressed,controlledOutageMilliseconds:recoveryJourney?90000:0,
+     native:{prompts:prompts.length,waits,waitReturns,interrupts}};
+    return;
+   }
+   // More than two same-input model/tool context steps, beyond the original60s claim lease.
   for(let step=1;step<=12;step++){
    await request('POST','/fixture/advance',{seconds:14});
    assert.equal((await heartbeat()).status,200);
@@ -1286,13 +1458,15 @@ try{
    initialSnapshot:snapshot,recoveredSnapshot:operations('enroll').at(-1).result.wake};
  })(),new Promise((_,reject)=>{watchdog=setTimeout(()=>reject(new Error('owned journey exceeded45s')),45000)})]);
 }finally{
+ globalThis.performance=originalPerformance;
  clearTimeout(watchdog);ownedRelease.resolve();nativeRelease.resolve();await cleanup?.();
  for(const {child} of children)if(child.exitCode===null&&child.signalCode===null)child.kill();
  await Promise.all(children.map(entry=>entry.closed));
  writeFileSync(process.env.JOURNEY_REPORT,JSON.stringify({report,contexts,logs,http:calls,
-  cleanup:{pluginDisposed:disposed.length===3,gitChildrenClosed:children.filter(e=>e.done).length}}));
+   cleanup:{pluginDisposed:disposed.length===(scenario==='bootstrap-restored'?6:3),gitChildrenClosed:children.filter(e=>e.done).length}}));
  assert.ok(children.every(entry=>entry.done));
- assert.deepEqual(disposed.sort(),['compaction','context','prompt']);
+ assert.deepEqual(disposed.sort(),scenario==='bootstrap-restored'?
+  ['compaction','compaction','context','context','prompt','prompt']:['compaction','context','prompt']);
 }
 """, encoding="utf-8")
     env.update(PALLIUM_PORT=str(server.server_port), PALLIUM_HOOK_ACTOR_REF="fixture-actor",
@@ -1312,11 +1486,14 @@ try{
         if scenario == "lease":
             deadline = datetime.fromisoformat(result["report"]["final"]["lease_expires_at"]).replace(tzinfo=timezone.utc)
             assert deadline <= clock[0]
-        if scenario == "delivered":
+        if scenario in ("delivered", "outage") or recovery_journey:
             assert len(later) == 1 and result["report"]["progressed"]["delivery_id"] == later[0]["deliveries"][0]["delivery_id"]
         else:
             assert not later
         assert result["cleanup"]["gitChildrenClosed"] > 0
+        if recovery_journey:
+            assert tool_actions == ["completed-first-step", "completed-second-step"]
+            assert len(outage_faults) == 2 and not outage_active.is_set()
     finally:
         server.shutdown()
         thread.join(timeout=10)

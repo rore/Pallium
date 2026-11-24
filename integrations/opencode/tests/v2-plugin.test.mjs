@@ -534,7 +534,7 @@ for (const batch of [false, true]) test(`V2 exact ${batch ? "batch" : "singleton
       }
       result = { session: relaySession, wake: { ...wake },
         deliveries: body.operation !== "context" ? [] : contextCount > 1
-          ? [{ ...delivery, claim_token: undefined }] : batch ? [delivery, sibling] : [delivery],
+          ? [{ ...delivery, state: "delivered", claim_token: undefined }] : batch ? [delivery, sibling] : [delivery],
         has_more: batch, remaining_count: batch ? 1 : 0,
         restored: body.operation === "context" && contextCount > 1 };
     } else if (u.pathname === "/relay/deliveries/ack") {
@@ -748,7 +748,7 @@ async function callerFixture(options = {}) {
     return { ok: true, text: async () => JSON.stringify(value) };
   };
   const ctx = {
-    location: { directory: location }, app: { log() {} },
+    location: { directory: location }, app: { log: (entry) => options.log?.(entry) },
     session: {
       hook: async (name, fn) => { hooks[name] = fn; return { dispose: () => { retired.push(name); return options.dispose?.(name); } }; },
       get: async (input) => { trace.push("get"); return options.get ? options.get(input) : ({ id: input.sessionID, location: { directory: location } }); },
@@ -1313,7 +1313,7 @@ async function contextRecoveryFixture(options = {}) {
   const count = { context: 0, enroll: 0 };
   let armed = false, phase = "setup", backend = { session: relaySession, wake: known };
   const result = (value) => ({ ...value, restored: true,
-    deliveries: [{ ...delivery, claim_token: undefined, receipt: undefined }] });
+    deliveries: [{ ...delivery, state: "delivered", claim_token: undefined, receipt: undefined }] });
   const encoded = (value, next) => ({ ok: true, text: async () => {
     const raw = JSON.stringify(value); phase = next; return raw;
   } });
@@ -1348,6 +1348,310 @@ async function contextRecoveryFixture(options = {}) {
   return { ...f, count, known, result, setBackend: (value) => { backend = value; },
     run: (user = projectedWake()) => f.hooks.context({ sessionID, messages: [user] }),
     acks: () => f.calls.filter((c) => c.path === "/relay/deliveries/ack").length };
+}
+
+const outageFlush = async () => { for (let n = 0; n < 12; n++) await new Promise(setImmediate); };
+async function outageUntil(check) {
+  const end = Date.now() + 5000;
+  while (!check()) { assert.ok(Date.now() < end, "outage boundary was not reached"); await new Promise(setImmediate); }
+  await outageFlush();
+}
+const outageResponse = (value, status = 200) => new Response(JSON.stringify(value), { status });
+const outageBusy = () => outageResponse({ detail: { retryable: true } }, 503);
+async function contextOutageFixture(t, options = {}) {
+  const known = snapshot({ admitted: true }), originalPerformance = globalThis.performance;
+  let armed = false, attempts = 0, enrollments = 0, mono = 0;
+  const logs = [];
+  const restored = () => ({ session: relaySession, wake: known, restored: true,
+    deliveries: [{ ...delivery, state: "delivered", claim_token: undefined }] });
+  pinContainer(sessionID, container, undefined, "fixture-actor");
+  const f = await callerFixture({ wake: known, list: options.list, response: options.response,
+    log: (entry) => logs.push(entry.message),
+    history: [{ type: "user", id: nativeID, text: projectedWake().content[0].text, metadata: projectedWake().metadata }],
+    get: (input) => options.get?.(input, armed) ?? { id: input.sessionID, location: { directory: location } },
+    fetch: async (route, body, init) => {
+      if (route === "/relay/deliveries/ack") {
+        if (options.confirm === "uncertain") throw new Error("ACK response lost");
+        if (options.confirm === "ack-body-lost") return { ok: true, status: 200, text: async () => { throw new Error("ACK body lost"); } };
+        return receiptSuccess(body);
+      }
+      if (route !== "/relay/opencode/wake") return;
+      if (body.operation === "context") {
+        if (!armed) return outageResponse(options.confirm === "restored" ? restored() :
+          { session: relaySession, wake: known, deliveries: [delivery], restored: false });
+        attempts++;
+        return await options.reply?.(attempts, body, init, restored) ?? outageResponse(restored());
+      }
+      if (armed && body.operation === "enroll") {
+        enrollments++;
+        return await options.enroll?.(body, init) ?? outageResponse({ session: relaySession, wake: known });
+      }
+      if (armed && body.operation === "poll") return await options.poll?.(body, init) ??
+        outageResponse({ session: relaySession, wake: known });
+    },
+  });
+  if (options.confirm !== "admitted") await f.hooks.context({ sessionID, messages: [projectedWake()] });
+  armed = true;
+  globalThis.performance = { now: () => mono };
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const advance = async (ms) => { mono += ms; t.mock.timers.tick(ms); await outageFlush(); };
+  return { ...f, known, restored, logs, attempts: () => attempts, enrollments: () => enrollments,
+    acks: () => f.calls.filter((c) => c.path === "/relay/deliveries/ack").length,
+    run: (user = projectedWake()) => f.hooks.context({ sessionID, messages: [user] }),
+    advance,
+    close: async () => {
+      t.mock.timers.reset(); globalThis.performance = originalPerformance;
+      try { await f.close(); } finally { removeSessionPin(sessionID); }
+    },
+  };
+}
+
+for (const shape of ["valid", "missing-session", "runtime", "session", "container", "endpoint",
+  "scope", "scope-type", "closed", "unhealthy", "wake-input", "wake-generation", "wake-delivery",
+  "wake-scope", "wake-location", "unadmitted", "terminal", "not-delivered", "missing-state",
+  "zero-attempt", "attempt-type"]) {
+  test(`outage bootstrap validates first restored authority: ${shape}`, async (t) => {
+    const f = await contextOutageFixture(t, { confirm: "admitted", reply: (attempt, _body, _init, restored) => {
+      if (attempt === 2) return outageBusy();
+      const value = restored();
+      if (attempt !== 1) return outageResponse(value);
+      if (shape === "missing-session") delete value.session;
+      else value.session = { ...value.session };
+      if (shape === "runtime") value.session.runtime = "codex";
+      if (shape === "session") value.session.session_ref = "ses_other";
+      if (shape === "container") value.session.container_ref = container + "/other";
+      if (shape === "endpoint") value.session.endpoint_id = "relay-session-" + "f".repeat(32);
+      if (shape === "scope") value.session.scope_generation = 1;
+      if (shape === "scope-type") value.session.scope_generation = "0";
+      if (shape === "closed") value.session.state = "closed";
+      if (shape === "unhealthy") value.session.destination_health = "unavailable";
+      value.wake = { ...value.wake };
+      if (shape === "wake-input") value.wake.native_input_id = "msg_wrong";
+      if (shape === "wake-generation") value.wake.generation = 2;
+      if (shape === "wake-delivery") value.wake.delivery_id = "relay-delivery-" + "f".repeat(32);
+      if (shape === "wake-scope") value.wake.scope_generation = 1;
+      if (shape === "wake-location") value.wake.native_location = location + "/other";
+      if (shape === "unadmitted") value.wake.admitted = false;
+      if (shape === "terminal") value.wake.terminal = true;
+      if (shape === "not-delivered") value.deliveries[0].state = "claimed";
+      if (shape === "missing-state") delete value.deliveries[0].state;
+      if (shape === "zero-attempt") value.deliveries[0].attempts = 0;
+      if (shape === "attempt-type") value.deliveries[0].attempts = "1";
+      return outageResponse(value);
+    } });
+    const first = projectedWake(), second = projectedWake();
+    try {
+      const initialError = await f.run(first).then(() => null, (error) => error);
+      const result = f.run(second).then(() => null, (error) => error);
+      await outageUntil(() => f.attempts() === 2);
+      await f.advance(2500);
+      const laterError = await result;
+      assert.equal(Boolean(initialError), shape !== "valid", "first bootstrap must validate before attachment");
+      assert.equal(Boolean(laterError), shape !== "valid", "a rejected bootstrap cannot authorize outage retry");
+      assert.equal(first.content.length, shape === "valid" ? 2 : 1);
+      assert.equal(second.content.length, shape === "valid" ? 2 : 1);
+      assert.equal(f.attempts(), shape === "valid" ? 3 : 2);
+      assert.equal(f.acks(), 0); assert.equal(f.enrollments(), 0); assert.equal(f.native.prompt.length, 0);
+    } finally { await f.close(); }
+  });
+}
+
+for (const entry of ["restored", "forged", "unrestorable", "late-owned"]) {
+  test(`outage bootstrap restores authority acquired during callback: ${entry}`, async (t) => {
+    const held = barrier();
+    let holding = false;
+    const f = await contextOutageFixture(t, { confirm: "admitted",
+      list: entry === "unrestorable" ? [[], []] : [[]],
+      get: async (input, armed) => {
+        if (armed && entry === "late-owned") { holding = true; await held.wait(); }
+        return { id: input.sessionID, location: { directory: location } };
+      } });
+    const user = projectedWake();
+    if (entry === "forged") user.id = "msg_unproven_marker";
+    const result = f.run(user).then(() => null, (error) => error);
+    try {
+      if (entry === "late-owned") {
+        await outageUntil(() => holding); await f.advance(120000);
+        const before = f.calls.length;
+        held.release();
+        assert.ok(await result);
+        assert.equal(f.calls.length, before, "expired provisional work cannot restore or enroll late");
+      } else {
+        assert.equal(await result, null);
+        assert.equal(f.attempts(), entry === "restored" ? 1 : 0,
+          JSON.stringify({ logs: f.logs, calls: f.calls.map(({ path, body }) => ({ path, body })) }));
+        if (entry === "restored") assert.match(user.content.at(-1).text, /שלום wake payload/);
+        else assert.ok(!user.content.some((part) => part.text?.includes("שלום wake payload")));
+      }
+      assert.equal(f.acks(), 0); assert.equal(f.native.prompt.length, 0);
+      assert.equal(f.calls.filter((c) => c.path === "/relay/turn").length, 0);
+    } finally { held.release(); await f.close(); await result; }
+  });
+}
+
+for (const fault of ["retryable503", "unreadable503", "transport", "per-request-timeout",
+  "nonretryable503", "unknown503", "lost200", "empty200", "malformed200", "malformed-shape",
+  "empty-deliveries", "wrong-attempt", "not-restored", "404", "conflict", "expired"]) {
+  test(`outage continuation classifies exact HTTP outcome: ${fault}`, async (t) => {
+    const retryable = ["retryable503", "unreadable503", "transport", "per-request-timeout"].includes(fault);
+    const f = await contextOutageFixture(t, { reply: async (attempt, _body, init, restored) => {
+      if (attempt > 2) return outageResponse(restored());
+      if (fault === "transport") throw new Error("no headers");
+      if (fault === "per-request-timeout") return new Promise((_, reject) =>
+        init.signal.addEventListener("abort", () => reject(new Error("request timed out")), { once: true }));
+      if (fault === "retryable503") return outageBusy();
+      if (fault === "unreadable503") return { ok: false, status: 503, text: async () => { throw new Error("lost error body"); } };
+      if (fault === "nonretryable503") return outageResponse({ detail: { retryable: false } }, 503);
+      if (fault === "unknown503") return outageResponse({ detail: "refused" }, 503);
+      if (fault === "lost200") return { ok: true, status: 200, text: async () => { throw new Error("lost after 200 headers"); } };
+      if (fault === "empty200") return new Response("", { status: 200 });
+      if (fault === "malformed200") return new Response("{", { status: 200 });
+      if (fault === "malformed-shape") return outageResponse({});
+      if (fault === "empty-deliveries") return outageResponse({ ...restored(), deliveries: [] });
+      if (fault === "wrong-attempt") return outageResponse({ ...restored(),
+        deliveries: [{ ...restored().deliveries[0], attempts: 2 }] });
+      if (fault === "not-restored") return outageResponse({ ...restored(), restored: false });
+      return outageResponse({ detail: fault === "expired" ? "receipt expired" : "definitive conflict" }, fault === "404" ? 404 : 409);
+    } });
+    const user = projectedWake(), result = f.run(user).then(() => null, (error) => error);
+    try {
+      await outageUntil(() => f.attempts() === 1);
+      if (retryable) {
+        if (fault === "per-request-timeout") await f.advance(6000);
+        await f.advance(2500);
+        await outageUntil(() => f.attempts() === 2);
+        if (fault === "per-request-timeout") await f.advance(6000);
+        await f.advance(2500);
+        await outageUntil(() => f.attempts() === 3);
+      }
+      const error = await result;
+      assert.equal(Boolean(error), !retryable);
+      assert.equal(user.content.length, retryable ? 2 : 1);
+      assert.equal(f.attempts(), retryable ? 3 : 1);
+      assert.equal(f.enrollments(), 0); assert.equal(f.acks(), 1);
+      assert.equal(f.native.prompt.length, 0);
+      assert.equal(f.calls.filter((c) => c.path === "/relay/turn").length, 0);
+    } finally { await f.close(); await result; }
+  });
+}
+
+for (const confirm of ["ack", "restored", "admitted", "uncertain", "ack-body-lost"]) {
+  test(`outage continuation requires confirmed original custody: ${confirm}`, async (t) => {
+    const f = await contextOutageFixture(t, { confirm, reply: (attempt) => attempt === 1 ? outageBusy() : undefined });
+    const user = projectedWake(), result = f.run(user).then(() => null, (error) => error);
+    try {
+      await outageUntil(() => f.attempts() === 1);
+      const eligible = ["ack", "restored"].includes(confirm);
+      if (eligible) { await f.advance(2500); await outageUntil(() => f.attempts() === 2); }
+      assert.equal(Boolean(await result), !eligible);
+      assert.equal(user.content.length, eligible ? 2 : 1);
+      assert.equal(f.enrollments(), 0);
+      assert.equal(f.acks(), ["restored", "admitted"].includes(confirm) ? 0 : 1);
+    } finally { await f.close(); await result; }
+  });
+}
+
+for (const first of ["poll", "enroll"]) {
+  test(`outage continuation preserves equivalent registration response order: ${first}`, async (t) => {
+    const enrollment = barrier(), polling = barrier();
+    const f = await contextOutageFixture(t, {
+      reply: (attempt) => attempt <= 2 ? outageBusy() : attempt === 3 ?
+        outageResponse({ detail: "OpenCode registration is missing or stale" }, 409) : undefined,
+      enroll: async () => { await enrollment.wait(); return outageResponse({ session: relaySession, wake: f.known }); },
+      poll: async () => { await polling.wait(); return outageResponse({ session: relaySession, wake: f.known }); },
+    });
+    const user = projectedWake(), result = f.run(user).then(() => null, (error) => error);
+    try {
+      await outageUntil(() => f.attempts() === 1); await f.advance(2500);
+      await outageUntil(() => f.attempts() === 2); await f.advance(2500);
+      await enrollment.entered;
+      const tick = f.tick(); await polling.entered;
+      (first === "poll" ? polling : enrollment).release(); await outageFlush();
+      (first === "poll" ? enrollment : polling).release(); await outageFlush();
+      await f.advance(20); await tick;
+      assert.equal(await result, null); assert.match(user.content.at(-1).text, /שלום wake payload/);
+      assert.equal(f.attempts(), 4); assert.equal(f.enrollments(), 1); assert.equal(f.acks(), 1);
+    } finally { enrollment.release(); polling.release(); await f.close(); await result; }
+  });
+}
+
+for (const after of ["restored", "stale", "malformed", "higher-scope"]) {
+  test(`outage continuation spends enrollment once across temporary failure: ${after}`, async (t) => {
+    const f = await contextOutageFixture(t, {
+      reply: (attempt) => attempt === 1 ? outageBusy() : attempt === 2 || after === "stale" ?
+        outageResponse({ detail: "OpenCode registration is missing or stale" }, 409) : undefined,
+      enroll: () => after === "malformed" ? outageResponse({}) : after === "higher-scope" ?
+        outageResponse({ session: { ...relaySession, scope_generation: 1 }, wake: snapshot() }) : outageBusy(),
+    });
+    const result = f.run().then(() => null, (error) => error);
+    try {
+      await outageUntil(() => f.attempts() === 1); await f.advance(2500);
+      await outageUntil(() => f.enrollments() === 1); await outageFlush();
+      if (["restored", "stale"].includes(after)) await f.advance(2500);
+      assert.equal(Boolean(await result), after !== "restored");
+      assert.equal(f.enrollments(), 1); assert.equal(f.acks(), 1);
+    } finally { await f.close(); await result; }
+  });
+}
+
+for (const stop of ["deadline-held-get", "dispose-held-get", "deadline-response", "just-before",
+  "at-cutoff", "terminal", "replacement", "scope", "location", "input"]) {
+  test(`outage continuation bounds local lifetime and late effects: ${stop}`, async (t) => {
+    const held = barrier();
+    let holding = false, moved = false, responseSignal;
+    const f = await contextOutageFixture(t, {
+      response: (route, body) => route === "/relay/turn" ? {
+        session: { ...relaySession, container_ref: body.container_ref }, deliveries: [],
+      } : undefined,
+      get: async (input, armed) => {
+        if (armed && stop.includes("held-get")) { holding = true; await held.wait(); }
+        return { id: input.sessionID, location: { directory: moved ? location + "/other" : location } };
+      },
+      reply: async (attempt, _body, init, restored) => {
+        responseSignal = init.signal;
+        if (stop === "just-before" && attempt === 1) return outageBusy();
+        if (["deadline-response", "at-cutoff", "just-before"].includes(stop)) { await held.wait(); return outageResponse(restored()); }
+        return attempt === 1 ? outageBusy() : undefined;
+      },
+      poll: () => outageResponse({ session: { ...relaySession, scope_generation: stop === "scope" ? 1 : 0 },
+        wake: snapshot({ admitted: true, ...(stop === "terminal" ? { terminal: true } :
+          { generation: 2, native_input_id: "msg_replacement" }) }) }),
+    });
+    const user = projectedWake(), result = f.run(user).then(() => null, (error) => error);
+    try {
+      if (stop.includes("held-get")) await outageUntil(() => holding);
+      else await outageUntil(() => f.attempts() === 1);
+      if (stop === "dispose-held-get") await f.dispose();
+      else if (["deadline-held-get", "deadline-response", "at-cutoff"].includes(stop)) await f.advance(120000);
+      else if (stop === "just-before") {
+        await f.advance(117499); await outageUntil(() => f.attempts() === 2);
+        await f.advance(2500); held.release();
+      }
+      else if (stop === "input") { user.id = "msg_replaced"; await f.advance(2500); }
+      else if (stop === "location") { moved = true; await f.advance(2500); }
+      else { const tick = f.tick(); await outageFlush(); await f.advance(20); await tick; }
+      const error = await result;
+      assert.equal(Boolean(error), stop !== "just-before");
+      assert.equal(user.content.length, stop === "just-before" ? 2 : 1);
+      const count = f.calls.length;
+      held.release(); await outageFlush();
+      assert.equal(f.calls.length, count, "late SDK/response completion cannot dispatch or attach");
+      assert.equal(f.acks(), 1);
+      if (stop === "deadline-held-get") {
+        const successor = container + "/successor";
+        pinContainer(sessionID, successor, undefined, "successor-actor");
+        const ordinary = ordinaryProjection("msg_after_abandoned_read");
+        await f.hooks.context({ sessionID, messages: [ordinary] }); // Retire the old scope.
+        await f.hooks.context({ sessionID, messages: [ordinary] }); // Resolve the successor lifetime.
+        assert.equal(getPinnedContainer(sessionID), successor);
+        assert.equal(f.calls.filter((c) => c.path === "/relay/turn").at(-1).body.container_ref, successor);
+        assert.ok(ordinary.content.at(-1).text.includes(successor));
+        assert.equal(user.content.length, 1, "abandoned context stays unattached after successor work");
+        assert.equal(f.acks(), 1);
+      }
+      if (stop === "deadline-response") assert.equal(responseSignal.aborted, true);
+    } finally { held.release(); await f.close(); await result; }
+  });
 }
 
 for (const fault of ["registration", "empty", "snapshot", "closed", "404", "503", "other",
@@ -1592,8 +1896,8 @@ test("lost ACK response restores continuation without another ACK or claim", asy
     if (path === "/relay/deliveries/ack") return null;
     if (body.operation === "context") {
       contextCalls++;
-      return { session: relaySession, wake: snapshot(), restored: contextCalls > 1,
-        deliveries: [contextCalls === 1 ? delivery : { ...delivery, claim_token: undefined }] };
+      return { session: relaySession, wake: snapshot({ admitted: true }), restored: contextCalls > 1,
+        deliveries: [contextCalls === 1 ? delivery : { ...delivery, state: "delivered", claim_token: undefined }] };
     }
   } });
   try {
