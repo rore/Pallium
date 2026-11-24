@@ -18,7 +18,7 @@
 [{"target":"task-context.constraints","classification":"requirement-change","before":"Preserve role mappings, approved session settings, independent review, test selection, and installed-change approval. Do not edit other worktrees, maintained skills, application code, or live configuration. No commit, push, or new test campaign.","after":"Preserve role mappings, approved session settings, independent review, test selection, and installed-change approval. Do not edit other worktrees, maintained skills, application code, or live configuration. Commit and push this change and merge it to main through the normal PR workflow. No new test campaign.","reason":"The task owner authorized publication of the role guidance.","impact":"Publish only the reviewed guidance and its Work Record; no live adoption or runtime change.","alternatives":"Keep the change local or open a PR without merging.","authority":{"scope":"task","name":"task-owner"},"approval":{"by":"user","reference":"Direct task-owner publication request","verbatim":"make sure the role changes are also pushed and get to main"}}]
 
 **Relationships:**
-{"schema_version":1,"sources":[],"pull_requests":[]}
+{"schema_version":1,"sources":[],"pull_requests":["https://github.com/rore/Pallium/pull/418"]}
 
 **Risk:** Routine
 
