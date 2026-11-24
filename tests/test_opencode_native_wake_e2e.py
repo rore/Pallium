@@ -362,7 +362,7 @@ const ctx={location:{directory:cwd},app:{log:entry=>logs.push(entry.message)},se
    let error;
    try{await hooks.context({sessionID,messages:[user]})}catch(caught){error=caught}
    if(prompts.length===1){
-    assert.equal(error?.message,'Pallium internal wake has no current Relay work');
+     assert.equal(error?.message,`Pallium wake context response has no matching delivery (delivery_id=${input.metadata.delivery_id})`);
     assert.equal(user.content.length,1,'unowned delivered payload must not enter model context');
     assert.equal(acks().length,before.acks);assert.equal(turns().length,before.turns);
     failedContext={error:error.message,acks:before.acks,turns:before.turns};
@@ -408,7 +408,7 @@ try{
   assert.equal(history.some(row=>row.id===first.id),false,'public ACK must precede native promotion');
   promotion.resolve();
   await until(()=>terminal===1,'failed native terminal reconciliation');
-  assert.equal(failedContext.error,'Pallium internal wake has no current Relay work');
+   assert.equal(failedContext.error,`Pallium wake context response has no matching delivery (delivery_id=${reservation.delivery_id})`);
   const context=calls.find(c=>c.body?.operation==='context'&&c.body.delivery_id===reservation.delivery_id);
   assert.equal(context.status,200);assert.deepEqual(context.result.deliveries,[]);
   assert.equal(context.result.restored,false);
