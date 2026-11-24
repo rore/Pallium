@@ -40,6 +40,38 @@ def test_trace_capacity_snapshot_and_writer_failure(caplog):
     assert not writer.enqueue(received.append, {"stage": "after-close"})
 
 
+def test_trace_refused_write_warns_once_without_identifiers(caplog):
+    # INFO lifecycle records (ready/closed) are captured on purpose: the oracle
+    # must ignore them and judge only warning-and-higher trace-writer records.
+    caplog.set_level(logging.INFO, logger="app.relay_trace")
+    writer = RelayTraceWriter()
+    event = {"attempt_id": "relay-activation-private", "delivery_id": "relay-delivery-private"}
+
+    def raise_failure(event):
+        raise RuntimeError("private-exception-token")
+
+    def warnings():
+        return [
+            record.getMessage() for record in caplog.records
+            if record.name == "app.relay_trace" and record.levelno >= logging.WARNING
+        ]
+
+    try:
+        for result in (True, None, 0, "", [], {}):
+            assert writer.enqueue(lambda event, result=result: result, event)
+        writer._executor.submit(lambda: None).result(3)
+        assert warnings() == []
+        for _ in range(3):
+            assert writer.enqueue(lambda event: False, event)
+        assert writer.enqueue(raise_failure, event)
+        writer._executor.submit(lambda: None).result(3)
+    finally:
+        writer.close()
+    assert any(record.levelno == logging.INFO for record in caplog.records)
+    assert warnings() == ["relay_trace_write outcome=refused", "relay trace write failed"]
+    assert not any(value in caplog.text for value in (*event.values(), "private-exception-token"))
+
+
 @pytest.mark.parametrize("fault", ["submit", "snapshot"])
 def test_trace_enqueue_failure_returns_all_capacity(monkeypatch, fault):
     writer = RelayTraceWriter()

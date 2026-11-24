@@ -57,13 +57,24 @@ class RelayTraceWriter:
                 pass
         return False
 
-    @staticmethod
-    def _run(writer: Callable[[dict[str, object]], object], event: dict[str, object]) -> None:
+    def _run(self, writer: Callable[[dict[str, object]], object], event: dict[str, object]) -> None:
         try:
-            writer(event)
+            result = writer(event)
         except Exception:
             try:
                 logger.warning("relay trace write failed")
+            except Exception:
+                pass
+            return
+        # Only an explicit False is a refusal; other results are not a write verdict.
+        if result is not False:
+            return
+        with self._lock:
+            report = "write_refused" not in self._reported_rejections
+            self._reported_rejections.add("write_refused")
+        if report:
+            try:
+                logger.warning("relay_trace_write outcome=refused")
             except Exception:
                 pass
 

@@ -417,6 +417,69 @@ def test_busy_correctness_gate_refuses_optional_trace_before_database_admission(
 
 
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_busy_gate_refused_wake_completion_is_observable_without_custody_change(
+    relay, monkeypatch, caplog,
+):
+    from app.relay_trace import RelayTraceWriter
+
+    storage, service, _ = relay
+    message = _message(service)
+    delivery = message["deliveries"][0]
+    attempt = "relay-activation-" + "6" * 32
+    completion = ActivationAttemptResult(
+        "accepted", "transport_accepted", ("submission_attempted", "transport_accepted"),
+    )
+    sessions = []
+    original_factory = storage._relay_session_factory
+
+    def session_factory(*args, **kwargs):
+        sessions.append(True)
+        return original_factory(*args, **kwargs)
+
+    def custody():
+        with original_factory() as db:
+            row = db.get(RelayDeliveryRecord, delivery["delivery_id"])
+            return row.state, row.attempts, row.claimed_at
+
+    before = custody()
+    writer = RelayTraceWriter()
+    try:
+        def emit():
+            claude_wake._emit_trace(
+                lambda event: writer.enqueue(service.record_trace_event, event),
+                attempt, delivery["delivery_id"], delivery["recipient_endpoint_id"],
+                "completed", completion,
+            )
+            writer._executor.submit(lambda: None).result(3)
+
+        assert storage._relay_writer_lock.acquire(blocking=False)
+        try:
+            with monkeypatch.context() as observed:
+                observed.setattr(storage, "_relay_session_factory", session_factory)
+                with caplog.at_level("WARNING", logger="app.relay_trace"):
+                    emit()
+                    emit()
+        finally:
+            storage._relay_writer_lock.release()
+        refusals = [r for r in caplog.records if r.getMessage() == "relay_trace_write outcome=refused"]
+        assert len(refusals) == 1
+        assert not any(
+            value in caplog.text
+            for value in (attempt, delivery["delivery_id"], delivery["recipient_endpoint_id"])
+        )
+        assert sessions == [], "optional writer inspected the database while correctness gate was occupied"
+        assert custody() == before
+        assert service.trace_message(message_id=message["message_id"])["events"] == []
+
+        emit()
+    finally:
+        writer.close()
+    event, = service.trace_message(message_id=message["message_id"])["events"]
+    assert (event["attempt_id"], event["stage"], event["outcome"]) == (attempt, "completed", "accepted")
+    assert custody() == before
+
+
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_trace_bound_checks_do_not_reserve_the_correctness_writer(relay):
     import sys
     import traceback
