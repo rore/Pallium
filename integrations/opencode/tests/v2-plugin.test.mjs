@@ -1543,7 +1543,10 @@ for (const confirm of ["ack", "restored", "admitted", "uncertain", "ack-body-los
       await outageUntil(() => f.attempts() === 1);
       const eligible = ["ack", "restored"].includes(confirm);
       if (eligible) { await f.advance(2500); await outageUntil(() => f.attempts() === 2); }
-      assert.equal(Boolean(await result), !eligible);
+      const error = await result;
+      assert.equal(Boolean(error), !eligible);
+      if (!eligible) assert.equal(error.message,
+        `Pallium wake context lookup did not return a usable result (delivery_id=${deliveryID})`);
       assert.equal(user.content.length, eligible ? 2 : 1);
       assert.equal(f.enrollments(), 0);
       assert.equal(f.acks(), ["restored", "admitted"].includes(confirm) ? 0 : 1);
@@ -1878,10 +1881,15 @@ test("overlapping context recoveries retain per-invocation bounds", async () => 
   } finally { gates.forEach((gate) => gate.release()); await Promise.all(outcomes); await f.close(); }
 });
 
-test("committed empty wake fails visibly while newer natural work remains usable", async () => {
-  const f = await callerFixture({ wake: snapshot() });
+for (const mismatch of [false, true]) test(`committed ${mismatch ? "mismatched" : "empty"} wake fails visibly while newer natural work remains usable`, async () => {
+  const f = await callerFixture({ wake: snapshot(), response: (_path, body) => {
+    if (mismatch && body.operation === "context")
+      return { deliveries: [{ delivery_id: "relay-delivery-" + "f".repeat(32), payload: "untrusted response data" }] };
+  } });
   try {
-    await assert.rejects(f.hooks.context({ sessionID, messages: [projectedWake()] }), /no current Relay work/);
+    await assert.rejects(f.hooks.context({ sessionID, messages: [projectedWake()] }), {
+      message: `Pallium wake context response has no matching delivery (delivery_id=${deliveryID})`,
+    });
     assert.equal(f.calls.filter((c) => c.body.operation === "context").length, 1);
     assert.equal(f.calls.filter((c) => c.path === "/relay/turn").length, 0);
     await f.hooks.context({ sessionID, messages: [projectedWake(),

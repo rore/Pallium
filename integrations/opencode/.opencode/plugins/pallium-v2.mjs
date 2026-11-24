@@ -895,7 +895,7 @@ export default {
             continue;
           }
           if (!unavailable(seen) || !continuationProof())
-            throw new Error("Pallium internal wake has no current Relay work");
+            throw new Error(`Pallium wake context lookup did not return a usable result (delivery_id=${fields.delivery_id})`);
           outage = true;
           await guard.pause();
           if (!continuationProof() || !await wait(owned(id, item, signal, undefined, guard)) || !continuationProof())
@@ -906,7 +906,7 @@ export default {
             !(outage ? sameWakeIdentity(confirmed.wake, response.wake) : sameWake(known, response.wake))))
           throw new Error("Pallium internal wake registration recovery refused");
         if (response?.deliveries?.[0]?.delivery_id !== user.metadata.delivery_id)
-          throw new Error("Pallium internal wake has no current Relay work");
+          throw new Error(`Pallium wake context response has no matching delivery (delivery_id=${fields.delivery_id})`);
       } else if (!internal(user)) {
         // The prompt hook freezes the role snapshot at source time and owns the
         // first Relay turn claim. Context may recover deliveries later, but
