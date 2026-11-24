@@ -2779,6 +2779,7 @@ test("fresh supersession fences lifecycle and backend changes during settlement"
 
 test("fresh supersession consumes uncertain terminal without stale follow-up", async () => {
   for (const failure of ["get", "context", "wait", "terminal-rejected", "terminal-reply-lost", "newer-candidate"]) {
+    const firstReply = failure === "newer-candidate" ? barrier() : null;
     let entered = false, committed = false, f, waits = 0;
     f = await callerFixture({ wake: snapshot({ admitted: true }),
       get: async ({ sessionID: id }) => { if (entered && failure === "get") throw new Error("get unavailable"); return { id, location: { directory: location } }; },
@@ -2789,21 +2790,33 @@ test("fresh supersession consumes uncertain terminal without stale follow-up", a
         if (body.operation === "poll" && committed) return { session: relaySession, wake: snapshot({ admitted: true, terminal: true }) };
         if (body.operation === "terminal") {
           committed = failure === "terminal-reply-lost";
-          if (failure === "newer-candidate") {
+          if (firstReply && terminals(f).length === 1) {
             const user = sourceUser("msg_next_ordinary", "next ordinary work");
             await observePrompt(f, user); f.history.push(user);
+            await firstReply.wait();
           }
           return null;
         }
       } });
     try {
       await observePrompt(f); f.history.push(freshUser()); await f.tick();
+      if (firstReply) await until(() => f.history.at(-1)?.id === "msg_next_ordinary", "successor prompt reached the fixture");
       const submitted = failure.startsWith("terminal") || failure === "newer-candidate";
       assert.equal(terminals(f).length, submitted ? 1 : 0, failure);
       await f.tick();
+      if (firstReply) {
+        assert.equal(terminals(f).length, 1, "no successor terminal while the first reply is held");
+        firstReply.release();
+        const deadline = Date.now() + 5000;
+        while (terminals(f).length < 2) {
+          assert.ok(Date.now() < deadline, "successor terminal was not submitted");
+          await f.tick();
+        }
+        assert.equal(terminals(f)[1].body.terminal_message_id, "msg_settled_2");
+      }
       assert.equal(terminals(f).length, failure === "newer-candidate" ? 2 : submitted ? 1 : 0, failure);
       assert.equal(f.native.prompt.length, 0);
-    } finally { await f.close(); }
+    } finally { firstReply?.release(); await f.close(); }
   }
 });
 
