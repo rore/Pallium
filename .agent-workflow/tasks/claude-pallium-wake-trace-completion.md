@@ -94,6 +94,12 @@ Agent technical review: clean-context read-only non-implementer agent; approve-w
 
 ## Result review
 
+Final confirmation after the test-only correction:
+Agent technical review: clean-context read-only non-implementer agent; approve, no material findings.
+Reviewed revision: f45ceff8 (base a5cb7acd). Blobs: `app/relay_trace.py` da6290e4 and `tests/test_relay_delivery_trace.py` 9df0fd87, both unchanged since the first review; `tests/test_relay_trace_worker.py` 2f251de0.
+Verification adequacy: adequate. The reviewer ran `tests/test_relay_trace_worker.py -n 0`: 14 passed. Full-suite evidence is in Correction.
+
+First review, before the correction:
 Agent technical review: clean-context read-only non-implementer agent; approve, no material findings.
 Reviewed revision: base `a5cb7acd` plus uncommitted diff of `app/relay_trace.py`, `tests/test_relay_delivery_trace.py` and `tests/test_relay_trace_worker.py` (`git diff | sha1sum` = `29dbfabca27537217b763d7783323158a37677ab`).
 Verification adequacy: adequate. The reviewer independently ran both focused files with `-n 0`: 69 passed.
