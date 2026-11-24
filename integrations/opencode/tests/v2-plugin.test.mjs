@@ -925,6 +925,42 @@ test("Git discovery yields to unrelated caller work while child waits", async ()
   }
 });
 
+for (const outcome of ["rejected", "foreign", "retired"]) {
+  test(`poll ownership lookup: ${outcome}`, async () => {
+    const lookup = barrier();
+    let armed = false;
+    const f = await callerFixture({ get: async ({ sessionID: id }) => {
+      if (!armed) return { id, location: { directory: location } };
+      armed = false;
+      await lookup.wait();
+      if (outcome !== "foreign") throw new Error("native lookup unavailable");
+      return { id, location: { directory: location + "-other" } };
+    } });
+    const operations = () => f.calls.filter((c) => c.body.operation).map((c) => c.body.operation);
+    try {
+      await until(() => operations().includes("enroll"), "startup enrollment");
+      armed = true;
+      await f.tick();
+      await lookup.entered;
+      assert.deepEqual(operations(), ["enroll"]);
+      if (outcome === "retired") await f.dispose();
+      lookup.release();
+      await f.tick();
+      if (outcome === "rejected") {
+        await f.tick();
+        await until(() => operations().includes("poll") || operations().includes("detach"), "poll must recover");
+        assert.ok(operations().slice(1).every((operation) => operation === "poll"));
+        const [enroll, poll] = f.calls.filter((c) => ["enroll", "poll"].includes(c.body.operation));
+        assert.deepEqual(poll.body, { ...enroll.body, operation: "poll" });
+      } else {
+        assert.deepEqual(operations(), ["enroll", "detach"]);
+      }
+      assert.equal(f.calls.filter((c) => c.path === "/relay/turn" || c.path === "/relay/deliveries/ack").length, 0);
+      assert.equal(f.native.prompt.length, 0);
+    } finally { lookup.release(); await f.close(); }
+  });
+}
+
 for (const failure of ["503", "timeout"]) {
   test(`transient poll ${failure} does not reenroll an established owner`, { timeout: 12000 }, async () => {
     let fail = true;
