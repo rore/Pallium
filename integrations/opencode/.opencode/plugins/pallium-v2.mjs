@@ -119,8 +119,9 @@ export default {
       session_ref: id, container_ref: scope(id), endpoint_id: item.endpointId,
       scope_generation: item.scopeGeneration, native_location: cwd, owner_id: ownerId,
     });
-    const wakeRequest = (id, item, operation, extra = {}, onHttpError) => !live(id, item) || !scope(id) || item.endpointId == null ? null :
-      pallium.relayRequest("POST", "/relay/opencode/wake", { operation, ...base(id, item), ...extra }, pallium.HTTP_TIMEOUT_MS, item.abort.signal, onHttpError);
+    const wakeRequest = (id, item, operation, extra = {}, onHttpError, request) => !live(id, item) || !scope(id) || item.endpointId == null ? null :
+      pallium.relayRequest("POST", "/relay/opencode/wake", { operation, ...base(id, item), ...extra },
+        request?.timeout ?? pallium.HTTP_TIMEOUT_MS, request?.signal ?? item.abort.signal, onHttpError, request?.onHeaders);
     const remember = (id, item, session) => {
       if (!live(id, item) || session?.runtime !== "opencode" || session.session_ref !== id || session.container_ref !== scope(id) ||
           session.state !== "recent" || session.destination_health !== "active" ||
@@ -142,19 +143,21 @@ export default {
         item.memory = null;
         item.wake = null;
         item.wakeRevision = {};
+        item.confirmedWake = null;
       }
       item.endpointId = session.endpoint_id;
       item.scopeGeneration = session.scope_generation;
       return true;
     };
-    const owned = async (id, item = sessions.get(id), signal = item?.abort.signal, token) => {
+    const owned = async (id, item = sessions.get(id), signal = item?.abort.signal, token, guard) => {
       const started = retirement;
-      const current = () => (!token || token.valid) && (item ? live(id, item, signal) : !disposed && (token != null || retirement === started) &&
+      const current = () => (!guard || guard.valid) && (!token || token.valid) && (item ? live(id, item, signal) : !disposed && (token != null || retirement === started) &&
         (!sessions.has(id) || live(id, sessions.get(id))));
       try {
         if (!current()) return false;
         const witness = item?.witness;
         const session = await ctx.session.get({ sessionID: id });
+        if (guard && !current()) return false;
         if (witness && item.witness === witness && (session?.id !== id || session.revert != null)) item.witness = null;
         return current() && sameLocation(session?.location?.directory, cwd);
       } catch { return false; }
@@ -165,32 +168,34 @@ export default {
       retire(id, item);
       if (!disposed && payload) await pallium.relayRequest("POST", "/relay/opencode/wake", payload, 500, abort.signal);
     };
-    const resolveScope = async (id, item, signal, structural = false) => {
-      const current = scopeCurrent(id, item, signal);
-      if (!await owned(id, item, signal) || !current()) return null;
+    const resolveScope = async (id, item, signal, structural = false, guard) => {
+      const bound = scopeCurrent(id, item, signal);
+      const current = () => bound() && (!guard || guard.valid);
+      if (!await owned(id, item, signal, undefined, guard) || !current()) return null;
       const pinned = pallium.getPinnedContainer(id);
-      const refs = structural ? await pallium.deriveGitRefs(cwd, signal) : null;
+      const refs = structural ? await pallium.deriveGitRefs(cwd, guard?.signal ?? signal) : null;
       if (!current()) return null;
-      const container = pinned || refs?.containerRef || await pallium.deriveContainerRef(cwd, signal);
-      if (!current() || !await owned(id, item, signal) || !current()) return null;
+      const container = pinned || refs?.containerRef || await pallium.deriveContainerRef(cwd, guard?.signal ?? signal);
+      if (!current() || !await owned(id, item, signal, undefined, guard) || !current()) return null;
       if (item.containerRef && item.containerRef !== container) {
         discoveryNeeded = true;
         await detach(id, item); // Never reuse another container's endpoint/generation.
         return null;
       }
       item.containerRef = container;
-      return { container, repositoryRef: refs?.repositoryRef, current: scopeCurrent(id, item, signal) };
+      const resolved = scopeCurrent(id, item, signal);
+      return { container, repositoryRef: refs?.repositoryRef, current: () => resolved() && (!guard || guard.valid) };
     };
-    const resolveIdentity = async (id, item, signal, structural = false, resolved = null) => {
-      const binding = resolved || await resolveScope(id, item, signal, structural);
+    const resolveIdentity = async (id, item, signal, structural = false, resolved = null, guard) => {
+      const binding = resolved || await resolveScope(id, item, signal, structural, guard);
       if (!binding?.current()) return null;
       const previousActorPin = pallium.getPinnedActor(id);
-      const actor = await pallium.resolveActorRef(cwd, id, { signal, current: binding.current });
+      const actor = await pallium.resolveActorRef(cwd, id, { signal: guard?.signal ?? signal, current: binding.current });
       if (!binding.current()) return null;
       const actorPin = pallium.getPinnedActor(id);
       if (actorPin ? actorPin !== actor : previousActorPin !== null) return null;
       const current = () => binding.current() && pallium.getPinnedActor(id) === actorPin;
-      if (!await owned(id, item, signal) || !current()) return null;
+      if (!await owned(id, item, signal, undefined, guard) || !current()) return null;
       return { ...binding, actor, current };
     };
     const wakeResponseContext = (id, item) => ({ signal: item.abort.signal, binding: base(id, item),
@@ -226,17 +231,22 @@ export default {
               known.admitted && !wake.admitted || known.terminal && !wake.terminal))) return reject();
       }
       if (item.witness && !sameWake(item.witness.wake, wake)) item.witness = null;
+      if (item.confirmedWake && !sameWakeIdentity(item.confirmedWake.wake, wake)) item.confirmedWake = null;
       item.wake = wake;
       item.wakeRevision = {}; // Null releases also advance freshness; null itself can recur.
+      item.wakeRegistration = item.wakeRevision;
+      for (const guard of item.contextGuards || []) guard.check();
       return true;
     };
     const enroll = async (id, item, recovery = null) => {
       const signal = item?.abort.signal;
       const current = scopeCurrent(id, item, signal);
-      if (!current() || !scope(id) || !item.endpointId || !await owned(id, item, signal) || !current()) return;
+      const guard = recovery?.guard;
+      if (!current() || !scope(id) || !item.endpointId || !await owned(id, item, signal, undefined, guard) || !current()) return;
       if (recovery && !recovery.current()) return;
       const request = wakeResponseContext(id, item);
-      const response = await wakeRequest(id, item, "enroll");
+      const response = await wakeRequest(id, item, "enroll", {}, recovery?.onHttpError, recovery?.request);
+      if (guard && !guard.valid) return;
       if (recovery && !recovery.accept(request, response)) return;
       if (applyWakeResponse(id, item, request, response)) return response;
     };
@@ -261,6 +271,89 @@ export default {
     const sameWake = (a, b) => a && b &&
       ["generation", "delivery_id", "native_input_id", "scope_generation", "admitted", "terminal"].every((key) => a[key] === b[key]) &&
       sameLocation(a.native_location, b.native_location);
+    const sameWakeIdentity = (a, b) => a && b && a.terminal === false && b.terminal === false &&
+      ["generation", "delivery_id", "native_input_id", "scope_generation"].every((key) => a[key] === b[key]) &&
+      sameLocation(a.native_location, b.native_location);
+    const wakeContextMatches = (id, item, user, response) => {
+      const binding = base(id, item), session = response?.session, wake = response?.wake;
+      const delivery = Array.isArray(response?.deliveries) && response.deliveries[0];
+      return session?.runtime === "opencode" && session.session_ref === id &&
+        session.container_ref === binding.container_ref && session.endpoint_id === binding.endpoint_id &&
+        Number.isInteger(session.scope_generation) && session.scope_generation === binding.scope_generation &&
+        session.state === "recent" && session.destination_health === "active" &&
+        sameWakeIdentity(item.wake, wake) && wake.admitted === true && internal(user) &&
+        wake.native_input_id === user.id && wake.generation === user.metadata.generation &&
+        wake.delivery_id === user.metadata.delivery_id && delivery?.delivery_id === wake.delivery_id &&
+        Number.isInteger(delivery.attempts) && delivery.attempts > 0;
+    };
+    const restoredWakeContext = (id, item, user, response, attempt) =>
+      wakeContextMatches(id, item, user, response) && response.restored === true &&
+      response.deliveries[0].state === "delivered" &&
+      (attempt === undefined || response.deliveries[0].attempts === attempt);
+    const wakeContextGuard = (id, item, user, event, deadline) => {
+      const signal = item.abort.signal, pin = pallium.getPinnedContainer(id);
+      const marker = { input: user.id, generation: user.metadata.generation, delivery: user.metadata.delivery_id };
+      const controller = new AbortController();
+      let active = true, reject, binding, known;
+      const stopped = new Promise((_, fail) => { reject = fail; });
+      stopped.catch(() => {});
+      const guard = {
+        signal: controller.signal,
+        get valid() {
+          return active && performance.now() < deadline && live(id, item, signal) &&
+            (!pin || pallium.getPinnedContainer(id) === pin) &&
+            (!binding || Object.entries(binding).every(([key, value]) => base(id, item)[key] === value) &&
+              sameWakeIdentity(known, item.wake) && (!known.admitted || item.wake.admitted)) &&
+            currentUser(event.messages) === user && internal(user) && user.id === marker.input &&
+            user.metadata.generation === marker.generation && user.metadata.delivery_id === marker.delivery;
+        },
+        stop() {
+          if (!active) return;
+          active = false;
+          controller.abort();
+          reject(new Error("Pallium internal wake interrupted or recovery deadline exhausted"));
+        },
+        check() { if (!guard.valid) guard.stop(); return guard.valid; },
+        remaining() {
+          if (!guard.check()) throw new Error("Pallium internal wake interrupted or recovery deadline exhausted");
+          return deadline - performance.now();
+        },
+        bind() {
+          guard.remaining();
+          if (!item.endpointId || !scope(id) || !Number.isInteger(item.scopeGeneration) ||
+              item.wake?.native_input_id !== marker.input || item.wake.generation !== marker.generation ||
+              item.wake.delivery_id !== marker.delivery || !sameLocation(item.wake.native_location, cwd))
+            throw new Error("Pallium internal wake restoration binding refused");
+          if (!binding) { binding = base(id, item); known = { ...item.wake }; }
+          guard.remaining();
+        },
+        request() { return { signal: controller.signal, timeout: Math.min(pallium.HTTP_TIMEOUT_MS, guard.remaining()) }; },
+        async wait(promise) {
+          guard.remaining();
+          const result = await Promise.race([promise, stopped]);
+          guard.remaining();
+          return result;
+        },
+        async pause() {
+          let timer;
+          try {
+            await guard.wait(new Promise((resolve) => { timer = setTimeout(resolve, Math.min(POLL_MS, guard.remaining())); }));
+          } finally { clearTimeout(timer); }
+        },
+        close() {
+          active = false;
+          controller.abort();
+          clearTimeout(timer);
+          signal.removeEventListener("abort", guard.stop);
+          item.contextGuards.delete(guard);
+        },
+      };
+      const timer = setTimeout(guard.stop, Math.max(0, deadline - performance.now()));
+      signal.addEventListener("abort", guard.stop, { once: true });
+      (item.contextGuards ||= new Set()).add(guard);
+      guard.check();
+      return guard;
+    };
     const settleFreshWitness = async (id, item) => {
       const proof = item.witness;
       if (!proof) return;
@@ -681,7 +774,7 @@ export default {
     }));
 
     registrations.push(await ctx.session.hook("context", async (event) => {
-      let wake = false;
+      let wake = false, guard;
       try {
       if (disposed || !event?.sessionID || !Array.isArray(event.messages)) return;
       const id = event.sessionID;
@@ -689,16 +782,23 @@ export default {
       if (!user) return;
       const item = state(id);
       const signal = item.abort.signal;
+      const deadline = performance.now() + 120000, marked = internal(user);
       const reservedWake = () => internal(user) && item.wake?.native_input_id === user.id &&
         item.wake.generation === user.metadata.generation && item.wake.delivery_id === user.metadata.delivery_id &&
         sameLocation(item.wake.native_location, cwd);
       wake = reservedWake();
+      // A provisional marker gets bounded work, never claim/retry authority.
+      if (marked) {
+        guard = wakeContextGuard(id, item, user, event, deadline);
+        if (wake) guard.bind();
+      }
+      const wait = (promise) => guard ? guard.wait(promise) : promise;
       const initial = scopeCurrent(id, item, signal);
-      if (!await owned(id, item, signal) || !initial()) {
+      if (!await wait(owned(id, item, signal, undefined, guard)) || !initial()) {
         if (wake && !live(id, item, signal)) throw new Error("Pallium internal wake owner retired");
         return;
       }
-      const identity = await resolveIdentity(id, item, signal, true);
+      const identity = await wait(resolveIdentity(id, item, signal, true, null, guard));
       if (!identity?.current()) {
         if (wake) throw new Error("Pallium internal wake scope retired");
         return;
@@ -709,12 +809,16 @@ export default {
         actor, pallium.AGENT_REF, "private", null, pallium.injectedWorkRef(discovery));
       const relayBudget = relayRenderBudget(scopeText);
       const maxChars = relayClaimBudget(relayBudget);
-      if (internal(user) && !item.endpointId) await restore(id, identity);
+      if (marked && !item.endpointId) await wait(restore(id, identity, guard));
       if (!current()) {
         if (wake) throw new Error("Pallium internal wake owner retired");
         return;
       }
       wake = reservedWake();
+      if (wake) {
+        if (!marked) throw new Error("Pallium internal wake input changed");
+        guard.bind(); // Same entry deadline; now freeze the restored exact binding.
+      }
       let response, recovery;
       if (wake) {
         if (maxChars === 1) throw new Error("Pallium internal wake has no Relay output budget");
@@ -733,27 +837,74 @@ export default {
           session.session_ref === id && session.container_ref === binding.container_ref &&
           session.endpoint_id === binding.endpoint_id && Number.isInteger(session.scope_generation) &&
           session.state === "recent" && session.destination_health === "active";
-        let registrationMissing = false;
-        response = await wakeRequest(id, item, "context", fields, (status, error) => {
-          registrationMissing = status === 409 && error?.detail === "OpenCode registration is missing or stale";
-        });
-        if (!response && registrationMissing && proof()) {
-          recovery = { current: proof, accept: (request, result) => {
-            if (!bound() || request.signal !== signal || !sessionMatches(result?.session)) return false;
-            // Preserve lifetime retirement, never adopt a higher-scope wake body.
-            if (result.session.scope_generation > binding.scope_generation) return true;
-            return proof() && request.revision === item.wakeRevision &&
-              result.session.scope_generation === binding.scope_generation && sameWake(known, result.wake) &&
-              (!item.witness || sameWake(item.witness.wake, known));
-          } };
-          const restored = await enroll(id, item, recovery);
-          if (!restored || !proof() || !await owned(id, item, signal) || !proof())
-            throw new Error("Pallium internal wake registration recovery refused");
-          response = await wakeRequest(id, item, "context", fields);
-          if (!proof() || !sessionMatches(response?.session) ||
-              response.session.scope_generation !== binding.scope_generation || !sameWake(known, response.wake))
-            throw new Error("Pallium internal wake registration recovery refused");
+        const confirmed = item.confirmedWake;
+        const continuationProof = () => guard.valid && bound() && confirmed && confirmed.signal === signal &&
+          Object.entries(confirmed.binding).every(([key, value]) => base(id, item)[key] === value) &&
+          confirmed.wake.admitted === true && sameWakeIdentity(confirmed.wake, item.wake) &&
+          currentUser(event.messages) === user && internal(user);
+        const unavailable = (seen) => !seen.headers ||
+          seen.status === 503 && (!seen.errorSeen || seen.error?.detail?.retryable === true);
+        const observe = () => {
+          const seen = {};
+          seen.onHttpError = (status, error) => { seen.status = status; seen.errorSeen = true; seen.error = error; };
+          seen.request = { ...guard.request(),
+            onHeaders: (status) => { seen.headers = true; seen.status = status; } };
+          return seen;
+        };
+        let outage = false, enrollmentUsed = false;
+        for (;;) {
+          const seen = observe();
+          response = await wait(wakeRequest(id, item, "context", fields, seen.onHttpError, seen.request));
+          if (response) {
+            if (response.restored && !restoredWakeContext(id, item, user, response))
+              throw new Error("Pallium internal wake restored authority refused");
+            if ((outage || continuationProof()) && (!continuationProof() ||
+                !restoredWakeContext(id, item, user, response, confirmed.attempt)))
+              throw new Error("Pallium internal wake continuation recovery refused");
+            break;
+          }
+          const registrationMissing = seen.status === 409 && seen.error?.detail === "OpenCode registration is missing or stale";
+          if (registrationMissing && !enrollmentUsed && (outage ? continuationProof() : proof())) {
+            enrollmentUsed = true;
+            const enrollment = observe();
+            let equivalent = false;
+            recovery = { guard, request: enrollment.request, onHttpError: enrollment.onHttpError,
+              current: () => guard.valid && (outage ? continuationProof() : proof()),
+              accept: (request, result) => {
+                enrollment.valueSeen = result != null;
+                if (!guard.valid || !bound() || request.signal !== signal || !sessionMatches(result?.session)) return false;
+                // Preserve lifetime retirement ahead of opaque revision checks.
+                if (result.session.scope_generation > binding.scope_generation) return true;
+                const matches = result.session.scope_generation === binding.scope_generation &&
+                  (outage ? sameWakeIdentity(confirmed.wake, result.wake) && result.wake.admitted === true : sameWake(known, result.wake));
+                if (!matches || !recovery.current() || item.witness && !sameWake(item.witness.wake, item.wake)) return false;
+                if (request.revision !== item.wakeRevision) {
+                  equivalent = outage && item.wakeRegistration === item.wakeRevision;
+                  return false; // Never adopt an obsolete enrollment response.
+                }
+                return true;
+              } };
+            const restored = await wait(enroll(id, item, recovery));
+            if (!restored && !equivalent) {
+              if (!outage || !continuationProof() || enrollment.valueSeen || !unavailable(enrollment))
+                throw new Error("Pallium internal wake registration recovery refused");
+              await guard.pause();
+            }
+            if (!recovery.current() || !await wait(owned(id, item, signal, undefined, guard)) || !recovery.current())
+              throw new Error("Pallium internal wake registration recovery refused");
+            continue;
+          }
+          if (!unavailable(seen) || !continuationProof())
+            throw new Error("Pallium internal wake has no current Relay work");
+          outage = true;
+          await guard.pause();
+          if (!continuationProof() || !await wait(owned(id, item, signal, undefined, guard)) || !continuationProof())
+            throw new Error("Pallium internal wake continuation recovery refused");
         }
+        if (recovery && (!recovery.current() || !sessionMatches(response?.session) ||
+            response.session.scope_generation !== binding.scope_generation ||
+            !(outage ? sameWakeIdentity(confirmed.wake, response.wake) : sameWake(known, response.wake))))
+          throw new Error("Pallium internal wake registration recovery refused");
         if (response?.deliveries?.[0]?.delivery_id !== user.metadata.delivery_id)
           throw new Error("Pallium internal wake has no current Relay work");
       } else if (!internal(user)) {
@@ -770,7 +921,7 @@ export default {
       // Unproven marker inputs remain fail-open but cannot register or claim.
       // This also fences an overtaken real wake without treating a forged marker
       // as authority to abort somebody's ordinary work.
-      if (!current() || !await owned(id, item, signal) || !current() || recovery && !recovery.current()) {
+      if (!current() || !await wait(owned(id, item, signal, undefined, guard)) || !current() || recovery && !recovery.current()) {
         if (wake) throw new Error("Pallium internal wake owner retired");
         return;
       }
@@ -796,17 +947,30 @@ export default {
       const memory = !formatted && !wake && item.memory?.inputId === user.id ? item.memory.text : scopeText;
       const text = [formatted, memory].filter(Boolean).join("\n\n");
       if (!text) return;
+      if (guard) guard.remaining();
       user.content = [...(user.content || []), { type: "text", text: `\n\n<system-reminder>\n${text}\n</system-reminder>` }];
+      const confirm = (delivery) => {
+        if (!guard.valid || !current() || !wakeContextMatches(id, item, user, response) ||
+            delivery !== deliveries[0]) return;
+        if (item.confirmedWake && sameWakeIdentity(item.confirmedWake.wake, response.wake) &&
+            item.confirmedWake.attempt !== delivery.attempts) return;
+        item.confirmedWake = { signal, binding: base(id, item),
+          wake: Object.fromEntries(["generation", "delivery_id", "native_input_id", "scope_generation",
+            "native_location", "admitted", "terminal"].map((key) => [key, response.wake[key]])),
+          attempt: delivery.attempts };
+      };
+      if (wake && response.restored === true && deliveries[0]?.state === "delivered") confirm(deliveries[0]);
       if (!continuation && rendered.deliveries.length) {
         const results = wake ? await pallium.acknowledgeRelay(rendered.deliveries, container, signal) :
           await acknowledgeOrdinary(id, item, user.id, claim, rendered.deliveries, identity);
         if (!current()) return;
+        if (wake && results.some((result) => result.success && result.delivery_id === deliveries[0]?.delivery_id)) confirm(deliveries[0]);
         if (!wake && claim && results.every((result) => result.success)) claim.acked = true;
       }
       } catch (error) {
-        if (wake) throw error;
+        if (wake || guard && !guard.valid) throw error;
         log(`V2 ordinary context failed: ${String(error)}`);
-      }
+      } finally { guard?.close(); }
     }));
 
     registrations.push(await ctx.session.hook("compaction", async (event) => {
@@ -815,18 +979,22 @@ export default {
       if (event?.sessionID) await ingestAssistant(event.sessionID);
     }));
 
-    const restore = async (id, resolved = null) => {
+    const restore = async (id, resolved = null, guard) => {
       const item = state(id);
       const signal = item?.abort.signal;
       try {
-      const binding = resolved || await resolveScope(id, item, signal);
+      const binding = resolved || await resolveScope(id, item, signal, false, guard);
       if (!binding?.current()) return;
       const listed = await pallium.relayRequest("GET", "/relay/sessions", {
         runtime: "opencode", session_ref: id, container_ref: binding.container, include_inactive: false,
-      }, pallium.HTTP_TIMEOUT_MS, signal);
-      if (!binding.current() || !await owned(id, item, signal) || !binding.current()) return;
+      }, guard ? Math.min(pallium.HTTP_TIMEOUT_MS, guard.remaining()) : pallium.HTTP_TIMEOUT_MS,
+      guard?.signal ?? signal);
+      if (!binding.current() || !await owned(id, item, signal, undefined, guard) || !binding.current()) return;
       const session = (Array.isArray(listed) ? listed : []).find((entry) => entry?.session_ref === id);
-      if (remember(id, item, session)) await enroll(id, item);
+      if (guard) guard.remaining();
+      if (remember(id, item, session)) await enroll(id, item, guard ? {
+        guard, current: () => guard.valid, accept: () => guard.valid, request: guard.request(),
+      } : null);
       } catch (error) { if (live(id, item, signal)) log(`V2 restore deferred: ${String(error)}`); }
     };
     const events = (async () => {
