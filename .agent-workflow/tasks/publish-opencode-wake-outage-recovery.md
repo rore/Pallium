@@ -15,7 +15,7 @@
 {"source":"Task-owner authorization to deliver the reviewed OpenCode outage fix","outcome":"An acknowledged OpenCode wake can continue the same pending callback after temporary Pallium unavailability, using freshly restored context without another claim, ACK, prompt, or tool replay.","scope":"Publish and validate the independently reviewed changes to `integrations/opencode/.opencode/plugins/pallium-v2.mjs`, `integrations/opencode/tests/v2-plugin.test.mjs`, and `tests/test_opencode_native_wake_e2e.py`, plus this delivery record.","constraints":"Keep exact scope, owner, input, generation, delivery and attempt checks. Preserve ordinary turns and existing lease and per-request limits. No API, storage, other runtime, or live environment changes in this PR. Preserve failed validation evidence.","completion_criteria":"Controlled 503 and connection-close journeys resume the same acknowledged turn, use fresh authority, and reach a second tool action and later work without replay. Unconfirmed or superseded work must not be restored. Hosted checks and released-host qualification remain distinct."}
 
 **Relationships:**
-{"schema_version":1,"sources":[{"provider":"minimap","scope_ref":"roadmap:v1:git:github.com/rore/pallium#roadmap","local_ref":"item:v1:add-wake-first-relay-delivery"}],"pull_requests":[]}
+{"schema_version":1,"sources":[{"provider":"minimap","scope_ref":"roadmap:v1:git:github.com/rore/pallium#roadmap","local_ref":"item:v1:add-wake-first-relay-delivery"}],"pull_requests":["https://github.com/rore/Pallium/pull/419"]}
 
 **Risk:** Elevated
 
