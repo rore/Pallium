@@ -156,7 +156,9 @@ export default {
       try {
         if (!current()) return false;
         const witness = item?.witness;
-        const session = await ctx.session.get({ sessionID: id });
+        let session;
+        try { session = await ctx.session.get({ sessionID: id }); }
+        catch { return null; } // A rejected lookup is not a confirmed move.
         if (guard && !current()) return false;
         if (witness && item.witness === witness && (session?.id !== id || session.revert != null)) item.witness = null;
         return current() && sameLocation(session?.location?.directory, cwd);
@@ -471,8 +473,13 @@ export default {
       item.busy = true;
       try {
         const initial = scopeCurrent(id, item, signal);
-        if (!await owned(id, item, signal)) { if (initial()) await detach(id, item); return; }
+        const ownership = await owned(id, item, signal);
         if (!initial()) return;
+        if (ownership === null) {
+          if (item.witness === witness) item.witness = null;
+          return;
+        }
+        if (!ownership) { await detach(id, item); return; }
         const binding = await resolveScope(id, item, signal);
         if (!binding?.current()) return;
         const request = wakeResponseContext(id, item);

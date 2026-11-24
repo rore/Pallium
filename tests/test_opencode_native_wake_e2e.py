@@ -238,7 +238,8 @@ try{
         server.server_close()
 
 
-def test_ordinary_delivery_before_delayed_wake_preserves_custody_and_progress(client, tmp_path):
+@pytest.mark.parametrize("lookup_rejected", [False, True], ids=["ordinary", "native-lookup-rejected"])
+def test_ordinary_delivery_before_delayed_wake_preserves_custody_and_progress(client, tmp_path, lookup_rejected):
     """Real plugin/HTTP custody; native promotion and terminal events are controlled."""
     from tests.test_opencode_relay_wake_e2e import _setup, _send
 
@@ -308,8 +309,9 @@ const origin='http://localhost:'+process.env.PALLIUM_PORT;
 const anchor=JSON.parse(process.env.JOURNEY_ANCHOR),scope={container_ref:'git:example.test/team/relay'};
 const savedFetch=globalThis.fetch,savedSpawn=childProcess.spawn,children=[],calls=[],prompts=[],history=[],hooks={},disposed=[];
 const defer=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve}};
-const promotion=defer(),jobs=[],logs=[];
-let tick,cleanup,failedContext,terminal=0,waits=0,interrupts=0;
+const promotion=defer(),jobs=[],logs=[],issued=[];
+let tick,cleanup,failedContext,terminal=0,waits=0,interrupts=0,rejectLookup=false;
+const lookupRejected=defer();
 const pause=()=>new Promise(resolve=>setImmediate(resolve));
 const until=async(check,label)=>{
  const end=Date.now()+8000;
@@ -330,6 +332,7 @@ globalThis.fetch=async(input,init={})=>{
  const url=new URL(typeof input==='string'?input:input.url);
  assert.equal(url.origin,origin,'only the fixture-owned loopback port is permitted');
  const body=init.body?JSON.parse(init.body):null;
+ issued.push({path:url.pathname,operation:body?.operation});
  const response=await savedFetch(input,{...init,redirect:'error'});
  const result=await response.clone().json();
  calls.push({path:url.pathname,body,status:response.status,result});
@@ -348,7 +351,10 @@ const acks=()=>calls.filter(c=>c.path==='/relay/deliveries/ack');
 const turns=()=>calls.filter(c=>c.path==='/relay/turn');
 const ctx={location:{directory:cwd},app:{log:entry=>logs.push(entry.message)},session:{
  hook:async(name,fn)=>{hooks[name]=fn;return{dispose:()=>disposed.push(name)}},
- get:async({sessionID:id})=>({id,location:{directory:cwd},revert:null}),
+ get:async({sessionID:id})=>{
+  if(rejectLookup){rejectLookup=false;lookupRejected.resolve();throw new Error('native lookup unavailable')}
+  return{id,location:{directory:cwd},revert:null};
+ },
  context:async()=>({data:history}),
  prompt:input=>{
   prompts.push(input);
@@ -421,12 +427,26 @@ try{
   const pollBoundary=calls.length;tick();
   await until(()=>calls.slice(pollBoundary).some(c=>c.body?.operation==='poll'&&c.result.wake===null),'anchor release');
   const later=await request('POST','/fixture/later',{});
+  const lookupBoundary=issued.length;
+  if(process.env.JOURNEY_REJECT_LOOKUP==='1'){
+   rejectLookup=true;tick();
+   await lookupRejected.promise;await pause();
+   assert.deepEqual(issued.slice(lookupBoundary),[],'unknown ownership must not cause a backend request');
+   const pending=await status(later);
+   assert.equal(pending.state,'pending');assert.equal(pending.attempts,0);
+  }
   tick();await until(()=>terminal===2,'later independent native delivery and terminal');
   const progressed=await status(later),unchanged=await status(anchor);
   assert.equal(progressed.state,'delivered');assert.equal(progressed.attempts,1);
   assert.deepEqual(unchanged,delivered,'obsolete wake must not mutate the delivered source');
   assert.equal(prompts.length,2);assert.notEqual(prompts[0].id,prompts[1].id);
   assert.equal(acks().length,2);assert.equal(turns().length,1);
+  if(process.env.JOURNEY_REJECT_LOOKUP==='1'){
+   assert.ok(!issued.slice(lookupBoundary).some(c=>['enroll','detach'].includes(c.operation)));
+   const poll=calls.find(c=>c.body?.operation==='poll'&&c.result.wake?.delivery_id===later.deliveries[0].delivery_id);
+   assert.equal(poll.body.owner_id,finished.body.owner_id);
+   assert.equal(prompts[1].id,poll.result.wake.native_input_id);
+  }
   assert.equal(waits,2);assert.equal(interrupts,0);
   report={characterization:true,native_boundary:'controlled, not installed-host proof',
    beforePromotion:delivered,anchorAfter:unchanged,laterAfter:progressed,failedContext,
@@ -447,7 +467,8 @@ try{
     env.update(PALLIUM_PORT=str(server.server_port), PALLIUM_HOOK_ACTOR_REF="fixture-actor",
                JOURNEY_PLUGIN=(root / "integrations/opencode/.opencode/plugins/pallium-v2.mjs").as_uri(),
                JOURNEY_GIT=git, JOURNEY_DIRECTORY=str(workspace),
-               JOURNEY_REPORT=str(tmp_path / "journey-report.json"), JOURNEY_ANCHOR=json.dumps(anchor))
+               JOURNEY_REPORT=str(tmp_path / "journey-report.json"), JOURNEY_ANCHOR=json.dumps(anchor),
+               JOURNEY_REJECT_LOOKUP="1" if lookup_rejected else "0")
     try:
         result = subprocess.run([node, str(program)], env=env, cwd=workspace, capture_output=True,
                                 text=True, encoding="utf-8", errors="replace", timeout=75)
