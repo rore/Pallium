@@ -854,7 +854,10 @@ def create_router(
         request_data = request.model_dump()
         if request.claim_expires_at_ms is None:
             request_data.pop("claim_expires_at_ms")
+        if request.claude_turn_admission is None:
+            request_data.pop("claude_turn_admission")
         relay_request = dict(request_data)
+        relay_request.pop("claude_turn_admission", None)
         relay_request["exact_delivery_id"] = relay_request.pop("wake_delivery_id", None)
         try:
             if codex_exact:

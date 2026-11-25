@@ -48,7 +48,9 @@ def main() -> None:
         transcript_path = payload.get("transcript_path", "")
         container_ref = resolve_container_ref(cwd, session_id, True, False)
         actor_ref = derive_actor_ref(cwd, session_id, container_ref)
-        register_claude_wake(session_id, container_ref, idle=True)
+        # Only a confirmed idle registration may opt out of the server's late
+        # busy stamp; otherwise keep the legacy path.
+        idle_confirmed = register_claude_wake(session_id, container_ref, idle=True) is True
 
         if payload.get("stop_hook_active") is not True and isinstance(session_id, str) and session_id:
             try:
@@ -58,7 +60,11 @@ def main() -> None:
                     agent_ref="claude-code", visibility="private",
                 )
                 turn = (
-                    relay_turn("claude-code", session_id, container_ref, max_chars=RELAY_TURN_BUDGET, timeout=0.75, request=relay_request) or {}
+                    relay_turn(
+                        "claude-code", session_id, container_ref,
+                        max_chars=RELAY_TURN_BUDGET, timeout=0.75, request=relay_request,
+                        claude_turn_admission="none" if idle_confirmed else None,
+                    ) or {}
                 ) if relay_scope else {}
                 deliveries = turn.get("deliveries") if isinstance(turn, dict) else []
                 remaining_count = (
@@ -67,7 +73,12 @@ def main() -> None:
                 rendered, claimed = format_relay(
                     deliveries or [], budget_chars=RELAY_OUTPUT_BUDGET, remaining_count=remaining_count,
                 )
-                if rendered:
+                # A flagged turn left the registration idle. If busy cannot be
+                # confirmed, skip emit and ACK; the claim lease returns the work.
+                if rendered and (
+                    not idle_confirmed
+                    or register_claude_wake(session_id, container_ref, idle=False) is True
+                ):
                     _emit_relay("\n\n".join((rendered, relay_scope)))
                     acknowledge_relay(
                         claimed, container_ref=container_ref,

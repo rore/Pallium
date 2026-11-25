@@ -1459,7 +1459,10 @@ with path.open("a+b") as lock:
     else:
         import fcntl
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    Path(sys.argv[2]).write_text(str(os.getpid()), encoding="utf-8")
+    ready = Path(sys.argv[2])
+    staging = ready.with_name(ready.name + ".staging")
+    staging.write_text(str(os.getpid()), encoding="utf-8")
+    staging.replace(ready)  # Publish atomically: the parent never sees an empty file.
     print("locked", flush=True)
     sys.stdin.read()
 """
