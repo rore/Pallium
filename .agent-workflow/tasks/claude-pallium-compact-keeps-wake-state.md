@@ -61,7 +61,15 @@ Candidate `133f2a21` (skipped registration on compact) is out of this scope and 
 Agent technical review: independent clean-context GO on exact plan blob `9de00538` (commit `bcfd7d1a`), relayed by the project manager on 2026-11-25. Separate from owner approval.
 
 **Approvals:**
-The task owner approved the Claude compaction custody and wake fixes. The project manager limited this change to custody and authorized implementation after independent plan review. The verbatim approval is retained privately, so the public approval-record checkpoint remains open. This does not replace separate human result review.
+The task owner approved the Claude compaction custody and wake fixes. The project manager limited this change to custody and authorized implementation after independent plan review. The verbatim approval is retained privately. This does not replace separate human result review.
+
+**Exceptions:**
+- rule: approval.high_risk_approval_recorded
+  reason: The task owner directed deployment without further approval paperwork. Keep the verbatim approval private.
+  scope: Public approval quote for the Claude compaction custody fix in PR 430 only.
+  approver: repository owner
+  expiry: 2026-12-09
+  compensating_validation: The task owner explicitly approved this fix and its deployment. Retain the private approval and keep the independent review and CI requirements.
 
 **State:**
 Ready for review
