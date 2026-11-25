@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import sys
 import time
@@ -4702,3 +4703,146 @@ def test_codex_hooks_exhausted_at_main_entry_skip_http(monkeypatch, tmp_path, ca
     assert network_calls == []
     assert common.remaining_safe_time() == 0
     assert capsys.readouterr().out == ""
+
+
+def test_claude_session_start_compact_leaves_relay_custody_for_ordinary_pickup(client, monkeypatch, tmp_path):
+    """Compact may run while idle with no turn; claimed Relay context would go unread."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    from fastapi.testclient import TestClient
+
+    # Hook traffic arrives over loopback; the registration route requires it.
+    loopback = TestClient(client.app, client=("127.0.0.1", 50000))
+    orientation = "KNOWN COMPACT ORIENTATION BLOCK"
+    payload_text = "compact custody payload"
+    events, registrations = [], []
+
+    class HTTP(BaseHTTPRequestHandler):
+        def do_POST(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            events.append(self.path)
+            if self.path == "/query":
+                status, body = 200, json.dumps({"injectable_blocks": [
+                    {"title": "Orientation", "memory_object_id": "orient-1", "text": orientation},
+                ]}).encode()
+            else:
+                response = loopback.post(self.path, content=raw, headers={"Content-Type": "application/json"})
+                status, body = response.status_code, response.content
+                if self.path == "/internal/claude-wake/register":
+                    registrations.append((status, json.loads(raw)))
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HTTP)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    profile, project = tmp_path / "profile", tmp_path / "project"
+    project.mkdir()
+    # Bind the hook to the app's own durable registry, as the installed service does.
+    wake_dir = client.app.state.claude_wake_registry._state_dir
+    relay_id = json.loads((wake_dir / "relay-owner.json").read_text(encoding="utf-8"))["relay_id"]
+    binding = profile / ".pallium" / "hooks" / "claude-wake-binding.json"
+    binding.parent.mkdir(parents=True)
+    binding.write_text(json.dumps({"port": server.server_port, "relay_id": relay_id, "wake_dir": str(wake_dir)}), encoding="utf-8")
+    hooks = ROOT / "integrations" / "claude-code" / "hooks"
+    env = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith("CLAUDE_CODE_") and key != "PALLIUM_HOOK_ACTOR_REF"
+    }
+    env.update({
+        "USERPROFILE": str(profile), "HOME": str(profile),
+        "PALLIUM_CLAUDE_WAKE_DIR": str(wake_dir), "PALLIUM_PORT": str(server.server_port),
+        "CLAUDE_CODE_MESSAGING_SOCKET": r"\\.\pipe\compact-test",
+        "CLAUDE_CODE_MESSAGING_TOKEN": "compact-test-token",
+    })
+    try:
+        # The hook's own resolver, in the hook's environment, names the scope to queue into.
+        container_ref = subprocess.run(
+            [sys.executable, "-c", "import sys, common; print(common.resolve_container_ref(sys.argv[1], 'target', True, False))", str(project)],
+            cwd=hooks, env=env, text=True, capture_output=True, check=True, timeout=10,
+        ).stdout.strip()
+        scope = {"container_ref": container_ref}
+        for turn in ({"runtime": "codex", "session_ref": "sender", **scope},
+                     {"runtime": "claude-code", "session_ref": "target", **scope}):
+            assert client.post("/relay/turn", json=turn).status_code == 200
+        sent = client.post("/relay/messages", json={
+            "sender_runtime": "codex", "sender_session_ref": "sender",
+            "recipient": "claude-code:target", "payload": payload_text, **scope,
+        })
+        assert sent.status_code == 200, sent.text
+        message_id = sent.json()["message_id"]
+
+        def delivery():
+            found, = client.get(f"/relay/messages/{message_id}", params=scope).json()["deliveries"]
+            return found["state"], found["attempts"]
+
+        events.clear()
+        compact = subprocess.run(
+            [sys.executable, str(hooks / "session_start.py")],
+            input=json.dumps({"cwd": str(project), "session_id": "target", "source": "compact"}),
+            env=env, text=True, capture_output=True, check=False, timeout=20,
+        )
+        compact_events = list(events)
+        assert delivery() == ("pending", 0)
+
+        events.clear()
+        monkeypatch.delitem(sys.modules, "common", raising=False)
+        prompt = _load("claude_compact_prompt", "integrations/claude-code/hooks/user_prompt_submit.py")
+        common = prompt.relay_turn.__globals__
+        monkeypatch.setitem(common, "PALLIUM_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+        monkeypatch.setattr(prompt, "read_hook_input", lambda: {
+            "cwd": str(project), "session_id": "target",
+            "prompt": "Pick up the pending Relay work after compaction.",
+        })
+        monkeypatch.setattr(prompt, "register_claude_wake", lambda *_a, **_k: None)
+        monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_args: container_ref)
+        monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_args: "actor")
+        monkeypatch.setattr(prompt, "discover_work_refs", lambda *_args: common["WorkRefDiscovery"]())
+        monkeypatch.setattr(prompt, "get_pending_relay_close_batch", lambda *_args: ([], 0))
+        output = SimpleNamespace(buffer=io.BytesIO(), encoding="utf-8")
+        with monkeypatch.context() as stream:
+            stream.setattr(prompt.sys, "stdout", output)
+            with pytest.raises(SystemExit):
+                prompt.main()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert compact.returncode == 0, compact.stderr
+    assert [(status, body["idle"], body["container_ref"]) for status, body in registrations] == [(204, False, container_ref)]
+    registered = client.app.state.claude_wake_registry._registrations[("claude-code", "target", container_ref)]
+    assert registered.state == "busy"
+    assert "/query" in compact_events
+    assert orientation in compact.stdout
+    assert payload_text not in compact.stdout
+    assert not [path for path in compact_events if path.startswith("/relay/")]
+    assert events.count("/relay/deliveries/ack") == 1
+    assert payload_text in output.buffer.getvalue().decode("utf-8")
+    assert delivery() == ("delivered", 1)
+
+@pytest.mark.parametrize("source", ["startup", "resume", "clear", "", None])
+def test_claude_session_start_non_compact_keeps_relay_turn(monkeypatch, source):
+    hook = _load(f"claude_start_source_{source}", "integrations/claude-code/hooks/session_start.py")
+    payload = {"cwd": ".", "session_id": "target-session"}
+    if source is not None:
+        payload["source"] = source
+    monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(hook, "pin_container", lambda *_a, **_k: None)
+    registrations, turns, acknowledged = [], [], []
+    monkeypatch.setattr(hook, "register_claude_wake", lambda *args, **kwargs: registrations.append(kwargs))
+    monkeypatch.setattr(hook, "relay_request", lambda *args, **_k: turns.append(args) or _turn_response([DELIVERY]))
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda deliveries, **_scope: acknowledged.append(deliveries))
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert registrations == [{"idle": False}]
+    assert len(turns) == 1
+    assert acknowledged == [[DELIVERY]]
