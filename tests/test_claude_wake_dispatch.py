@@ -3297,3 +3297,195 @@ def test_claude_turn_admission_rejects_other_runtimes_and_values(client, body) -
         "session_ref": PAYLOAD["session_ref"], "container_ref": PAYLOAD["container_ref"], **body,
     })
     assert response.status_code == 422
+
+
+def _controlled_relay_clock(monkeypatch: pytest.MonkeyPatch) -> list[datetime]:
+    import storage.sqlite_relay as sqlite_relay
+
+    clock = [datetime(2030, 10, 1, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or clock[0]
+        return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    return clock
+
+
+def test_flagged_and_unflagged_claude_turns_are_equivalent_over_http(
+    client, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flag changes only the busy stamp: claim, lease, ACK and remap are identical."""
+    clock = _controlled_relay_clock(monkeypatch)
+    http, _storage = _real_turn_http(client, ClaudeWakeRegistry())
+    container, remapped = PAYLOAD["container_ref"], "git:example/remapped"
+    assert http.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "sender", "container_ref": container,
+    }).status_code == 200
+
+    def lifecycle(session_ref: str, flag: dict) -> list[object]:
+        def turn(**body):
+            response = http.post("/relay/turn", json={
+                "runtime": "claude-code", "session_ref": session_ref,
+                "container_ref": container, **flag, **body,
+            })
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        def status(message_id: str) -> dict:
+            response = http.get(f"/relay/messages/{message_id}", params={"container_ref": container})
+            assert response.status_code == 200
+            return response.json()["deliveries"][0]
+
+        def lease(item: dict) -> tuple:
+            return (item["state"], item["attempts"], item["claimed_at"], item["lease_expires_at"])
+
+        start = clock[0]
+        registered = turn()["session"]
+        sent = http.post("/relay/messages", json={
+            "sender_runtime": "codex", "sender_session_ref": "sender",
+            "recipient": f"claude-code:{session_ref}", "payload": "equivalence",
+            "container_ref": container,
+        })
+        assert sent.status_code == 200, sent.text
+        message_id = sent.json()["message_id"]
+        first = turn()
+        claimed = lease(status(message_id))
+        clock[0] += timedelta(seconds=61)
+        second = turn()
+        reclaimed = lease(status(message_id))
+        acked = http.post("/relay/deliveries/ack", json={
+            "delivery_id": second["deliveries"][0]["delivery_id"],
+            "claim_token": second["deliveries"][0]["claim_token"],
+            "container_ref": container,
+        })
+        assert acked.status_code == 200, acked.text
+        delivered = status(message_id)
+        moved = turn(
+            container_ref=remapped, previous_container_ref=container,
+            previous_endpoint_id=registered["endpoint_id"],
+            previous_scope_generation=registered["scope_generation"],
+        )["session"]
+        clock[0] = start
+
+        def shape(result: dict) -> tuple:
+            return (
+                [(d["payload"], d["state"], d["attempts"]) for d in result["deliveries"]],
+                result["has_more"], result["remaining_count"],
+            )
+
+        return [
+            registered["scope_generation"], shape(first), claimed, shape(second), reclaimed,
+            (delivered["state"], delivered["attempts"]), acked.json().get("state"),
+            (moved["container_ref"], moved["endpoint_id"] == registered["endpoint_id"],
+             moved["scope_generation"]),
+        ]
+
+    assert lifecycle("eq-flagged", {"claude_turn_admission": "none"}) == lifecycle("eq-plain", {})
+
+
+def test_ambiguous_busy_after_newer_idle_leaves_lease_custody(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A Stop busy POST landing after the newer idle intent is refused; nothing is emitted or ACKed."""
+    from itertools import count
+
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+    import core.claude_wake as wake_registry_module
+    from app.config import AppConfig
+    from app.main import create_app
+    from core.relay import RelayService
+    from storage.vector_index import VectorIndexConfig
+    from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    registry_time = SimpleNamespace(**vars(wake_registry_module.time))
+    registry_time.monotonic = count(step=.001).__next__
+    monkeypatch.setattr(wake_registry_module, "time", registry_time)
+    clock = _controlled_relay_clock(monkeypatch)
+    scope = {"container_ref": PAYLOAD["container_ref"]}
+    session = "ambiguous-busy"
+    monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(tmp_path / "wake"))
+    transport_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "app.claude_wake.claude_wake_transport",
+        lambda socket_path, token: transport_calls.append((socket_path, token)) or "accepted",
+    )
+    monkeypatch.setattr(main, "start_claude_wake_reconciler", lambda *_args, **_kwargs: None)
+    config = AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    )
+    with TestClient(create_app(config), client=("127.0.0.1", 50000)) as http:
+        registry = http.app.state.claude_wake_registry
+        relay = RelayService(http.app.state.pallium_service._storage)
+        relay.turn(runtime="codex", session_ref="sender", **scope)
+        relay.turn(runtime="claude-code", session_ref=session, **scope)
+        sent = relay.send(
+            sender_runtime="codex", sender_session_ref="sender",
+            recipient=f"claude-code:{session}", payload="held busy", **scope,
+        )
+
+        stop = _load_claude_hook("stop", monkeypatch)
+        common = sys.modules["common"]
+        monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", tmp_path / "wake")
+        monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", tmp_path / "wake" / "intents")
+        monkeypatch.setitem(stop.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "hook-sessions")
+        monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
+        monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
+        monkeypatch.setattr(stop, "read_hook_input", lambda: {
+            "session_id": session, "cwd": str(tmp_path), "transcript_path": "",
+        })
+        intents: list[dict[str, object]] = []
+        held: list[dict[str, object]] = []
+        responses: list[tuple[str, int]] = []
+
+        def post(registration):
+            response = http.post("/internal/claude-wake/register", json=registration)
+            responses.append((registration["intent_id"], response.status_code))
+            return response.status_code == 204
+
+        def register(session_ref, container, *, idle=False):
+            registration = {
+                **PAYLOAD, "session_ref": session_ref, "container_ref": container,
+                "idle": idle, "intent_id": f"stop-{len(intents)}",
+            }
+            intents.append(registration)
+            assert common._write_wake_intent(registration)
+            if not idle:
+                held.append(registration)  # The busy POST times out client-side and lands later.
+                return False
+            return post(registration)
+
+        def relay_request(method, path, body, *, timeout):
+            response = http.request(method, path, json=body)
+            assert response.status_code == 200, response.text
+            return response.json() if response.content else None
+
+        emitted, acknowledged = [], []
+        monkeypatch.setattr(stop, "register_claude_wake", register)
+        monkeypatch.setattr(stop, "relay_request", relay_request)
+        monkeypatch.setattr(stop, "_emit_relay", lambda text: emitted.append(text))
+        monkeypatch.setattr(stop, "acknowledge_relay", lambda claimed, **_k: acknowledged.extend(claimed))
+
+        stop.main()  # Returns normally, without exit 2.
+        assert [item["idle"] for item in intents] == [True, False, True]
+        assert emitted == [] and acknowledged == []
+        assert responses == [("stop-0", 204), ("stop-2", 204)]
+
+        assert not post(held[0])  # The late busy loses to the newer idle intent.
+        assert responses[-1] == ("stop-1", 409)
+        scope_key = ("claude-code", session, scope["container_ref"])
+        assert registry._registrations[scope_key].state == "idle"
+
+        delivery = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+        assert (delivery["state"], delivery["attempts"]) == ("claimed", 1)
+        clock[0] += timedelta(seconds=61)
+        recovered = relay.turn(runtime="claude-code", session_ref=session, **scope)["deliveries"]
+        assert [item["delivery_id"] for item in recovered] == [delivery["delivery_id"]]
+        assert recovered[0]["attempts"] == 2
