@@ -80,21 +80,20 @@ For Linux symmetry, extend `_default_popen` to set `start_new_session=True` on P
 
 ### Phase 3 — Fix 2: Self-identifying probe
 
-**Changes:**
-- `app/supervisor.py`:
-  - Generate a launch nonce per spawn attempt: `secrets.token_urlsafe(16)`
-  - Pass via env var `PALLIUM_API_LAUNCH_TOKEN` to the child Popen.
-  - `_wait_for_api` reads `{home}/run/api_token` after TCP success; requires `{nonce, pid}` to match expected nonce. Falls back to TCP-only success after configurable grace period (default 10s) for compatibility — this preserves existing test behavior where the API doesn't write a token.
-- `app/main.py` (lifespan startup, line 169 area):
-  - If `PALLIUM_API_LAUNCH_TOKEN` env is set, write `{PALLIUM_HOME}/run/api_token` with `{nonce, pid: os.getpid()}` JSON.
-  - On lifespan shutdown, remove the file.
+The managed startup probe sends a fresh random challenge on each `/health`
+request. The outer app answers with a domain-separated HMAC under its launch
+nonce. The supervisor checks the proof on that exact response before it
+accepts readiness or a terminal initialization failure. The nonce stays in
+the supervisor and child environment; ordinary health requests are unchanged.
 
-**Tests (extend `tests/test_supervisor.py`):**
-- _wait_for_api succeeds when token file matches expected nonce
-- _wait_for_api keeps waiting when token file is missing (during grace period)
-- _wait_for_api falls back to TCP-only success after grace period if no env was set (back-compat)
-- _wait_for_api rejects token mismatch (foreign bind) and keeps waiting
-- existing supervisor tests still pass (they use `wait_for_api_fn=lambda *_, **__: True` which bypasses this entirely)
+The API still writes and removes `run/api_token` during its lifespan, but
+the atomic receipt contains only `{pid}`. Overlapping processes can overwrite
+or remove the shared file. It does not prove readiness, port ownership, or
+authority to kill. There is no file or grace fallback.
+
+The supervisor tests exercise proof validation and unchanged startup fences.
+The real-loopback bind-conflict test checks that an unbound replacement
+cannot borrow the older listener's health.
 
 ## Verification
 
@@ -109,8 +108,8 @@ For Linux symmetry, extend `_default_popen` to set `start_new_session=True` on P
 - `taskkill` race: process exits between Popen and taskkill — exit code 128 expected, treated as success.
 - `taskkill` blocks if target is in a kernel wait — `timeout=5.0` ensures supervisor loop doesn't stall.
 - POSIX `start_new_session=True` change affects signal forwarding for *interactive* runs (Ctrl+C from terminal won't naturally reach children). Acceptable: supervisor installs its own signal handlers and propagates via _kill_tree on shutdown.
-- Token file race: child writes after lifespan startup, but uvicorn binds before lifespan starts. So between bind and lifespan-write there is a window where TCP probe succeeds but token isn't written. The grace period covers this.
-- If `_wait_for_api` is called for a spawn that doesn't carry a launch token (back-compat / tests), it must not hang forever — fall back to TCP-only after grace.
+- The receipt is written before bind; a live child with a receipt can still fail to bind. Only the responding launch's proof establishes managed readiness.
+- Without an expected launch nonce, the direct probe still checks HTTP health, not just TCP.
 
 ## Out of Scope
 

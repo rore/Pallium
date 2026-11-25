@@ -260,7 +260,7 @@ try:
     code = run.run(['serve', '--host', host, '--port', str(port)])
 finally:
     token = Path(os.environ['PALLIUM_HOME']) / 'run' / 'api_token'
-    receipt = {'pid': os.getpid(), 'nonce': os.environ['PALLIUM_API_LAUNCH_TOKEN'],
+    receipt = {'pid': os.getpid(),
         'epoch': services[0].epoch if services else None,
         'listeners_settled': bool(services) and all(not item.thread.is_alive() for item in services),
         'unresolved': any(item.unresolved for item in services),
@@ -898,7 +898,7 @@ def test_terminal_owned_api_is_replaced_and_same_native_source_reenrolls(native_
         if result:
             child = kwargs["process"]
             token = json.loads((home / "run" / "api_token").read_text())
-            assert token == {"nonce": kwargs["expected_nonce"], "pid": child.pid}
+            assert token == {"pid": child.pid}
             deadline = time.monotonic() + 5
             while True:
                 try:
@@ -974,6 +974,7 @@ def test_terminal_owned_api_is_replaced_and_same_native_source_reenrolls(native_
         for child in processes:
             assert child.poll() == 0
             receipt = json.loads((directory / f"exit-{child.pid}.json").read_text())
+            assert receipt["pid"] == child.pid and "nonce" not in receipt
             assert receipt["listeners_settled"] and receipt["token_removed"] and not receipt["unresolved"]
             receipts.append(receipt)
         assert [receipt["terminal_notifications"] for receipt in receipts] == [1, 0]

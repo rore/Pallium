@@ -683,6 +683,7 @@ def test_api_rapid_restart_budget_triggers_shutdown():
 # ---------------------------------------------------------------------------
 
 import json as _json
+import hmac as _hmac
 import http.client as _http_client
 import socket as _socket
 import threading as _threading
@@ -690,6 +691,7 @@ import time as _time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 
+from app._startup_proof import CHALLENGE_HEADER, PROOF_HEADER
 from app.supervisor import (
     _probe_initialized_health,
     _wait_for_api,
@@ -723,138 +725,7 @@ def _stub_socket_factory(connect_results: list[bool]):
     return _FakeSocket
 
 
-def test_wait_for_api_succeeds_when_token_matches(tmp_path, monkeypatch):
-    """Token file with correct nonce → probe succeeds."""
-    nonce = "expected-token-xyz"
-    run_dir = tmp_path / "run"
-    run_dir.mkdir()
-    (run_dir / "api_token").write_text(_json.dumps({"nonce": nonce, "pid": 1234}), encoding="utf-8")
-
-    # TCP succeeds on first try
-    monkeypatch.setattr("socket.socket", _stub_socket_factory([True]))
-    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
-
-    times = iter([0.0, 0.1, 0.2])
-    clock = lambda: next(times, 0.5)
-
-    result = _wait_for_api(
-        "127.0.0.1", 19999,
-        timeout=10.0, sleep_fn=lambda _: None,
-        expected_nonce=nonce, run_dir=run_dir,
-        clock=clock,
-    )
-    assert result is True
-
-
-def test_wait_for_api_rejects_token_mismatch(tmp_path, monkeypatch):
-    """Token file with WRONG nonce (foreign bind) → must keep waiting,
-    never trust TCP, eventually timing out.
-
-    Note: a wrong-nonce file makes ``_check_token`` return False, which
-    routes around the grace path entirely. The test additionally sets a
-    high ``grace_period`` value as a defense-in-depth signal, but the
-    primary mechanism under test is the False return arming
-    ``foreign_bind_seen`` and barring any subsequent grace fallback.
-    """
-    run_dir = tmp_path / "run"
-    run_dir.mkdir()
-    (run_dir / "api_token").write_text(
-        _json.dumps({"nonce": "old-orphan-token", "pid": 9999}), encoding="utf-8"
-    )
-
-    # TCP always succeeds (orphan is bound)
-    monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 100))
-
-    # Tight clock so timeout fires fast
-    t = [0.0]
-    def clock():
-        v = t[0]
-        t[0] += 0.6
-        return v
-
-    result = _wait_for_api(
-        "127.0.0.1", 19999,
-        timeout=2.0, sleep_fn=lambda _: None,
-        expected_nonce="our-new-token", run_dir=run_dir,
-        grace_period=999.0,  # defense-in-depth; primary mechanism is False → foreign_bind_seen
-        clock=clock,
-    )
-    assert result is False, (
-        "must time out rather than accept a foreign bind whose token nonce differs"
-    )
-
-
-def test_wait_for_api_orphan_then_token_cleanup_must_not_grace_through(tmp_path, monkeypatch):
-    """REGRESSION — orphan held the port, then its lifespan finally deleted
-    the token file mid-probe. The probe must NOT grace-fallback to True
-    because a wrong-nonce was previously observed (orphan signature seen).
-
-    Without the foreign_bind_seen latch, the probe would: see wrong nonce,
-    keep waiting, see token file vanish (orphan cleanup), enter the
-    missing-token grace path, time out → return True for the orphan."""
-    run_dir = tmp_path / "run"
-    run_dir.mkdir()
-    token_file = run_dir / "api_token"
-
-    # Orphan token initially present
-    token_file.write_text(_json.dumps({"nonce": "orphan-token", "pid": 9999}), encoding="utf-8")
-
-    # TCP always succeeds (orphan stays bound)
-    monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 100))
-
-    # On the 3rd clock tick, simulate the orphan deleting its token file.
-    tick = [0]
-    deletion_armed = [False]
-    def clock():
-        v = tick[0] * 1.0
-        tick[0] += 1
-        if tick[0] >= 3 and not deletion_armed[0]:
-            deletion_armed[0] = True
-            try:
-                token_file.unlink()
-            except FileNotFoundError:
-                pass
-        return v
-
-    result = _wait_for_api(
-        "127.0.0.1", 19999,
-        timeout=20.0, sleep_fn=lambda _: None,
-        expected_nonce="our-new-token", run_dir=run_dir,
-        grace_period=2.0,
-        clock=clock,
-    )
-    assert result is False, (
-        "after seeing a foreign-nonce token, subsequent missing-token must NOT grace through"
-    )
-
-
-def test_wait_for_api_falls_back_after_grace_when_token_missing(tmp_path, monkeypatch):
-    """Missing-token grace still requires a healthy initialized HTTP response."""
-    run_dir = tmp_path / "run"
-    run_dir.mkdir()  # but no api_token file
-
-    monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 100))
-    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
-
-    # Each clock() call jumps far enough that grace period elapses on the
-    # second iteration after TCP starts succeeding.
-    t = [0.0]
-    def clock():
-        v = t[0]
-        t[0] += 6.0  # 0, 6, 12, 18, ...
-        return v
-
-    result = _wait_for_api(
-        "127.0.0.1", 19999,
-        timeout=60.0, sleep_fn=lambda _: None,
-        expected_nonce="some-token", run_dir=run_dir,
-        grace_period=10.0,
-        clock=clock,
-    )
-    assert result is True, "missing token + grace expired → should trust TCP"
-
-
-def test_wait_for_api_no_self_id_legacy_path(tmp_path, monkeypatch):
+def test_wait_for_api_no_self_id_legacy_path(monkeypatch):
     """Without a token identity, the legacy path still requires initialized HTTP."""
     monkeypatch.setattr("socket.socket", _stub_socket_factory([True]))
     monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
@@ -864,7 +735,7 @@ def test_wait_for_api_no_self_id_legacy_path(tmp_path, monkeypatch):
     assert result is True
 
 
-def test_wait_for_api_returns_false_when_process_dies(tmp_path, monkeypatch):
+def test_wait_for_api_returns_false_when_process_dies(monkeypatch):
     """If the spawned process exits, _wait_for_api must return False
     immediately rather than continuing to TCP-probe."""
     monkeypatch.setattr("socket.socket", _stub_socket_factory([False] * 100))
@@ -880,61 +751,23 @@ def test_wait_for_api_returns_false_when_process_dies(tmp_path, monkeypatch):
     assert result is False
 
 
-def test_wait_for_api_handles_corrupt_token_file(tmp_path, monkeypatch):
-    """Garbled token uses grace, then still requires initialized HTTP health."""
-    run_dir = tmp_path / "run"
-    run_dir.mkdir()
-    (run_dir / "api_token").write_text("not valid json {{{", encoding="utf-8")
-
-    monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 100))
-    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
-
-    t = [0.0]
-    def clock():
-        v = t[0]
-        t[0] += 6.0
-        return v
-
-    result = _wait_for_api(
-        "127.0.0.1", 19999,
-        timeout=60.0, sleep_fn=lambda _: None,
-        expected_nonce="x", run_dir=run_dir,
-        grace_period=10.0,
-        clock=clock,
-    )
-    assert result is True, "corrupt JSON → treated as absent, grace fallback applies"
-
-
-@pytest.mark.parametrize("identity", ["nonce", "legacy", "grace", "corrupt_grace"])
-def test_wait_for_api_requires_initialized_http_after_tcp(identity, tmp_path, monkeypatch):
-    """TCP plus any existing identity route is insufficient while HTTP is initializing."""
-    run_dir = tmp_path / "run"
-    run_dir.mkdir()
-    kwargs = {}
-    if identity == "nonce":
-        nonce = "expected-token"
-        (run_dir / "api_token").write_text(_json.dumps({"nonce": nonce}), encoding="utf-8")
-        kwargs.update(expected_nonce=nonce, run_dir=run_dir)
-    elif identity in {"grace", "corrupt_grace"}:
-        if identity == "corrupt_grace":
-            (run_dir / "api_token").write_text("not json", encoding="utf-8")
-        kwargs.update(expected_nonce="missing-token", run_dir=run_dir, grace_period=0.0)
-
+@pytest.mark.parametrize("nonce", [None, "managed-launch"])
+def test_wait_for_api_requires_initialized_http_after_tcp(nonce, monkeypatch):
     monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 10))
     probes = []
     monkeypatch.setattr(
         "app.supervisor._probe_initialized_health",
-        lambda *_args, **_kwargs: probes.append(True) or False,
+        lambda *_args, **kwargs: probes.append(kwargs["expected_nonce"]) or False,
         raising=False,
     )
     ticks = iter(range(100))
     result = _wait_for_api(
         "127.0.0.1", 19999, timeout=10.0, sleep_fn=lambda _: None,
-        clock=lambda: next(ticks) * 0.6, **kwargs,
+        clock=lambda: next(ticks) * 0.6, expected_nonce=nonce,
     )
 
     assert result is False
-    assert probes, "a TCP/ownership candidate must be checked through HTTP"
+    assert probes and all(probe == nonce for probe in probes)
 
 
 @pytest.mark.parametrize(
@@ -1041,7 +874,7 @@ def test_health_probe_enforces_total_deadline_on_trickled_http(phase):
 
 
 @pytest.mark.parametrize("fence", ["deadline", "stop", "process"])
-def test_wait_for_api_rechecks_fences_after_health_probe(fence, tmp_path, monkeypatch):
+def test_wait_for_api_rechecks_fences_after_health_probe(fence, monkeypatch):
     from types import SimpleNamespace
 
     elapsed = [0.0]
@@ -1061,27 +894,24 @@ def test_wait_for_api_rechecks_fences_after_health_probe(fence, tmp_path, monkey
     monkeypatch.setattr("socket.socket", _stub_socket_factory([True]))
     monkeypatch.setattr("app.supervisor._probe_initialized_health", accept_then_trip_fence)
     nonce = "owned-token"
-    (tmp_path / "api_token").write_text(_json.dumps({"nonce": nonce}), encoding="utf-8")
     result = _wait_for_api(
         "127.0.0.1", 19999, timeout=2.0, sleep_fn=lambda _: None,
         process=process, stop=stop, expected_nonce=nonce,
-        run_dir=tmp_path, clock=lambda: elapsed[0],
+        clock=lambda: elapsed[0],
     )
 
     assert result is False
 
 
 @pytest.mark.parametrize("scenario", [
-    "owned", "foreign", "missing", "legacy", "nonce_changed", "stopped", "exited",
-    "initializing", "degraded", "malformed",
+    "owned", "foreign", "missing", "legacy", "duplicate", "joined", "malformed_proof",
+    "replayed", "stopped", "exited", "deadline", "initializing", "degraded",
+    "ready", "initialized_not_ready", "malformed_health", "invalid_json",
 ])
-def test_wait_for_api_terminal_failure_requires_owned_nonce(scenario, tmp_path):
+def test_wait_for_api_interprets_health_only_after_same_response_proof(scenario):
     from types import SimpleNamespace
 
     nonce = "terminal-failure-owner"
-    token_path = tmp_path / "api_token"
-    if scenario not in {"missing", "legacy"}:
-        token_path.write_text(_json.dumps({"nonce": "foreign" if scenario == "foreign" else nonce}))
     health = {"status": "failed", "initialized": False, "ready": False,
               "initialization_error": "service_initialization_failed"}
     status_code = 503
@@ -1090,24 +920,44 @@ def test_wait_for_api_terminal_failure_requires_owned_nonce(scenario, tmp_path):
     elif scenario == "degraded":
         health = {"status": "degraded", "initialized": True, "ready": False}
         status_code = 200
-    elif scenario == "malformed":
+    elif scenario in {"ready", "replayed"}:
+        health = {"status": "ok", "initialized": True, "ready": True}
+        status_code = 200
+    elif scenario == "initialized_not_ready":
+        health = {"status": "initializing", "initialized": True, "ready": False}
+    elif scenario == "malformed_health":
         health["ready"] = True
     process = SimpleNamespace(returncode=None)
     process.poll = lambda: process.returncode
     stop = SimpleNamespace(requested=False)
-    elapsed, sleeps, requests = [0.0], [], []
+    elapsed, sleeps, requests, challenges = [0.0], [], [], []
 
     class HealthHandler(BaseHTTPRequestHandler):
         def do_GET(self):
             requests.append(self.path)
-            if scenario == "nonce_changed":
-                token_path.write_text(_json.dumps({"nonce": "replacement"}))
-            elif scenario == "stopped":
+            challenge = self.headers.get(CHALLENGE_HEADER)
+            challenges.append(challenge)
+            if scenario == "stopped":
                 stop.requested = True
             elif scenario == "exited":
                 process.returncode = 1
-            body = _json.dumps(health).encode()
+            elif scenario == "deadline":
+                elapsed[0] = 2.0
+            body = b"not JSON" if scenario == "invalid_json" else _json.dumps(health).encode()
+            if scenario == "replayed" and len(challenges) == 1:
+                # First obtain a valid proof for an actual prior request, but
+                # don't let its health body satisfy readiness.
+                body = b'{"status":"initializing","initialized":false}'
             self.send_response(status_code)
+            if challenge is not None and scenario != "missing":
+                signed = challenges[0] if scenario == "replayed" else challenge
+                key = "other-launch" if scenario == "foreign" else nonce
+                proof = _hmac.new(key.encode(), b"pallium:api-startup:v1\0" + bytes.fromhex(signed), "sha256").hexdigest()
+                self.send_header(PROOF_HEADER, {
+                    "malformed_proof": "é" * 64, "joined": f"{proof}, {proof}",
+                }.get(scenario, proof))
+                if scenario == "duplicate":
+                    self.send_header(PROOF_HEADER, proof)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -1123,20 +973,24 @@ def test_wait_for_api_terminal_failure_requires_owned_nonce(scenario, tmp_path):
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
+        success = scenario in {"ready", "degraded", "initialized_not_ready"}
         result = _wait_for_api(
             "127.0.0.1", server.server_port, timeout=2, sleep_fn=advance,
             process=process, stop=stop, expected_nonce=None if scenario == "legacy" else nonce,
-            run_dir=tmp_path, grace_period=0, clock=lambda: elapsed[0],
+            clock=lambda: elapsed[0],
         )
-        assert result is (scenario == "degraded")
-        if scenario == "owned":
+        assert result is success
+        assert requests and set(requests) == {"/health"}
+        if scenario == "legacy":
+            assert all(challenge is None for challenge in challenges)
+        else:
+            assert all(len(value) == 32 and bytes.fromhex(value).hex() == value for value in challenges)
+            assert len(set(challenges)) == len(challenges)
+        if scenario == "owned" or success:
             assert requests == ["/health"]
-            assert sleeps == [], "terminal owned failure must not consume the startup budget"
-        elif scenario == "degraded":
-            assert requests == ["/health"]
-            assert sleeps == []
-        elif scenario not in {"stopped", "exited"}:
-            assert elapsed[0] == 2, "unverified or nonterminal response must retain the wait policy"
+            assert sleeps == [], "accepted health must not consume the startup budget"
+        elif scenario not in {"stopped", "exited", "deadline"}:
+            assert sleeps and elapsed[0] == 2, "unverified or nonterminal response must retain the wait policy"
     finally:
         server.shutdown()
         server.server_close()
@@ -1154,7 +1008,7 @@ def test_generate_launch_token_is_unique():
         assert len(t) >= 16
 
 
-def test_start_api_with_retry_passes_unique_nonce_per_attempt(tmp_path):
+def test_start_api_with_retry_passes_unique_nonce_per_attempt():
     """Each retry attempt must mint a fresh nonce, and inject it as
     PALLIUM_API_LAUNCH_TOKEN into the child env."""
 
@@ -1185,7 +1039,6 @@ def test_start_api_with_retry_passes_unique_nonce_per_attempt(tmp_path):
         popen_factory=popen_factory,
         sleep_fn=lambda _: None,
         wait_for_api_fn=wait_fn,
-        run_dir=tmp_path,
         token_fn=gen_token,
     )
 
@@ -1195,7 +1048,7 @@ def test_start_api_with_retry_passes_unique_nonce_per_attempt(tmp_path):
     assert len(set(nonces)) == len(nonces), f"nonces must differ across attempts, got {nonces}"
 
 
-def test_start_api_with_retry_threads_nonce_to_wait_fn(tmp_path):
+def test_start_api_with_retry_threads_nonce_to_wait_fn():
     """The nonce supplied to popen env must be the same one passed to wait_for_api_fn."""
     seen = {}
 
@@ -1208,9 +1061,8 @@ def test_start_api_with_retry_threads_nonce_to_wait_fn(tmp_path):
         seen["env_nonce"] = kwargs.get("env", {}).get("PALLIUM_API_LAUNCH_TOKEN")
         return _AlivePopen()
 
-    def wait_fn(host, port, *, expected_nonce=None, run_dir=None, **kw):
+    def wait_fn(host, port, *, expected_nonce=None, **kw):
         seen["wait_nonce"] = expected_nonce
-        seen["wait_run_dir"] = run_dir
         return True
 
     _start_api_with_retry(
@@ -1218,7 +1070,6 @@ def test_start_api_with_retry_threads_nonce_to_wait_fn(tmp_path):
         popen_factory=popen_factory,
         sleep_fn=lambda _: None,
         wait_for_api_fn=wait_fn,
-        run_dir=tmp_path,
         token_fn=lambda: "fixed-nonce-abc",
     )
 
@@ -1226,10 +1077,9 @@ def test_start_api_with_retry_threads_nonce_to_wait_fn(tmp_path):
     assert seen["wait_nonce"] == "fixed-nonce-abc", (
         "wait_for_api must receive the same nonce that was injected into child env"
     )
-    assert seen["wait_run_dir"] == tmp_path
 
 
-def test_start_api_with_retry_kills_alive_unverified_proc(tmp_path, monkeypatch):
+def test_start_api_with_retry_kills_alive_unverified_proc(monkeypatch):
     """REGRESSION — when wait_for_api returns False but the process is still
     alive (e.g. foreign bind held the port for the whole probe window), the
     retry path must kill the proc rather than hand the supervisor an
@@ -1261,7 +1111,6 @@ def test_start_api_with_retry_kills_alive_unverified_proc(tmp_path, monkeypatch)
         popen_factory=popen_factory,
         sleep_fn=lambda _: None,
         wait_for_api_fn=wait_fn,
-        run_dir=tmp_path,
         token_fn=lambda: "tk",
     )
 
@@ -1277,15 +1126,12 @@ def test_start_api_with_retry_kills_alive_unverified_proc(tmp_path, monkeypatch)
 
 
 @pytest.mark.parametrize("scenario", ["slow_ready", "timeout", "foreign", "stopped", "dead"])
-def test_startup_budget_preserves_real_probe_fencing(tmp_path, monkeypatch, caplog, scenario):
+def test_startup_budget_preserves_real_probe_fencing(monkeypatch, caplog, scenario):
     from types import SimpleNamespace
 
     elapsed = [0.0]
     stop = SimpleNamespace(requested=False)
     nonce = "private-test-nonce"
-    (tmp_path / "api_token").write_text(
-        _json.dumps({"nonce": "foreign" if scenario == "foreign" else nonce}), encoding="utf-8",
-    )
     process = SimpleNamespace(pid=123, returncode=1 if scenario == "dead" else None)
     process.poll = lambda: process.returncode
     spawned, killed, budgets, durations = [], [], [], []
@@ -1316,13 +1162,13 @@ def test_startup_budget_preserves_real_probe_fencing(tmp_path, monkeypatch, capl
         return result
 
     monkeypatch.setattr("socket.socket", ProbeSocket)
-    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: scenario != "foreign")
     monkeypatch.setattr("app.supervisor._kill_tree", lambda proc, **_kw: killed.append(proc))
     caplog.set_level("INFO")
     result = _start_api_with_retry(
         ["unused"], "127.0.0.1", 19999, popen_factory=spawn,
         sleep_fn=lambda _delay: None, wait_for_api_fn=wait, stop=stop,
-        run_dir=tmp_path, token_fn=lambda: nonce,
+        token_fn=lambda: nonce,
     )
     assert budgets == [120.0] * len(spawned)
     assert nonce not in caplog.text

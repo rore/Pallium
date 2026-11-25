@@ -1992,6 +1992,7 @@ async def test_production_failure_keeps_outer_launch_token_for_supervisor(
     from types import SimpleNamespace
     import httpx
     from app import main, supervisor
+    from app._startup_proof import CHALLENGE_HEADER, PROOF_HEADER
 
     home, nonce = tmp_path / "home", "private-launch-owner"
     monkeypatch.setenv("PALLIUM_HOME", str(home))
@@ -2041,17 +2042,29 @@ async def test_production_failure_keeps_outer_launch_token_for_supervisor(
             assert closed == [storage], "failed initialization must close storage before fallback"
             assert health.status_code == 503 and body["initialized"] is False and body["ready"] is False
             assert token.is_file(), "inner failure removed the live outer launch token"
-            assert json.loads(token.read_text(encoding="utf-8")) == {"nonce": nonce, "pid": os.getpid()}
+            assert json.loads(token.read_text(encoding="utf-8")) == {"pid": os.getpid()}
             assert writes == [token], "production inner must not overwrite the outer token"
             requests = []
+            loop = asyncio.get_running_loop()
+
+            async def signed_health(challenge):
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=application), base_url="http://test",
+                ) as probe:
+                    return await probe.get("/health", headers={CHALLENGE_HEADER: challenge})
 
             class FailedHealth(BaseHTTPRequestHandler):
                 def do_GET(self):
                     requests.append(self.path)
-                    self.send_response(health.status_code)
-                    self.send_header("Content-Length", str(len(health.content)))
+                    result = asyncio.run_coroutine_threadsafe(
+                        signed_health(self.headers[CHALLENGE_HEADER]), loop,
+                    ).result(timeout=5)
+                    self.send_response(result.status_code)
+                    if PROOF_HEADER in result.headers:
+                        self.send_header(PROOF_HEADER, result.headers[PROOF_HEADER])
+                    self.send_header("Content-Length", str(len(result.content)))
                     self.end_headers()
-                    self.wfile.write(health.content)
+                    self.wfile.write(result.content)
 
                 def log_message(self, *_args):
                     pass
@@ -2068,7 +2081,7 @@ async def test_production_failure_keeps_outer_launch_token_for_supervisor(
                 assert await asyncio.to_thread(
                     supervisor._wait_for_api, "127.0.0.1", server.server_port,
                     timeout=120, sleep_fn=no_startup_sleep, process=SimpleNamespace(poll=lambda: None),
-                    expected_nonce=nonce, run_dir=home / "run",
+                    expected_nonce=nonce,
                 ) is False
                 assert requests == ["/health"]
                 assert token.is_file()
@@ -2129,7 +2142,7 @@ async def test_eager_lifespan_owns_and_removes_launch_token(
         if failure_phase == "none":
             async with inner.router.lifespan_context(inner):
                 assert token.is_file()
-                assert json.loads(token.read_text(encoding="utf-8")) == {"nonce": nonce, "pid": os.getpid()}
+                assert json.loads(token.read_text(encoding="utf-8")) == {"pid": os.getpid()}
         else:
             with pytest.raises(RuntimeError) as error:
                 async with inner.router.lifespan_context(inner):
@@ -2140,3 +2153,45 @@ async def test_eager_lifespan_owns_and_removes_launch_token(
         assert closed == [storage], "eager cleanup must close storage before fallback"
     finally:
         await asyncio.to_thread(inner.state._close_constructed)
+
+
+@pytest.mark.parametrize("managed, challenges, signed", [
+    (False, ["ab" * 16], False),
+    (True, [], False),
+    (True, ["ab" * 16], True),
+    (True, ["ab" * 16, "ab" * 16], False),
+    (True, ["ab" * 16 + "," + "ab" * 16], False),
+    (True, ["AB" * 16], False),
+    (True, ["ab" * 15 + "a"], False),
+    (True, ["ab" * 16 + "a"], False),
+    (True, ["00" * 15 + "g0"], False),
+    (True, [""], False),
+])
+def test_outer_health_proof_requires_one_valid_challenge_and_captured_nonce(
+    monkeypatch, managed, challenges, signed,
+):
+    import hmac
+    from app.main import app
+    from app._startup_proof import CHALLENGE_HEADER, PROOF_HEADER
+
+    nonce = "private-managed-launch"
+    monkeypatch.delenv("PALLIUM_API_RELAY_EXPIRY_DATABASE_URL", raising=False)
+    if managed:
+        monkeypatch.setenv("PALLIUM_API_LAUNCH_TOKEN", nonce)
+    else:
+        monkeypatch.delenv("PALLIUM_API_LAUNCH_TOKEN", raising=False)
+    # Without lifespan, the outer app alone supplies startup health.
+    application = app()
+    monkeypatch.setenv("PALLIUM_API_LAUNCH_TOKEN", "changed-after-factory")
+    with contextlib.closing(TestClient(application)) as client:
+        plain = client.get("/health")
+        assert PROOF_HEADER not in plain.headers and plain.status_code == 503
+        response = client.get("/health", headers=[(CHALLENGE_HEADER, value) for value in challenges])
+    assert (response.status_code, response.json()) == (plain.status_code, plain.json())
+    if signed:
+        expected = hmac.new(nonce.encode(), b"pallium:api-startup:v1\0" + bytes.fromhex(challenges[0]),
+                            "sha256").hexdigest()
+        assert response.headers.get_list(PROOF_HEADER) == [expected]
+    else:
+        assert PROOF_HEADER not in response.headers
+    assert nonce not in response.text and nonce not in str(response.headers)

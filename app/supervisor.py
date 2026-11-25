@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import http.client
 import json
 import os
@@ -15,6 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import IO
 
+from app._startup_proof import CHALLENGE_HEADER, PROOF_HEADER, startup_proof
 from app.config import AppConfig
 from app.runtime_logging import emit_runtime_log
 from app.signal_context import graceful_stop
@@ -196,16 +198,22 @@ _API_HEALTH_BODY_MAX_BYTES = 64 * 1024
 
 
 def _probe_initialized_health(
-    host: str, port: int, timeout: float, *, fail_fast: bool = False,
+    host: str, port: int, timeout: float, *, expected_nonce: str | None = None, fail_fast: bool = False,
 ) -> bool | None:
-    """Accept initialized health; optionally distinguish terminal startup failure."""
+    """Check the responding launch before interpreting its managed health."""
     if timeout <= 0:
         return False
     deadline = time.monotonic() + timeout
     connection = http.client.HTTPConnection(host, port, timeout=timeout)
     watchdog: threading.Timer | None = None
     try:
-        connection.request("GET", "/health")
+        expected_proof = None
+        if expected_nonce is None:
+            connection.request("GET", "/health")
+        else:
+            challenge = secrets.token_hex(16)
+            expected_proof = startup_proof(expected_nonce, challenge)
+            connection.request("GET", "/health", headers={CHALLENGE_HEADER: challenge})
         remaining = deadline - time.monotonic()
         probe_socket = connection.sock
         if remaining <= 0 or probe_socket is None:
@@ -228,6 +236,11 @@ def _probe_initialized_health(
         timer.start()
         watchdog = timer
         response = connection.getresponse()
+        if expected_nonce is not None:
+            proofs = response.headers.get_all(PROOF_HEADER, [])
+            if (expected_proof is None or len(proofs) != 1 or not proofs[0].isascii()
+                    or not hmac.compare_digest(proofs[0], expected_proof)):
+                return False
         body = response.read(_API_HEALTH_BODY_MAX_BYTES + 1)
         if len(body) > _API_HEALTH_BODY_MAX_BYTES:
             return False
@@ -274,34 +287,13 @@ def _wait_for_api(
     sleep_fn: Callable[[float], None] = time.sleep,
     process: subprocess.Popen | None = None,
     expected_nonce: str | None = None,
-    run_dir: Path | None = None,
     stop: object | None = None,
-    grace_period: float = 3.0,
     clock: Callable[[], float] = time.monotonic,
 ) -> bool:
-    """Block until the owned API reports initialized health, or timeout/crash.
-
-    Returns True if the API became ready, False if it exited or timed out.
-
-    When ``expected_nonce`` and ``run_dir`` are provided, the probe goes
-    beyond a TCP connection check: after the port accepts, it reads
-    ``{run_dir}/api_token`` and verifies the JSON ``nonce`` matches the value
-    we passed via ``PALLIUM_API_LAUNCH_TOKEN``. This rejects orphan
-    "previous-generation" processes that are still bound to the port from a
-    prior supervisor run.
-
-    The grace period exists to cover the small window between uvicorn's port
-    bind and the lifespan startup writing the token (typically sub-second).
-    It is **disabled** the moment we see any wrong-nonce token during the
-    probe, because that proves a foreign process is bound — and an orphan
-    racing its own lifespan-finally cleanup could otherwise launder a stale
-    bind into a successful probe via the missing-file path.
-    """
+    """Wait for initialized health, requiring same-response proof for managed launches."""
     import socket as _socket
 
     deadline = clock() + timeout
-    tcp_first_seen: float | None = None
-    foreign_bind_seen = False
     while clock() < deadline:
         if stop is not None and getattr(stop, "requested", False):
             return False
@@ -315,43 +307,18 @@ def _wait_for_api(
             sleep_fn(0.5)
             continue
 
-        # TCP succeeded; preserve the token/legacy/grace ownership gate first.
-        verified_owned = False
-        if expected_nonce is None or run_dir is None:
-            candidate = True  # legacy / no self-id requested
-        else:
-            token_match = _check_token(run_dir / "api_token", expected_nonce)
-            candidate = token_match is True
-            verified_owned = candidate and process is not None and process.poll() is None
-            if token_match is False:
-                # Never let a later missing token launder a foreign bind through grace.
-                foreign_bind_seen = True
-            elif not candidate and not foreign_bind_seen:
-                now = clock()
-                if tcp_first_seen is None:
-                    tcp_first_seen = now
-                else:
-                    candidate = now - tcp_first_seen >= grace_period
-
-        if candidate:
-            remaining = deadline - clock()
-            health = (
-                _probe_initialized_health(host, port, min(1.0, remaining), fail_fast=verified_owned)
-                if remaining > 0 else False
-            )
-            if health is None and verified_owned:
-                if (
-                    clock() < deadline
-                    and not (stop is not None and getattr(stop, "requested", False))
-                    and process.poll() is None
-                    and _check_token(run_dir / "api_token", expected_nonce) is True
-                ):
-                    return False
-            if health:
-                # HTTP can block; recheck every startup fence before accepting.
-                if clock() < deadline and not (stop is not None and getattr(stop, "requested", False)):
-                    if process is None or process.poll() is None:
-                        return True
+        fail_fast = expected_nonce is not None and process is not None and process.poll() is None
+        remaining = deadline - clock()
+        health = (
+            _probe_initialized_health(host, port, min(1.0, remaining),
+                                      expected_nonce=expected_nonce, fail_fast=fail_fast)
+            if remaining > 0 else False
+        )
+        if health or (health is None and fail_fast):
+            # HTTP can block; recheck every fence before accepting success or terminal failure.
+            if clock() < deadline and not (stop is not None and getattr(stop, "requested", False)):
+                if process is None or process.poll() is None:
+                    return health is True
         remaining = deadline - clock()
         if remaining <= 0:
             return False
@@ -359,37 +326,8 @@ def _wait_for_api(
     return False
 
 
-def _check_token(token_path: Path, expected_nonce: str) -> bool | None:
-    """Return True if token file matches, False on mismatch, None if absent/unreadable.
-
-    Reads the file directly without a prior ``exists()`` check to avoid TOCTOU
-    on Windows where atomic ``os.replace`` can swap the file between checks.
-    Any read failure (FileNotFoundError, partial JSON, permission error) is
-    treated uniformly as "absent" so the caller's grace-period logic governs.
-    """
-    try:
-        data = json.loads(token_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, ValueError):
-        return None
-    if not isinstance(data, dict):
-        return False
-    return data.get("nonce") == expected_nonce
-
-
 _API_START_MAX_ATTEMPTS = 5
 _API_START_BACKOFF_SECONDS = 2.0
-
-
-def _pallium_run_dir() -> Path:
-    """Resolve the runtime directory where the API writes its launch token.
-
-    Uses ``PALLIUM_HOME`` if set, otherwise falls back to ``~/.pallium``.
-    Both supervisor and child API process compute this identically — they
-    inherit the same environment.
-    """
-    home_env = os.environ.get("PALLIUM_HOME")
-    home = Path(home_env) if home_env else Path.home() / ".pallium"
-    return home / "run"
 
 
 def _generate_launch_token() -> str:
@@ -417,7 +355,6 @@ def _start_api_with_retry(
     sleep_fn: Callable[[float], None] = time.sleep,
     wait_for_api_fn: Callable[..., bool] = _wait_for_api,  # pass lambda *_, **__: True in tests
     stop: object | None = None,
-    run_dir: Path | None = None,
     token_fn: Callable[[], str] = _generate_launch_token,
     relay_expiry_database_url: str | None = None,
 ) -> subprocess.Popen | None:
@@ -425,13 +362,8 @@ def _start_api_with_retry(
 
     Each attempt mints a fresh launch token via ``token_fn`` and exports it as
     ``PALLIUM_API_LAUNCH_TOKEN`` to the child environment. ``wait_for_api_fn``
-    receives ``expected_nonce`` and ``run_dir`` so it can refuse to mistake an
-    orphan from a prior generation for our new child. The token is also
-    threaded through retries so a stale token from a crashed previous attempt
-    can never be confused for the next one.
+    receives ``expected_nonce`` so it can verify the responding launch.
     """
-    if run_dir is None:
-        run_dir = _pallium_run_dir()
     for attempt in range(1, _API_START_MAX_ATTEMPTS + 1):
         if stop is not None and getattr(stop, "requested", False):
             return None
@@ -445,14 +377,13 @@ def _start_api_with_retry(
         emit_runtime_log("supervisor", f"started api pid={proc.pid} host={host} port={port} attempt={attempt} budget_seconds={_API_START_TIMEOUT_SECONDS:.0f}")
         if wait_for_api_fn(
             host, port, timeout=_API_START_TIMEOUT_SECONDS, process=proc,
-            expected_nonce=nonce, run_dir=run_dir, stop=stop,
+            expected_nonce=nonce, stop=stop,
         ):
             emit_runtime_log("supervisor", f"api startup outcome=ready pid={proc.pid} attempt={attempt} elapsed_seconds={time.monotonic() - started:.3f}")
             return proc
         emit_runtime_log("supervisor", f"api startup outcome=unverified pid={proc.pid} attempt={attempt} elapsed_seconds={time.monotonic() - started:.3f}", stderr=True)
         # wait_for_api returned False. Two sub-cases:
-        #   (a) process is alive but probe failed (timeout, foreign bind,
-        #       missing token past grace). This may be slow startup or a
+        #   (a) process is alive but probe failed. This may be slow startup or a
         #       foreign bind; neither is verified readiness. Kill and retry
         #       only after the bounded startup allowance rather
         #       than handing the supervisor a child that will never serve.
