@@ -910,6 +910,10 @@ class RelayTurnRequest(BaseModel):
     previous_container_ref: str | None = Field(default=None, min_length=1, max_length=512)
     previous_endpoint_id: str | None = Field(default=None, min_length=1, max_length=128)
     previous_scope_generation: int | None = Field(default=None, ge=0)
+    claude_turn_admission: Literal["none"] | None = Field(
+        default=None,
+        description="Claude Stop hooks with a confirmed idle registration opt out of the post-turn busy stamp.",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -932,6 +936,8 @@ class RelayTurnRequest(BaseModel):
         values = (self.previous_container_ref, self.previous_endpoint_id, self.previous_scope_generation)
         if any(value is not None for value in values) and not all(value is not None for value in values):
             raise ValueError("previous_container_ref, previous_endpoint_id, and previous_scope_generation are required together")
+        if self.claude_turn_admission is not None and self.runtime != "claude-code":
+            raise ValueError("claude_turn_admission is supported only for Claude Code")
         if self.wake_delivery_id is not None:
             if self.runtime not in {"codex", "hermes"}:
                 raise ValueError("wake_delivery_id is supported only for Codex and Hermes")

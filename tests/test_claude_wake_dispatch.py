@@ -2418,8 +2418,15 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
             "registration_responses": registration_responses,
             "registration_failures": registration_failures,
         }
-        assert publication_results == [(f"stop-{index}", True) for index in range(3)], diagnostics
-        assert registration_responses[1:] == [(f"stop-{index}", 204) for index in (1, 2)], diagnostics
+        # A confirmed initial idle makes the delivering Stop confirm busy before emitting.
+        confirmed_idle = registration_responses[0] == ("stop-0", 204)
+        expected_idle = [True, False, True, True] if confirmed_idle else [True, True, True]
+        assert [registration["idle"] for registration in registrations] == expected_idle, diagnostics
+        count = len(expected_idle)
+        assert publication_results == [(f"stop-{index}", True) for index in range(count)], diagnostics
+        assert registration_responses[1:] == [
+            (f"stop-{index}", 204) for index in range(1, count)
+        ], diagnostics
         if registration_responses[0] == ("stop-0", 503):
             assert registration_failures == [(
                 "stop-0", {"detail": {"code": "relay_busy", "retryable": True}}, "1",
@@ -2429,7 +2436,6 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
             assert registration_failures == [], diagnostics
         assert [candidate["session_ref"] for candidate in candidates] == ["restart-target"], diagnostics
         assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])], diagnostics
-        assert all(registration["idle"] is True for registration in registrations)
         assert forced_refusals == (["stop-0"] if force_first_registration_refusal else [])
         assert registry._clock is real_monotonic and reconciler._clock is real_monotonic
         assert real_time.monotonic is real_monotonic
@@ -3205,3 +3211,89 @@ def test_router_codex_wake_registry_uses_isolated_sqlite_authority(
     )
     assert not registry._path.exists()
     assert registry._path.is_relative_to(tmp_path)
+
+
+def _real_turn_http(client, registry):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.dependencies import build_router
+
+    storage = client.app.state.pallium_service._storage
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service, relay_storage=storage, claude_wake_registry=registry,
+    ))
+    return TestClient(app, client=("127.0.0.1", 50000)), storage
+
+
+def _turn(http, **extra):
+    return http.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": PAYLOAD["session_ref"],
+        "container_ref": PAYLOAD["container_ref"], **extra,
+    })
+
+
+def test_late_opted_out_stop_turn_cannot_overwrite_newer_idle(
+    client, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A confirmed-idle Stop turn that outlives its hook must leave the session wakeable."""
+    registry = ClaudeWakeRegistry()
+    http, storage = _real_turn_http(client, registry)
+    idle = {**PAYLOAD, "idle": True}
+    assert http.post("/internal/claude-wake/register", json=idle).status_code == 204
+
+    native_turn = storage.relay_turn
+    entered, release = threading.Event(), threading.Event()
+
+    def held_turn(*args, **kwargs):
+        if kwargs.get("session_ref") == PAYLOAD["session_ref"]:
+            entered.set()
+            assert release.wait(5)
+        return native_turn(*args, **kwargs)
+
+    monkeypatch.setattr(storage, "relay_turn", held_turn)
+    statuses: list[int] = []
+    late = threading.Thread(
+        target=lambda: statuses.append(_turn(http, claude_turn_admission="none").status_code)
+    )
+    late.start()
+    try:
+        assert entered.wait(5)
+        # The hook timed out and registered idle again while its turn was in flight.
+        assert http.post("/internal/claude-wake/register", json=idle).status_code == 204
+    finally:
+        release.set()
+        late.join(5)
+    assert not late.is_alive() and statuses == [200]
+
+    scope = {key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}
+    result = registry.attempt(**scope, transport=lambda *_: True)
+    assert (result.outcome, result.reason) == ("accepted", "transport_accepted")
+
+
+def test_unflagged_claude_turn_still_marks_busy(client) -> None:
+    registry = ClaudeWakeRegistry()
+    http, _storage = _real_turn_http(client, registry)
+    scope = {key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}
+    assert http.post("/internal/claude-wake/register", json={**PAYLOAD, "idle": True}).status_code == 204
+
+    assert _turn(http, claude_turn_admission="none").status_code == 200
+    assert registry._registrations[tuple(scope.values())].state == "idle"
+    assert _turn(http).status_code == 200
+    assert registry._registrations[tuple(scope.values())].state == "busy"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"runtime": "codex", "claude_turn_admission": "none"},
+        {"runtime": "claude-code", "claude_turn_admission": "busy"},
+    ],
+)
+def test_claude_turn_admission_rejects_other_runtimes_and_values(client, body) -> None:
+    http, _storage = _real_turn_http(client, ClaudeWakeRegistry())
+    response = http.post("/relay/turn", json={
+        "session_ref": PAYLOAD["session_ref"], "container_ref": PAYLOAD["container_ref"], **body,
+    })
+    assert response.status_code == 422

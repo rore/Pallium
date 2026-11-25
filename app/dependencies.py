@@ -886,6 +886,10 @@ def build_router(
                     registry=codex_registry,
                 )
         elif request.get("runtime") == "claude-code":
+            # A Stop hook that confirmed idle before this turn owns the busy
+            # transition itself; a late stamp here would overwrite its idle.
+            if request.get("claude_turn_admission") == "none":
+                return
             registry.mark_busy(
                 runtime="claude-code",
                 session_ref=session_ref,

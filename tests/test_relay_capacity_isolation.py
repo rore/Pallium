@@ -1952,6 +1952,7 @@ def test_closed_loop_cleanup_drains_before_storage_close_on_callback_entry_asser
         # actor_ref is an ignored HTTP extra, not part of the existing turn schema.
         assert "actor_ref" not in request_data
         request_data.pop("claim_expires_at_ms")
+        request_data.pop("claude_turn_admission")
         request_data["exact_delivery_id"] = request_data.pop("wake_delivery_id")
         prepared = native_turn(**request_data)
         assert prepared["session"]["runtime"] == identity["runtime"]

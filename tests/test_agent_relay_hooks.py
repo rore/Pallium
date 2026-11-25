@@ -3158,7 +3158,7 @@ def test_claude_stop_emits_rendered_subset_before_ack(monkeypatch):
     assert stopped.value.code == 2
     assert calls == [("POST", "/relay/turn", {
         "runtime": "claude-code", "session_ref": "target", "container_ref": "git:example/repo",
-        "max_chars": 2360,
+        "max_chars": 2360, "claude_turn_admission": "none",
     }, 0.75)]
     assert [event[0] for event in events] == ["emit", "ack"]
     output = events[0][1]
@@ -3175,6 +3175,109 @@ def test_claude_stop_emits_rendered_subset_before_ack(monkeypatch):
     assert formatted == [
         (deliveries, {"budget_chars": 2400, "remaining_count": 1}),
     ]
+
+
+def _claude_stop_with_delivery(monkeypatch, name, registration_results):
+    hook = _load(name, "integrations/claude-code/hooks/stop.py")
+    events, payloads = [], []
+    results = iter(registration_results)
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": ".", "session_id": "target"})
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(
+        hook, "register_claude_wake",
+        lambda *_a, **kwargs: events.append(("register", kwargs["idle"])) or next(results),
+    )
+    monkeypatch.setattr(
+        hook, "relay_request",
+        lambda _m, _p, payload, **_k: payloads.append(payload) or _turn_response([DELIVERY]),
+    )
+    monkeypatch.setattr(hook, "_emit_relay", lambda _text: events.append(("emit",)))
+    monkeypatch.setattr(
+        hook, "acknowledge_relay", lambda claimed, **_k: events.append(("ack",)) or claimed,
+    )
+    return hook, events, payloads
+
+
+def test_claude_stop_confirms_busy_before_emitting_opted_out_turn(monkeypatch):
+    hook, events, payloads = _claude_stop_with_delivery(
+        monkeypatch, "claude_stop_busy_first", [True, True],
+    )
+    with pytest.raises(SystemExit) as stopped:
+        hook.main()
+    assert stopped.value.code == 2
+    assert payloads[0]["claude_turn_admission"] == "none"
+    assert events == [("register", True), ("register", False), ("emit",), ("ack",)]
+
+
+@pytest.mark.parametrize("busy_result", [False, None])
+def test_claude_stop_leaves_lease_when_busy_is_unconfirmed(monkeypatch, busy_result):
+    hook, events, _payloads = _claude_stop_with_delivery(
+        monkeypatch, "claude_stop_busy_unconfirmed", [True, busy_result, True],
+    )
+    hook.main()  # No exit 2: no emit, no ACK; the claim lease returns the delivery.
+    assert events == [("register", True), ("register", False), ("register", True)]
+
+
+@pytest.mark.parametrize("idle_result", [False, None])
+def test_claude_stop_without_confirmed_idle_keeps_legacy_turn(monkeypatch, idle_result):
+    hook, events, payloads = _claude_stop_with_delivery(
+        monkeypatch, "claude_stop_legacy", [idle_result],
+    )
+    with pytest.raises(SystemExit) as stopped:
+        hook.main()
+    assert stopped.value.code == 2
+    assert "claude_turn_admission" not in payloads[0]
+    assert events == [("register", True), ("emit",), ("ack",)]
+
+
+def test_claude_stop_without_deliveries_flags_turn_and_ends_idle(monkeypatch):
+    hook, events, payloads = _claude_stop_with_delivery(
+        monkeypatch, "claude_stop_empty_flagged", [True, True],
+    )
+    monkeypatch.setattr(hook, "relay_request", lambda _m, _p, payload, **_k: payloads.append(payload) or _turn_response([]))
+    hook.main()
+    assert payloads[0]["claude_turn_admission"] == "none"
+    assert events == [("register", True), ("register", True)]
+
+
+def test_claude_stop_output_failure_after_confirmed_busy_ends_idle_without_ack(monkeypatch):
+    hook, events, _payloads = _claude_stop_with_delivery(
+        monkeypatch, "claude_stop_busy_emit_failure", [True, True, True],
+    )
+    monkeypatch.setattr(hook, "_emit_relay", lambda _text: (_ for _ in ()).throw(OSError("closed")))
+    hook.main()  # No exit 2 and no ACK; the claim lease returns the delivery.
+    assert events == [("register", True), ("register", False), ("register", True)]
+
+
+def test_claude_turn_admission_rides_every_remap_request(monkeypatch, tmp_path: Path):
+    common = _load("claude_turn_admission_remap", "integrations/claude-code/hooks/common.py")
+    state_dir = tmp_path / "sessions"
+    state_dir.mkdir()
+    monkeypatch.setattr(common, "SESSIONS_DIR", state_dir)
+    (state_dir / "remap-session.json").write_text(json.dumps({
+        "relay_turn_intent": {
+            "runtime": "claude-code", "source_container_ref": None,
+            "destination_container_ref": "git:middle/repo", "endpoint_id": None,
+            "scope_generation": 0,
+        },
+    }), encoding="utf-8")
+    calls = []
+
+    def request(_method, _path, body, **_kwargs):
+        calls.append(body)
+        middle = body["container_ref"] == "git:middle/repo"
+        return _turn_response(
+            [], container_ref=body["container_ref"],
+            endpoint_id="relay-session-remap", scope_generation=0 if middle else 1,
+        )
+
+    assert common.relay_turn(
+        "claude-code", "remap-session", "git:new/repo",
+        request=request, claude_turn_admission="none",
+    )
+    assert [body["container_ref"] for body in calls] == ["git:middle/repo", "git:new/repo"]
+    assert all(body["claude_turn_admission"] == "none" for body in calls)
 
 
 def test_claude_stop_invalid_scope_never_claims(monkeypatch):

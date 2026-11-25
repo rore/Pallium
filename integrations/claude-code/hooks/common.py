@@ -2688,6 +2688,7 @@ def relay_turn(
     register_session: bool = True,
     deadline: HookDeadline | None = None,
     request: Callable[..., dict[str, Any] | list[Any] | None] | None = None,
+    claude_turn_admission: str | None = None,
 ) -> dict[str, Any] | None:
     """Serialize a turn, recover durable intent, and confirm its exact scope."""
     sid = _safe_session_id(session_ref if isinstance(session_ref, str) else None)
@@ -2836,6 +2837,8 @@ def relay_turn(
                 payload["structural_work_refs"] = structural_work_refs
             if register_session is not True:
                 payload["register_session"] = register_session
+            if claude_turn_admission is not None:
+                payload["claude_turn_admission"] = claude_turn_admission
             source = turn_intent.get("source_container_ref")
             endpoint = turn_intent.get("endpoint_id")
             generation = turn_intent.get("scope_generation")
