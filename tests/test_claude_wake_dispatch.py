@@ -3289,6 +3289,10 @@ def test_unflagged_claude_turn_still_marks_busy(client) -> None:
     [
         {"runtime": "codex", "claude_turn_admission": "none"},
         {"runtime": "claude-code", "claude_turn_admission": "busy"},
+        {
+            "runtime": "claude-code", "claude_turn_admission": "none",
+            "wake_delivery_id": "relay-delivery-" + "0" * 32,
+        },
     ],
 )
 def test_claude_turn_admission_rejects_other_runtimes_and_values(client, body) -> None:
