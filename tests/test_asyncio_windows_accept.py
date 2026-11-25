@@ -66,6 +66,10 @@ class _FakeFuture:
     def add_done_callback(self, cb):
         self._callbacks.append(cb)
 
+    def finish(self):
+        for callback in self._callbacks:
+            callback(self)
+
 
 class _FakeProactor:
     def __init__(self):
@@ -226,8 +230,148 @@ def test_apply_patch_is_idempotent():
     assert getattr(proactor_events.BaseProactorEventLoop, _PATCH_APPLIED_ATTR) is True
 
 
+def _winerror64(errno_value=errno.EINVAL):
+    return OSError(errno_value, "synthetic accept failure", None, 64)
+
+
+def test_abort_report_window_is_fixed_and_owned_by_listener(monkeypatch):
+    from asyncio import proactor_events
+    from app import asyncio_windows_accept as patch
+
+    _install_patch_clean()
+    now = 0.0
+    monkeypatch.setattr(patch, "monotonic", lambda: now)
+    fake = _FakeLoop()
+    fake._make_socket_transport = MagicMock()
+
+    def listen(fd):
+        sock = _FakeSock(fd)
+        proactor_events.BaseProactorEventLoop._start_serving(fake, object, sock)
+        callback, args = fake._call_soon_callbacks.pop()
+        callback(*args)
+        return sock
+
+    def finish(sock, error=None):
+        f = fake._accept_futures[sock.fileno()]
+        f._exc, f._result = error, (object(), None)
+        f.finish()
+        assert fake._accept_futures[sock.fileno()] is not f
+
+    first = listen(42)
+    other = listen(43)
+    initial = _winerror64()
+    finish(first, initial)
+    now = 1.0
+    finish(first, _winerror64())
+    finish(first)
+    finish(first, _winerror64())
+    finish(other, _winerror64())
+    assert fake._make_socket_transport.call_count == 1
+    first.close()
+    fresh = listen(42)
+    finish(fresh, _winerror64())
+    now = 10.999
+    finish(other, _winerror64())
+    finish(other, _winerror64())
+    assert len(fake._exception_messages) == 3  # Other listener's window began at 1.
+    now = 11.0
+    boundary = _winerror64()
+    finish(other, boundary)
+    now = 12.0
+    finish(other, _winerror64())
+    now = 21.0
+    finish(other, _winerror64())
+    reports = fake._exception_messages
+    assert len(reports) == 5
+    assert reports[0]["exception"] is initial
+    assert reports[3]["exception"] is boundary
+    assert "2 similar failures suppressed" in reports[3]["message"]
+    assert "1 similar failures suppressed" in reports[4]["message"]
+
+
+@pytest.mark.parametrize("stage", ["result", "protocol", "transport", "next-accept", "reschedule"])
+def test_other_errors_remain_visible_inside_abort_report_window(monkeypatch, stage):
+    from asyncio import proactor_events
+    from app import asyncio_windows_accept as patch
+
+    _install_patch_clean()
+    monkeypatch.setattr(patch, "monotonic", lambda: 0.0)
+    fake, sock = _FakeLoop(), _FakeSock()
+    error = OSError(errno.EINVAL, "other result failure") if stage == "result" else _winerror64()
+    factory = MagicMock(return_value=object())
+    fake._make_socket_transport = MagicMock()
+    proactor_events.BaseProactorEventLoop._start_serving(fake, factory, sock)
+    callback, args = fake._call_soon_callbacks.pop()
+    callback(*args)
+    first = fake._accept_futures[sock.fileno()]
+    first._exc = _winerror64()
+    first.finish()
+    second = fake._accept_futures[sock.fileno()]
+    second._result = (object(), None)
+
+    if stage == "result":
+        second._exc = error
+    elif stage == "protocol":
+        factory.side_effect = error
+    elif stage == "transport":
+        fake._make_socket_transport.side_effect = error
+    elif stage == "next-accept":
+        fake._proactor.accept = MagicMock(side_effect=[error, _FakeFuture()])
+    else:
+        second._exc = _winerror64()
+        fake._proactor.accept = MagicMock(side_effect=error)
+    second.finish()
+
+    reports = fake._exception_messages
+    assert len(reports) == 2 and reports[-1]["exception"] is error
+    assert sock.close_count == (stage == "reschedule")
+    if stage == "reschedule":
+        fake._proactor.accept.assert_called_once_with(sock)
+    else:
+        assert fake._accept_futures[sock.fileno()] is not second
+
+
+def test_synchronous_initial_winerror64_is_visible_and_rearms():
+    from asyncio import proactor_events
+
+    _install_patch_clean()
+    fake, sock = _FakeLoop(), _FakeSock()
+    error = _winerror64()
+    next_future = _FakeFuture()
+    fake._proactor.accept = MagicMock(side_effect=[error, next_future])
+    proactor_events.BaseProactorEventLoop._start_serving(fake, object, sock)
+    callback, args = fake._call_soon_callbacks.pop()
+    callback(*args)
+    assert fake._exception_messages[0]["exception"] is error
+    assert fake._accept_futures[sock.fileno()] is next_future and not sock.close_count
+
+
+@pytest.mark.parametrize("fatal_errno", [errno.EMFILE, errno.ENFILE, errno.ENOBUFS, errno.ENOMEM])
+def test_fatal_errno_takes_precedence_over_winerror64(monkeypatch, fatal_errno):
+    from asyncio import proactor_events
+    from app import asyncio_windows_accept as patch
+
+    _install_patch_clean()
+    monkeypatch.setattr(patch, "monotonic", lambda: 0.0)
+    fake, sock = _FakeLoop(), _FakeSock()
+    first = _FakeFuture(exc=_winerror64())
+    error = _winerror64()
+    error.errno = fatal_errno  # Windows maps errno from winerror in the constructor.
+    fatal = _FakeFuture(exc=error)
+    fake._proactor.queue_future(first)
+    fake._proactor.queue_future(fatal)
+    proactor_events.BaseProactorEventLoop._start_serving(fake, object, sock)
+    callback, args = fake._call_soon_callbacks.pop()
+    callback(*args)
+    first.finish()
+    fatal.finish()
+    assert sock.close_count == 1 and len(fake._proactor.accept_calls) == 2
+    assert fake._exception_messages[-1]["exception"] is error
+    assert "resource exhaustion" in fake._exception_messages[-1]["message"]
+
+
 def test_actual_windows_accept_failure_closes_peer_and_later_http_succeeds():
-    """A failed real AcceptEx completion must release its peer, not its listener."""
+    """Each failed completion releases its peer; burst diagnostics stay bounded."""
     _install_patch_clean()
 
     async def journey():
@@ -237,10 +381,10 @@ def test_actual_windows_accept_failure_closes_peer_and_later_http_succeeds():
         listener.listen()
         listener.setblocking(False)
         allocated, reports = [], []
-        reported = asyncio.Event()
+        aborts = 12
         original_register = loop._proactor._register
         original_socket = loop._proactor._get_accept_socket
-        injected = False
+        injected = 0
 
         def track(family):
             peer = original_socket(family)
@@ -248,18 +392,16 @@ def test_actual_windows_accept_failure_closes_peer_and_later_http_succeeds():
             return peer
 
         def register(operation, owner, complete):
-            nonlocal injected
-            if owner is listener and not injected:
-                injected = True
+            if owner is listener and injected < aborts:
                 def abort(*args):
-                    raise OSError(22, "private accept completion abort", None, 64)
+                    nonlocal injected
+                    injected += 1
+                    raise _winerror64()
                 complete = abort
             return original_register(operation, owner, complete)
 
         def handler(_, context):
             reports.append(context.get("message", ""))
-            if "listener kept alive" in context.get("message", ""):
-                reported.set()
 
         class HTTP(asyncio.Protocol):
             def connection_made(self, transport):
@@ -272,13 +414,13 @@ def test_actual_windows_accept_failure_closes_peer_and_later_http_succeeds():
         loop._proactor._register = register
         loop._proactor._get_accept_socket = track
         loop.set_exception_handler(handler)
-        first = server = None
+        server = writer = None
         try:
             server = await loop.create_server(HTTP, sock=listener)
             address = listener.getsockname()
-            first = socket.create_connection(address, timeout=1)
-            await asyncio.wait_for(reported.wait(), 3)
-            peer_closed = allocated[0].fileno() == -1
+            for _ in range(aborts):
+                with socket.create_connection(address, timeout=1):
+                    pass
             reader, writer = await asyncio.wait_for(asyncio.open_connection(*address), 3)
             writer.write(b"GET / HTTP/1.0\r\n\r\n")
             await writer.drain()
@@ -288,13 +430,14 @@ def test_actual_windows_accept_failure_closes_peer_and_later_http_succeeds():
             for _ in range(3):
                 gc.collect()
                 await asyncio.sleep(0)
-            assert injected and response.endswith(b"OK")
+            assert injected == aborts and response.startswith(b"HTTP/1.0 200") and response.endswith(b"OK")
+            assert listener.fileno() != -1
+            assert all(peer.fileno() == -1 for peer in allocated[:aborts])
             assert sum("listener kept alive" in value for value in reports) == 1
-            assert peer_closed, "failed accepted peer remained open after its completion"
             assert not any("Task exception was never retrieved" in value for value in reports)
         finally:
-            if first:
-                first.close()
+            if writer:
+                writer.close()
             if server:
                 server.close()
                 await server.wait_closed()
@@ -305,7 +448,7 @@ def test_actual_windows_accept_failure_closes_peer_and_later_http_succeeds():
             await asyncio.sleep(0)
 
     with asyncio.Runner(loop_factory=asyncio.ProactorEventLoop) as runner:
-        runner.run(journey())
+        runner.run(asyncio.wait_for(journey(), 8))
 
 
 @pytest.mark.parametrize("failure", ["construct", "accept", "register"])

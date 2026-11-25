@@ -43,6 +43,7 @@ import logging
 import socket
 import struct
 import sys
+from time import monotonic
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ _PATCH_APPLIED_ATTR = "_pallium_accept_patch_applied"
 # the way upstream does — running out of fds is fatal until something
 # releases pressure. Mirrors selector_events._accept_connection.
 _FATAL_ERRNOS = frozenset({errno.EMFILE, errno.ENFILE, errno.ENOBUFS, errno.ENOMEM})
+_ABORT_REPORT_INTERVAL_SECONDS = 10.0
 
 
 def apply_patch() -> bool:
@@ -109,10 +111,16 @@ def apply_patch() -> bool:
         ssl_handshake_timeout: Any = None,
         ssl_shutdown_timeout: Any = None,
     ) -> None:
+        next_abort_report = -float("inf")
+        suppressed_aborts = 0
+
         def loop(f: Any = None) -> None:
+            nonlocal next_abort_report, suppressed_aborts
+            reading_result = f is not None
             try:
                 if f is not None:
                     conn, addr = f.result()
+                    reading_result = False
                     if self._debug:
                         logger.debug(
                             "%r got a new connection from %r: %r", server, addr, conn
@@ -156,18 +164,25 @@ def apply_patch() -> bool:
                     })
                     sock.close()
                     return
-                # Transient per-connection failure — the failed peer's
-                # handshake aborted (typical: WinError 64
-                # ERROR_NETNAME_DELETED, WSAECONNRESET, WSAECONNABORTED).
-                # The LISTENING socket is fine; just log and re-schedule.
-                self.call_exception_handler({
-                    "message": (
-                        "Accept failed for a single connection "
-                        "(transient, listener kept alive)"
-                    ),
-                    "exception": exc,
-                    "socket": trsock.TransportSocket(sock),
-                })
+                message = "Accept failed for a single connection (transient, listener kept alive)"
+                report = True
+                if reading_result and getattr(exc, "winerror", None) == 64:
+                    # Bound synchronous logging, not accept attempts.
+                    now = monotonic()
+                    if now < next_abort_report:
+                        suppressed_aborts += 1
+                        report = False
+                    else:
+                        if suppressed_aborts:
+                            message += f"; {suppressed_aborts} similar failures suppressed"
+                        next_abort_report = now + _ABORT_REPORT_INTERVAL_SECONDS
+                        suppressed_aborts = 0
+                if report:
+                    self.call_exception_handler({
+                        "message": message,
+                        "exception": exc,
+                        "socket": trsock.TransportSocket(sock),
+                    })
                 try:
                     f = self._proactor.accept(sock)
                 except OSError as reschedule_exc:
