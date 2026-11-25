@@ -448,7 +448,7 @@ class SQLiteQueueMixin:
                 busy_backoff_seconds=0,
                 acquisition_deadline=deadline,
                 on_settled=settle_and_release,
-                _relay_diagnostic_owner=owner if type(owner) is dict and owner.get("operation") == "turn" else None,
+                _relay_diagnostic_owner=owner,
             ) as session:
                 observe_phase("transaction")
                 try:
@@ -636,28 +636,66 @@ class SQLiteQueueMixin:
                         raise busy_error(first_deadline_stage or "backoff_no_fit") from exc
                     time.sleep(pause)
         assert session is not None and conn is not None
+        owner = _relay_diagnostic_owner
+        turn_owner = owner if type(owner) is dict and owner.get("operation") == "turn" else None
         binding = None
         try:
-            if (type(_relay_diagnostic_owner) is dict and _relay_diagnostic_owner.get("active") is True
+            if (turn_owner is not None and turn_owner.get("active") is True
                     and _RELAY_DIAGNOSTIC_BINDING not in session.info):
-                binding = {"owner": _relay_diagnostic_owner, "connection": conn, "active": True}
+                binding = {"owner": turn_owner, "connection": conn, "active": True}
                 session.info[_RELAY_DIAGNOSTIC_BINDING] = binding
-            elif _relay_diagnostic_owner is not None:
-                _relay_diagnostic_owner["body_hook_state"] = "invalid"
+            elif turn_owner is not None:
+                turn_owner["body_hook_state"] = "invalid"
         except BaseException:
             try:
-                _relay_diagnostic_owner["body_hook_state"] = "invalid"
+                turn_owner["body_hook_state"] = "invalid"
             except BaseException:
                 pass
+
+        def settlement_call(phase, call, *args):
+            start = None
+            # The verb is set by the transaction body, not at acquisition.
+            try:
+                if (type(owner) is dict and owner.get("operation") == "opencode_wake"
+                        and _relay_opencode_verb(owner.get("opencode_verb")) == "enroll"):
+                    started = _relay_writer_monotonic_ns()
+                    if type(started) is int and started >= 0:
+                        # Publish a whole snapshot for contending threads.
+                        owner["enroll_settlement"] = {**owner.get("enroll_settlement", {}),
+                                                      phase: ("inflight", started, None)}
+                        start = started
+            except BaseException:
+                pass
+            state = "raised"
+            try:
+                call(*args)
+                state = "returned"
+            finally:
+                if start is not None:
+                    try:
+                        end = _relay_writer_monotonic_ns()
+                    except BaseException:
+                        end = None
+                    try:
+                        phases = dict(owner["enroll_settlement"])
+                        if type(end) is int and end >= start:
+                            phases[phase] = (state, start, end)
+                        else:
+                            # A missing end sample is not an in-flight call.
+                            del phases[phase]
+                        owner["enroll_settlement"] = phases
+                    except BaseException:
+                        pass
+
         settled = False
         try:
             yield session
-            session.flush()
-            conn.execute(text("COMMIT"))
+            settlement_call("flush", session.flush)
+            settlement_call("commit", conn.execute, text("COMMIT"))
             settled = True
         except BaseException:
             try:
-                conn.execute(text("ROLLBACK"))
+                settlement_call("rollback", conn.execute, text("ROLLBACK"))
             except Exception:
                 pass
             else:
@@ -672,8 +710,8 @@ class SQLiteQueueMixin:
                             del session.info[_RELAY_DIAGNOSTIC_BINDING]
                 except BaseException:
                     try:
-                        _relay_diagnostic_owner["body_hook_state"] = "invalid"
-                        _relay_diagnostic_owner["expiry_detail"] = None
+                        turn_owner["body_hook_state"] = "invalid"
+                        turn_owner["expiry_detail"] = None
                     except BaseException:
                         pass
                 if settled and on_settled is not None:

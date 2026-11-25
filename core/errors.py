@@ -48,6 +48,8 @@ _RELAY_EXPIRY_SITES = frozenset({
 })
 _RELAY_EXPIRY_FLAGS = frozenset({"flush_entered", "flush_returned", "cursor_entered", "cursor_returned"})
 _RELAY_OPENCODE_VERBS = frozenset({"enroll", "poll", "detach", "admitted", "terminal", "context", "unknown"})
+_RELAY_ENROLL_SETTLEMENT_PHASES = frozenset({"flush", "commit", "rollback"})
+_RELAY_ENROLL_SETTLEMENT_STATES = frozenset({"inflight", "returned", "raised"})
 _RELAY_OPENCODE_SITES = frozenset({
     "body_setup", "binding", "state_update", "anchor_lookup", "candidate_execute",
     "candidate_fetch", "candidate_validate", "response", "none",
@@ -199,7 +201,7 @@ def _relay_writer_observation(error):
         if "turn_body" in value:
             result["turn_body"] = _relay_turn_body_fields(value["turn_body"])
         if "detail" in value:
-            result["detail"] = _relay_owner_detail_fields(value["detail"])
+            result["detail"] = _relay_owner_detail_fields(value["detail"], enroll=result.get("opencode_verb") == "enroll")
         return result
     except BaseException:
         return "unknown"
@@ -218,11 +220,29 @@ def _relay_sql_observation_fields(value):
             **{name: value[name] for name in sorted(_RELAY_EXPIRY_FLAGS)}}
 
 
-def _relay_owner_detail_fields(value):
+def _relay_enroll_settlement_fields(value):
+    if type(value) is not dict or not value or not set(value) <= _RELAY_ENROLL_SETTLEMENT_PHASES:
+        return "unknown"
+    phases = {}
+    for phase, span in value.items():
+        if type(span) is not dict or set(span) != {"state", "elapsed_ms_lower_bound"}:
+            return "unknown"
+        state, elapsed = span["state"], span["elapsed_ms_lower_bound"]
+        if type(state) is not str or state not in _RELAY_ENROLL_SETTLEMENT_STATES:
+            return "unknown"
+        if not (type(elapsed) is int and 0 <= elapsed <= 604_800_000
+                or type(elapsed) is str and elapsed == "over_limit"):
+            return "unknown"
+        phases[phase] = {"state": state, "elapsed_ms_lower_bound": elapsed}
+    if sum(span["state"] == "inflight" for span in phases.values()) > 1:
+        return "unknown"
+    return phases
+
+
+def _relay_owner_detail_fields(value, *, enroll=False):
     try:
-        if type(value) is not dict or set(value) not in (
-                {"body_hook_state", "expiry", "settlement"},
-                {"body_hook_state", "expiry", "settlement", "count"}):
+        required = {"body_hook_state", "expiry", "settlement"}
+        if type(value) is not dict or not required <= set(value) <= required | {"count", "enroll_settlement"}:
             return "unknown"
         state = value["body_hook_state"]
         if type(state) is not str or state not in _RELAY_BODY_HOOK_STATES:
@@ -240,6 +260,8 @@ def _relay_owner_detail_fields(value):
                 return "unknown"
             settlement = dict(settlement)
         result = {"body_hook_state": state, "expiry": expiry, "settlement": settlement}
+        if enroll and "enroll_settlement" in value:
+            result["enroll_settlement"] = _relay_enroll_settlement_fields(value["enroll_settlement"])
         if "count" in value:
             result["count"] = "unknown"
             try:
@@ -276,6 +298,18 @@ def _relay_owner_detail_view(owner, now):
                               elapsed if elapsed <= 604_800_000 else "over_limit"}
         detail = {"body_hook_state": owner.get("body_hook_state", "unknown"),
                   "expiry": expiry, "settlement": settlement}
+        enroll = (owner.get("operation") == "opencode_wake"
+                  and _relay_opencode_verb(owner.get("opencode_verb")) == "enroll")
+        if enroll and type(owner.get("enroll_settlement")) is dict:
+            phases = {}
+            for phase, (state, start, end) in owner["enroll_settlement"].items():
+                end = now if state == "inflight" else end
+                if type(start) is int and type(end) is int and 0 <= start <= end <= now:
+                    elapsed = (end - start) // 1_000_000
+                    phases[phase] = {"state": state, "elapsed_ms_lower_bound":
+                                     elapsed if elapsed <= 604_800_000 else "over_limit"}
+            if phases:
+                detail["enroll_settlement"] = phases
         if "count_hook_state" in owner:
             count = "unknown"
             try:
@@ -286,7 +320,7 @@ def _relay_owner_detail_view(owner, now):
             except BaseException:
                 pass
             detail["count"] = {"hook_state": owner["count_hook_state"], "observation": count}
-        return _relay_owner_detail_fields(detail)
+        return _relay_owner_detail_fields(detail, enroll=enroll)
     except BaseException:
         return "unknown"
 
@@ -324,7 +358,8 @@ def _relay_request_writer_observation(error):
             return "unknown"
         result = {"owner_id": number, "operation": operation,
                 "turn_body": _relay_turn_body_fields(value["turn_body"]),
-                "detail": _relay_owner_detail_fields(value["detail"])}
+                 "detail": _relay_owner_detail_fields(value["detail"], enroll=(
+                     operation == "opencode_wake" and _relay_opencode_verb(value.get("opencode_verb")) == "enroll"))}
         if operation == "opencode_wake":
             result.update(opencode_verb=_relay_opencode_verb(value["opencode_verb"]),
                           opencode_body=_relay_turn_body_fields(value["opencode_body"], allowed_sites=_RELAY_OPENCODE_SITES))
