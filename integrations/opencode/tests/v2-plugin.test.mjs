@@ -1395,7 +1395,7 @@ async function outageUntil(check) {
 const outageResponse = (value, status = 200) => new Response(JSON.stringify(value), { status });
 const outageBusy = () => outageResponse({ detail: { retryable: true } }, 503);
 async function contextOutageFixture(t, options = {}) {
-  const known = snapshot({ admitted: true }), originalPerformance = globalThis.performance;
+  const known = snapshot({ admitted: options.admitted ?? true }), originalPerformance = globalThis.performance;
   let armed = false, attempts = 0, enrollments = 0, mono = 0;
   const logs = [];
   const restored = () => ({ session: relaySession, wake: known, restored: true,
@@ -1440,6 +1440,53 @@ async function contextOutageFixture(t, options = {}) {
       try { await f.close(); } finally { removeSessionPin(sessionID); }
     },
   };
+}
+
+for (const fault of ["none", "no-ack", "lost-ack", "wrong-attempt", "wrong-generation",
+  "wrong-endpoint", "wrong-location", "terminal", "missing-admission", "admission-regression", "503"]) {
+  test(`pending admission continuation requires exact local ACK: ${fault}`, async (t) => {
+    const f = await contextOutageFixture(t, {
+      admitted: false,
+      confirm: fault === "no-ack" ? "admitted" : fault === "lost-ack" ? "ack-body-lost" : "ack",
+      poll: () => outageResponse({ session: relaySession, wake: snapshot({ admitted: true }) }),
+      reply: (attempt, _body, _init, restored) => {
+        if (fault === "503") return outageBusy();
+        const value = restored();
+        if (fault === "wrong-attempt") value.deliveries[0].attempts++;
+        if (fault === "wrong-generation") value.wake = { ...value.wake, generation: 2 };
+        if (fault === "wrong-endpoint") value.session = { ...value.session, endpoint_id: "relay-session-" + "f".repeat(32) };
+        if (fault === "wrong-location") value.wake = { ...value.wake, native_location: location + "/other" };
+        if (fault === "terminal") value.wake = { ...value.wake, terminal: true };
+        if (fault === "missing-admission") value.wake = { ...value.wake, admitted: undefined };
+        if (fault === "admission-regression" && attempt === 1) value.wake = { ...value.wake, admitted: true };
+        return outageResponse(value);
+      },
+    });
+    try {
+      if (fault === "admission-regression") {
+        await f.run();
+        const before = f.calls.filter((c) => c.body.operation === "poll").length;
+        const tick = f.tick();
+        await outageUntil(() => f.calls.filter((c) => c.body.operation === "poll").length > before);
+        await f.advance(20);
+        await tick;
+      }
+      const user = projectedWake();
+      if (fault === "none") {
+        await f.run(user);
+        assert.match(user.content.at(-1).text, /שלום wake payload/);
+        assert.doesNotMatch(user.content.at(-1).text, /claim_token:/);
+      } else {
+        await assert.rejects(f.run(user), new RegExp(fault === "503" ?
+          "lookup did not return a usable result" : "restored authority refused"));
+        assert.equal(user.content.length, 1);
+      }
+      assert.equal(f.attempts(), fault === "admission-regression" ? 2 : 1);
+      assert.equal(f.acks(), fault === "no-ack" ? 0 : 1);
+      assert.equal(f.enrollments(), 0);
+      assert.equal(f.native.prompt.length, 0);
+    } finally { await f.close(); }
+  });
 }
 
 for (const shape of ["valid", "missing-session", "runtime", "session", "container", "endpoint",
