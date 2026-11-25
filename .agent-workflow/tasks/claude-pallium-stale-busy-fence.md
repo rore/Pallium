@@ -138,6 +138,7 @@ Agent technical review: independent reviewer via @pallium-manager, Relay message
 
 **Approvals:**
 Approved by user 2026-11-24T19:17:09 (time the manager relayed it; original approval time not recorded): "I approve" — owner approval relayed by @pallium-manager from a remote source (Telegram). Scope: implementation and testing only of the refined conditional Claude Stop-hook plan, including lease recovery when busy cannot be confirmed. Not covered: publication, merge, live fault injection, service restart, host reload, permission, environment, security or access changes. A separate High-risk result review is still required.
+Approved by user 2026-11-25T10:58:00: "the pallium manager should decide, you shouldn't ask me, i'm not always watching this session" — the owner's direct answer in this session when asked about publication. It delegates the decision to @pallium-manager, which directed normal release of the exact reviewed result (Relay message claude-stop-result-release-proceed-20261125). Merge still waits for the recorded result review and hosted gates. No live changes.
 
 **Exceptions:**
 —
