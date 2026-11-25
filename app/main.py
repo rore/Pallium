@@ -18,6 +18,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 
+from app._startup_proof import CHALLENGE_HEADER, PROOF_HEADER, startup_proof
 from app.asyncio_windows_accept import apply_patch as _apply_accept_patch
 from app.config import AppConfig
 from app.runtime_logging import startup_stage
@@ -66,18 +67,13 @@ RECONCILE_INTERVAL_SECONDS = 2.0
 
 
 def _write_launch_token() -> Path | None:
-    """Write the supervisor-supplied launch nonce + our pid to the run dir.
-
-    The supervisor uses this file to verify that the process bound to its API
-    port is actually the one it just spawned (not an orphan from a prior
-    generation still holding the socket). See app/supervisor._wait_for_api.
+    """Write an advisory PID receipt, not readiness or process authority.
 
     No-op when ``PALLIUM_API_LAUNCH_TOKEN`` is unset, so this stays compatible
     with direct invocations (`python -m app.run serve ...`) that don't go
     through the supervisor.
     """
-    nonce = os.environ.get("PALLIUM_API_LAUNCH_TOKEN")
-    if not nonce:
+    if not os.environ.get("PALLIUM_API_LAUNCH_TOKEN"):
         return None
     home_env = os.environ.get("PALLIUM_HOME")
     home = Path(home_env) if home_env else Path.home() / ".pallium"
@@ -85,10 +81,9 @@ def _write_launch_token() -> Path | None:
     try:
         run_dir.mkdir(parents=True, exist_ok=True)
         token_path = run_dir / "api_token"
-        # Write atomically: write to .tmp then rename. Without atomicity the
-        # supervisor can read a half-written file and decide nonce-mismatch.
+        # Readers must never see a partially written receipt.
         tmp_path = token_path.with_suffix(".tmp")
-        tmp_path.write_text(json.dumps({"nonce": nonce, "pid": os.getpid()}), encoding="utf-8")
+        tmp_path.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
         os.replace(tmp_path, token_path)
         return token_path
     except OSError as exc:
@@ -873,8 +868,9 @@ class _StartupGate:
 def app(*, on_retained_terminal: Callable[[], None] | None = None,
         bind_host: str | None = None) -> FastAPI:
     """Production ASGI factory: bind before non-abandoning initialization."""
+    launch_nonce = os.environ.get("PALLIUM_API_LAUNCH_TOKEN")
     expiry_database = os.environ.get("PALLIUM_API_RELAY_EXPIRY_DATABASE_URL")
-    if expiry_database is not None and (not expiry_database or not os.environ.get("PALLIUM_API_LAUNCH_TOKEN")):
+    if expiry_database is not None and (not expiry_database or not launch_nonce):
         raise RuntimeError("Managed Relay expiry requires the supervisor launch context")
     @contextlib.asynccontextmanager
     async def lifespan(startup: FastAPI):
@@ -968,8 +964,15 @@ def app(*, on_retained_terminal: Callable[[], None] | None = None,
         return JSONResponse(body, status_code=response.status_code)
 
     @startup.get("/health")
-    async def health():
-        return await startup_response("health")
+    async def health(request: Request):
+        response = await startup_response("health")
+        if launch_nonce:
+            challenges = request.headers.getlist(CHALLENGE_HEADER)
+            if len(challenges) == 1:
+                proof = startup_proof(launch_nonce, challenges[0])
+                if proof is not None:
+                    response.headers[PROOF_HEADER] = proof
+        return response
 
     @startup.get("/status")
     async def status(include_relay_wake: bool = True):

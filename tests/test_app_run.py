@@ -244,9 +244,11 @@ async def test_owned_server_terminal_exit_runs_actual_lifespan_cleanup(
     import asyncio
     import contextlib
     import json
+    import os
     import threading
     import httpx
-    from app import main, codex_bridge_pipe as bridge
+    from app import main, supervisor, codex_bridge_pipe as bridge
+    from app._startup_proof import PROOF_HEADER
     from tests.test_health import _no_vector_config, _prebuilt_production_inner
 
     monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
@@ -339,7 +341,12 @@ async def test_owned_server_terminal_exit_runs_actual_lifespan_cleanup(
                                 break
                             await asyncio.sleep(.01)
                         assert response.status_code == 200
-                        assert json.loads(token.read_text())["nonce"] == "private-incarnation"
+                        assert PROOF_HEADER not in response.headers
+                        assert json.loads(token.read_text()) == {"pid": os.getpid()}
+                        assert await asyncio.to_thread(
+                            supervisor._wait_for_api, "127.0.0.1", port,
+                            timeout=1, expected_nonce="private-incarnation",
+                        )
                 assert native_entered.is_set()
                 trigger.set()
             await asyncio.wait_for(asyncio.shield(serving), 8)

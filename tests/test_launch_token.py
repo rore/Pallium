@@ -1,9 +1,4 @@
-"""Tests for the launch-token write/remove contract in app.main.
-
-The supervisor uses these helpers to self-identify the API child it just
-spawned, distinguishing it from any orphan process still bound to the same
-port from a previous generation.
-"""
+"""Tests for the advisory API PID receipt in app.main."""
 
 from __future__ import annotations
 
@@ -16,7 +11,7 @@ import pytest
 from app.main import _write_launch_token, _remove_launch_token
 
 
-def test_write_launch_token_writes_nonce_and_pid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_write_launch_token_writes_only_pid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
     monkeypatch.setenv("PALLIUM_API_LAUNCH_TOKEN", "the-nonce-xyz")
 
@@ -26,8 +21,7 @@ def test_write_launch_token_writes_nonce_and_pid(tmp_path: Path, monkeypatch: py
     assert path == tmp_path / "run" / "api_token"
     assert path.exists()
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["nonce"] == "the-nonce-xyz"
-    assert data["pid"] == os.getpid()
+    assert data == {"pid": os.getpid()}
 
 
 def test_write_launch_token_noop_when_env_unset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -54,9 +48,7 @@ def test_write_launch_token_creates_run_dir_if_missing(tmp_path: Path, monkeypat
 
 
 def test_write_launch_token_overwrites_stale_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """A leftover token from a prior crashed generation must be replaced —
-    otherwise the supervisor probe would see the stale nonce and refuse the
-    new (correct) child indefinitely."""
+    """Replace a legacy receipt, including any stale nonce."""
     monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -69,18 +61,25 @@ def test_write_launch_token_overwrites_stale_token(tmp_path: Path, monkeypatch: 
 
     assert path is not None
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["nonce"] == "fresh-nonce"
-    assert data["pid"] == os.getpid()
+    assert data == {"pid": os.getpid()}
 
 
 def test_write_launch_token_atomic_via_replace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Verify a .tmp file isn't left around after a successful write —
-    proxy assertion that the implementation used os.replace (atomic on
-    Windows and POSIX) rather than streaming directly into api_token."""
+    """The temporary and final files both contain only the PID."""
     monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
     monkeypatch.setenv("PALLIUM_API_LAUNCH_TOKEN", "x")
 
-    _write_launch_token()
+    replace = os.replace
+
+    def check_replace(source, target):
+        assert source == target.with_suffix(".tmp")
+        assert not target.exists()
+        assert json.loads(source.read_text()) == {"pid": os.getpid()}
+        replace(source, target)
+
+    monkeypatch.setattr(os, "replace", check_replace)
+    target = _write_launch_token()
+    assert json.loads(target.read_text()) == {"pid": os.getpid()}
     leftovers = list((tmp_path / "run").glob("*.tmp"))
     assert leftovers == [], f"expected no .tmp leftovers, got {leftovers}"
 
