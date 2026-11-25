@@ -247,6 +247,8 @@ def test_http_busy_writer_observation_and_completion_follow_real_transaction(
         request_owner = completion[0].args[-1]
         assert request_owner["owner_id"] == observed["owner_id"]
         assert request_owner["detail"]["settlement"]["state"] == "settled"
+        assert "enroll_settlement" not in observed["detail"]
+        assert "enroll_settlement" not in request_owner["detail"]
         sessions = client.get("/relay/sessions", params=scope)
         assert sessions.status_code == 200
         assert len(sessions.json()) == (1 if outcome == "commit" else 0)
@@ -257,6 +259,152 @@ def test_http_busy_writer_observation_and_completion_follow_real_transaction(
     finally:
         release.set()
         event.remove(storage._relay_engine, "before_cursor_execute", park_count)
+
+
+@pytest.mark.parametrize("verb,held,failing_phase,rollback_fails", (
+    ("enroll", "flush", None, False),
+    ("enroll", "commit", None, False),
+    ("enroll", "rollback", "flush", False),
+    ("enroll", "rollback", "commit", True),
+    ("poll", "commit", None, False),
+))
+def test_http_enroll_settlement_distinguishes_held_calls(
+    client, monkeypatch, caplog, verb, held, failing_phase, rollback_fails,
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from tests.test_opencode_relay_wake_e2e import _setup, _wake
+
+    storage = client.app.state.pallium_service._storage
+    base = _setup(client, session="native-東京", enroll=verb == "poll")
+    entered, release = Event(), Event()
+    primary = RuntimeError("private primary settlement failure")
+    cleanup_gate = []
+    factory = storage._relay_session_factory
+
+    def owner_in_settlement():
+        owner = storage._relay_writer_diagnostic
+        return owner and owner.get("opencode_verb") == verb and owner["phase"][0] == "settlement"
+
+    def control(phase):
+        if phase == held:
+            entered.set()
+            assert release.wait(10), "test did not release the held call"
+        if phase == failing_phase:
+            raise primary
+        if phase == "rollback" and rollback_fails:
+            raise RuntimeError("private secondary settlement failure")
+
+    def create_session():
+        session = factory()
+        flush = session.flush
+
+        def controlled_flush(*args, **kwargs):
+            # Ignore autoflush in the operation body.
+            if owner_in_settlement():
+                control("flush")
+            return flush(*args, **kwargs)
+
+        session.flush = controlled_flush
+        return session
+
+    def control_sql(_conn, _cursor, sql, _params, _context, _many):
+        if sql == f"PRAGMA busy_timeout={storage._DEFAULT_BUSY_TIMEOUT_MS}" and entered.is_set():
+            cleanup_gate.append(storage._relay_writer_lock.locked())
+        if sql in {"COMMIT", "ROLLBACK"} and owner_in_settlement():
+            control(sql.lower())
+
+    ack = {"delivery_id": "relay-delivery-" + "a" * 32, "claim_token": "opaque-receipt",
+           "container_ref": base["container_ref"]}
+    with monkeypatch.context() as hooks:
+        hooks.setattr(storage, "_relay_session_factory", create_session)
+        event.listen(storage._relay_engine, "before_cursor_execute", control_sql)
+        try:
+            with caplog.at_level("WARNING"), ThreadPoolExecutor(max_workers=1) as pool:
+                writer = pool.submit(_wake, client, base, verb)
+                try:
+                    assert entered.wait(10), f"{verb} did not enter {held}"
+                    busy = client.post("/relay/deliveries/ack", json=ack)
+                    assert busy.status_code == 503 and busy.headers["retry-after"] == "1"
+                    record, = (r for r in caplog.records
+                               if r.getMessage().startswith("relay operation=ack outcome=busy"))
+                    observed = next(v for v in record.args if type(v) is dict and "owner_id" in v)
+                    assert (observed["operation"], observed["opencode_verb"], observed["phase"]) == (
+                        "opencode_wake", verb, "settlement")
+                    assert observed["detail"]["settlement"]["state"] == "inflight"
+                    snapshot = observed["detail"].get("enroll_settlement")
+                    if verb == "enroll":
+                        assert {name for name, span in snapshot.items() if span["state"] == "inflight"} == {held}
+                        assert snapshot[held]["elapsed_ms_lower_bound"] >= 0
+                    else:
+                        assert "enroll_settlement" not in observed["detail"]
+                    assert not any(r.getMessage().startswith("relay_writer_contention_completed") for r in caplog.records)
+                finally:
+                    release.set()
+                if failing_phase:
+                    with pytest.raises(RuntimeError) as raised:
+                        writer.result(timeout=10)
+                    assert raised.value is primary
+                else:
+                    completed = writer.result(timeout=10)
+                    assert completed.status_code == 200, completed.text
+        finally:
+            release.set()
+            event.remove(storage._relay_engine, "before_cursor_execute", control_sql)
+
+    assert cleanup_gate == [rollback_fails]
+    assert not storage._relay_writer_lock.locked() and storage._relay_writer_diagnostic is None
+    completion, = (r for r in caplog.records if r.getMessage().startswith("relay_writer_contention_completed"))
+    assert completion.args[:4] == (observed["owner_id"], "opencode_wake",
+                                   "exception" if failing_phase else "returned", verb)
+    detail = completion.args[-1]["detail"]
+    if rollback_fails:
+        assert detail["settlement"] == "unknown"
+    else:
+        assert detail["settlement"]["state"] == "settled"
+    if verb == "enroll":
+        expected = {"flush": "returned", "commit": "returned"}
+        if failing_phase:
+            if failing_phase == "flush":
+                del expected["commit"]
+            expected[failing_phase] = "raised"
+            expected["rollback"] = "raised" if rollback_fails else "returned"
+        spans = detail["enroll_settlement"]
+        assert {name: span["state"] for name, span in spans.items()} == expected
+        assert all(type(span["elapsed_ms_lower_bound"]) is int
+                   and 0 <= span["elapsed_ms_lower_bound"] <= 604_800_000 for span in spans.values())
+        assert spans[held]["elapsed_ms_lower_bound"] >= snapshot[held]["elapsed_ms_lower_bound"]
+    else:
+        assert "enroll_settlement" not in detail
+    for message in (record.getMessage(), completion.getMessage()):
+        assert not any(base[field] in message for field in ("container_ref", "session_ref", "native_location", "owner_id"))
+        assert "private primary" not in message and "private secondary" not in message
+    assert _wake(client, base, "poll").status_code == (409 if failing_phase else 200)
+    assert client.post("/relay/deliveries/ack", json=ack).status_code == 404
+
+
+@pytest.mark.parametrize("phase,state,elapsed,valid", (
+    ("flush", "inflight", 0, True),
+    ("commit", "returned", 604_800_000, True),
+    ("rollback", "raised", "over_limit", True),
+    ("private-東京", "inflight", 1, False),
+    ("flush", "private-東京", 1, False),
+    ("flush", "returned", "private-東京", False),
+    ("flush", "returned", -1, False),
+    ("flush", "returned", 604_800_001, False),
+    ("flush", "returned", True, False),
+    ("flush", "returned", 0.5, False),
+))
+def test_enroll_settlement_projection_bounds_fields(phase, state, elapsed, valid):
+    from core.errors import _relay_owner_detail_fields
+
+    phases = {phase: {"state": state, "elapsed_ms_lower_bound": elapsed}}
+    base = {"body_hook_state": "not_reached", "expiry": "unknown", "settlement": "unknown"}
+    detail = {**base, "enroll_settlement": phases}
+    assert _relay_owner_detail_fields(detail) == base
+    assert _relay_owner_detail_fields(detail, enroll=True) == {
+        **base, "enroll_settlement": phases if valid else "unknown",
+    }
 
 
 @pytest.mark.parametrize("delivery_ref", ("relay-delivery-" + "b" * 32, "private-東京"))
