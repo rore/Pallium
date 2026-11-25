@@ -165,4 +165,14 @@ Approved Stop-hook opt-out, branched from current main `24fe8d64`, `-n 0`:
   - Both new tests together: 2 passed; on main product code: 1 failed (ambiguous busy), 1 passed (equivalence).
   - `tests/test_relay_mcp_tools.py` with the existing dependency target plus `win32` and `win32/lib` on a process-local `PYTHONPATH`, no install: 201 passed. Inherited host Claude session identity (`CLAUDE_CODE_SESSION_ID` and related variables) must be unset for that process; with it set, 5 fail-closed identity tests fail because the MCP server inherits the host session.
 - Historical attribution, likely only and not closed: two deliveries to a Claude session were deferred on every 30 s wake attempt (108 and 1470 attempts) until a natural turn, the first right after a 775 ms Relay `turn` (above the Stop hook's 0.75 s timeout) and the second during heavy Relay congestion. Durations and repeated `not_eligible` do not prove the exact late `mark_busy` transition.
+- Schema successor `363c89b3`: one added parametrized case, claude-code + `claude_turn_admission="none"` + a valid `wake_delivery_id`, returns 422. `test_claude_turn_admission_rejects_other_runtimes_and_values`: 3 passed. Product files are byte-identical to `c62eb1bf`.
+- Release reconciliation: rebased `2311eb9f..363c89b3` onto `origin/main` `0aa8f0e9` as `313695cd`, `d77f0ade` and `65adf78a`. `git range-diff` shows all three patch-identical, and main's changes since `24fe8d64` touch no file on this branch. The branch is renamed `fix/claude-pallium-stale-busy-fence` so CI derives this record's slug; the old `claude-pallium/stale-busy-fence` branch keeps `8404f922` untouched.
 - Separate item: the delivery trace recorded `prepared` activations with no matching `completed` events while the service log showed deferred outcomes. The omitted events were not recovered, so trace completeness stays open on its own.
+
+## Result review
+
+Independent High-risk result review via @pallium-manager:
+- `2311eb9f`: HOLD, pending real-route and actual-hook lifecycle tests and an explicit marker-plus-exact 422 (Relay `relay-reply-fb1139df7326e797a7bf2a0f2fc5f36fea871b3f1c9b1bfb79ed240ab478ffbb`).
+- `c62eb1bf`: both added lifecycle controls accepted; one schema case remained (Relay `relay-reply-ec400b3d7cfa49ffe878963bd45eac2781c2284b50cb73333b6cde0b4c163a41`).
+- `363c89b3`: verified as the exact requested test-only successor (Relay `relay-reply-fe99ba80a899ce319acca93674f8a924628b94b117180bdbbbeed1c7ca6dbe18`).
+- The rebased head is patch-identical to `363c89b3` (see Evidence).
