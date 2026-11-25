@@ -170,7 +170,10 @@ def main() -> None:
         source = payload.get("source", "")
         container_ref = resolve_container_ref(cwd, session_id, True, False)
         actor_ref = derive_actor_ref(cwd, session_id)
-        register_claude_wake(session_id, container_ref, idle=False)
+        # Idle compaction has no later Stop to restore idle; keep the existing
+        # registration and its state instead of re-registering busy.
+        if source != "compact":
+            register_claude_wake(session_id, container_ref, idle=False)
 
         relay_scope = format_injection(
             [], container_ref, budget_chars=RELAY_OUTPUT_BUDGET,
