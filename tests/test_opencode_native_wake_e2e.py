@@ -978,6 +978,13 @@ def test_same_input_wake_context_recovers_stale_registration(
 
 
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_same_input_wake_continues_before_admission_report(
+    client, tmp_path, monkeypatch, relay_admission_clock,
+):
+    _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admission_clock, "admission-pending")
+
+
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_same_input_wake_context_recovers_after_outage(
     client, tmp_path, monkeypatch, relay_admission_clock,
 ):
@@ -1107,9 +1114,9 @@ def _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admiss
                 assert not outage_active.is_set() and not outage_observed.is_set()
                 outage_active.set()
                 payload, status = b'{"outage":"armed"}', 200
-            elif self.path == "/fixture/tool" and scenario.startswith("outage"):
+            elif self.path == "/fixture/tool" and (scenario.startswith("outage") or scenario == "admission-pending"):
                 assert body["step"] in (("completed-first-step", "completed-second-step")
-                                        if recovery_journey else ("completed-first-step",))
+                            if recovery_journey or scenario == "admission-pending" else ("completed-first-step",))
                 tool_actions.append(body["step"])
                 payload, status = json.dumps(body).encode(), 200
             elif self.path == "/fixture/recover" and scenario.startswith("outage"):
@@ -1175,9 +1182,12 @@ const origin='http://localhost:'+process.env.PALLIUM_PORT;
 const anchor=JSON.parse(process.env.JOURNEY_ANCHOR),scope={container_ref:'git:example.test/team/relay'};
 const scenario=process.env.JOURNEY_SCENARIO,unconfirmed=['lease','ttl'].includes(scenario);
 const recoveryJourney=scenario.startsWith('outage-recover-');
+const admissionPending=scenario==='admission-pending';
 const savedFetch=globalThis.fetch,savedSpawn=childProcess.spawn,children=[],calls=[],prompts=[],history=[],hooks={},disposed=[];
 const defer=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve}};
 const nativeRelease=defer(),ownedEntered=defer(),ownedRelease=defer(),logs=[],contexts=[];
+const promptRelease=defer();
+let promptHeld=false;
 const toolActions=[];
 const originalPerformance=globalThis.performance;
 let outageFailures=0,outageMono=1000;
@@ -1249,8 +1259,9 @@ const ctx={location:{directory:cwd},app:{log:entry=>logs.push(entry.message)},se
  prompt:async input=>{
   assert.equal(input.delivery,'queue');assert.equal(input.sessionID,sessionID);
   prompts.push(input);history.push({type:'user',id:input.id,text:input.text,metadata:input.metadata});
-  await hooks.prompt({sessionID,messageID:input.id,prompt:{text:input.text},metadata:input.metadata});
-  return{id:input.id};
+   await hooks.prompt({sessionID,messageID:input.id,prompt:{text:input.text},metadata:input.metadata});
+   if(admissionPending){promptHeld=true;await promptRelease.promise}
+   return{id:input.id};
  },
  wait:async()=>{waits++;await nativeRelease.promise;waitReturns++},
  interrupt:async()=>{interrupts++},
@@ -1286,7 +1297,7 @@ try{
  cleanup=await production.setup(ctx);
  await Promise.race([(async()=>{
   await until(()=>operations('enroll').some(c=>c.status===200),'startup enrollment');
-  await heartbeat();await until(()=>waits===1,'original native wait entered');
+  await heartbeat();await until(()=>admissionPending?promptHeld:waits===1,'exact native input promoted');
   const first=prompts[0],snapshot=operations('poll')[0].result.wake;
   assert.equal(prompts.length,1);assert.equal(first.id,snapshot.native_input_id);
   assert.equal(first.metadata.generation,snapshot.generation);
@@ -1295,6 +1306,34 @@ try{
   const delivered=await status(anchor);
    assert.equal(delivered.state,unconfirmed?'claimed':'delivered');assert.equal(delivered.attempts,1);
    assert.equal(acks().length,1);assert.equal(waitReturns,0);
+   if(admissionPending){
+    assert.equal(operations('admitted').length,0);
+    assert.equal(initial.result.wake.admitted,false);
+    await request('POST','/fixture/tool',{step:'completed-first-step'});
+    const next=await context(first,'outage');
+    assert.equal(next.status,200);
+    assert.equal(next.result.restored,true);
+    assert.equal(next.result.wake.admitted,false);
+    assert.equal(next.result.deliveries[0].delivery_id,delivered.delivery_id);
+    assert.equal(next.result.deliveries[0].attempts,1);
+    assert.equal(contexts.at(-1).error,null,'restored exact context must allow the second tool');
+    assert.equal(contexts.at(-1).attached,true);
+    await request('POST','/fixture/tool',{step:'completed-second-step'});
+    assert.equal(prompts.length,1);assert.equal(acks().length,1);
+    assert.deepEqual(await status(anchor),delivered);
+    promptRelease.resolve();
+    await until(()=>waits===1,'normal admission after prompt return');
+    assert.equal(operations('admitted').length,1);
+    assert.equal(operations('admitted')[0].result.wake.admitted,true);
+    await context(first,'restored');
+    history.push({type:'idle',id:'msg_pending_admission_terminal',outcome:'succeeded'});
+    nativeRelease.resolve();
+    await until(()=>operations('terminal').some(call=>call.status===200),'normal settlement');
+    assert.equal(prompts.length,1);assert.equal(acks().length,1);
+    assert.deepEqual(await status(anchor),delivered);
+    report={scenarioPassed:true,scenario,contexts,delivered};
+    return;
+   }
    if(scenario==='bootstrap-restored'){
     await cleanup();
     await request('POST','/fixture/bootstrap',{});
@@ -1480,7 +1519,7 @@ try{
  })(),new Promise((_,reject)=>{watchdog=setTimeout(()=>reject(new Error('owned journey exceeded45s')),45000)})]);
 }finally{
  globalThis.performance=originalPerformance;
- clearTimeout(watchdog);ownedRelease.resolve();nativeRelease.resolve();await cleanup?.();
+ clearTimeout(watchdog);ownedRelease.resolve();nativeRelease.resolve();await cleanup?.();promptRelease.resolve();
  for(const {child} of children)if(child.exitCode===null&&child.signalCode===null)child.kill();
  await Promise.all(children.map(entry=>entry.closed));
  writeFileSync(process.env.JOURNEY_REPORT,JSON.stringify({report,contexts,logs,http:calls,

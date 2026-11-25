@@ -276,20 +276,20 @@ export default {
     const sameWakeIdentity = (a, b) => a && b && a.terminal === false && b.terminal === false &&
       ["generation", "delivery_id", "native_input_id", "scope_generation"].every((key) => a[key] === b[key]) &&
       sameLocation(a.native_location, b.native_location);
-    const wakeContextMatches = (id, item, user, response) => {
+    const wakeContextMatches = (id, item, user, response, admitted = true) => {
       const binding = base(id, item), session = response?.session, wake = response?.wake;
       const delivery = Array.isArray(response?.deliveries) && response.deliveries[0];
       return session?.runtime === "opencode" && session.session_ref === id &&
         session.container_ref === binding.container_ref && session.endpoint_id === binding.endpoint_id &&
         Number.isInteger(session.scope_generation) && session.scope_generation === binding.scope_generation &&
         session.state === "recent" && session.destination_health === "active" &&
-        sameWakeIdentity(item.wake, wake) && wake.admitted === true && internal(user) &&
+        sameWakeIdentity(item.wake, wake) && wake.admitted === admitted && internal(user) &&
         wake.native_input_id === user.id && wake.generation === user.metadata.generation &&
         wake.delivery_id === user.metadata.delivery_id && delivery?.delivery_id === wake.delivery_id &&
         Number.isInteger(delivery.attempts) && delivery.attempts > 0;
     };
-    const restoredWakeContext = (id, item, user, response, attempt) =>
-      wakeContextMatches(id, item, user, response) && response.restored === true &&
+    const restoredWakeContext = (id, item, user, response, attempt, admitted = true) =>
+      wakeContextMatches(id, item, user, response, admitted) && response.restored === true &&
       response.deliveries[0].state === "delivered" &&
       (attempt === undefined || response.deliveries[0].attempts === attempt);
     const wakeContextGuard = (id, item, user, event, deadline) => {
@@ -845,10 +845,11 @@ export default {
           session.endpoint_id === binding.endpoint_id && Number.isInteger(session.scope_generation) &&
           session.state === "recent" && session.destination_health === "active";
         const confirmed = item.confirmedWake;
-        const continuationProof = () => guard.valid && bound() && confirmed && confirmed.signal === signal &&
-          Object.entries(confirmed.binding).every(([key, value]) => base(id, item)[key] === value) &&
-          confirmed.wake.admitted === true && sameWakeIdentity(confirmed.wake, item.wake) &&
-          currentUser(event.messages) === user && internal(user);
+        const matchingConfirmation = () => guard.valid && bound() && confirmed && confirmed.signal === signal &&
+           Object.entries(confirmed.binding).every(([key, value]) => base(id, item)[key] === value) &&
+           sameWakeIdentity(confirmed.wake, item.wake) &&
+           currentUser(event.messages) === user && internal(user);
+        const continuationProof = () => matchingConfirmation() && confirmed.wake.admitted === true;
         const unavailable = (seen) => !seen.headers ||
           seen.status === 503 && (!seen.errorSeen || seen.error?.detail?.retryable === true);
         const observe = () => {
@@ -863,7 +864,11 @@ export default {
           const seen = observe();
           response = await wait(wakeRequest(id, item, "context", fields, seen.onHttpError, seen.request));
           if (response) {
-            if (response.restored && !restoredWakeContext(id, item, user, response))
+            const earlyRestore = !outage && !recovery && known.admitted === false && item.wake?.admitted === false &&
+              matchingConfirmation() && confirmed.fromAck && confirmed.wake.admitted === false &&
+              restoredWakeContext(id, item, user, response, confirmed.attempt, false);
+            if (response.restored && !earlyRestore &&
+                !restoredWakeContext(id, item, user, response, matchingConfirmation() ? confirmed.attempt : undefined))
               throw new Error("Pallium internal wake restored authority refused");
             if ((outage || continuationProof()) && (!continuationProof() ||
                 !restoredWakeContext(id, item, user, response, confirmed.attempt)))
@@ -956,22 +961,25 @@ export default {
       if (!text) return;
       if (guard) guard.remaining();
       user.content = [...(user.content || []), { type: "text", text: `\n\n<system-reminder>\n${text}\n</system-reminder>` }];
-      const confirm = (delivery) => {
-        if (!guard.valid || !current() || !wakeContextMatches(id, item, user, response) ||
-            delivery !== deliveries[0]) return;
-        if (item.confirmedWake && sameWakeIdentity(item.confirmedWake.wake, response.wake) &&
-            item.confirmedWake.attempt !== delivery.attempts) return;
+      const confirm = (delivery, fromAck = false) => {
+        if (!guard.valid || !current() || !(wakeContextMatches(id, item, user, response) ||
+            fromAck && item.wake?.admitted === false && response.restored === false &&
+            wakeContextMatches(id, item, user, response, false)) || delivery !== deliveries[0]) return;
+        // Only wake rotation may clear confirmation for a different identity.
+        const previous = item.confirmedWake;
+        if (previous && (!sameWakeIdentity(previous.wake, response.wake) ||
+            previous.attempt !== delivery.attempts || previous.wake.admitted && !response.wake.admitted)) return;
         item.confirmedWake = { signal, binding: base(id, item),
           wake: Object.fromEntries(["generation", "delivery_id", "native_input_id", "scope_generation",
             "native_location", "admitted", "terminal"].map((key) => [key, response.wake[key]])),
-          attempt: delivery.attempts };
+          attempt: delivery.attempts, fromAck };
       };
       if (wake && response.restored === true && deliveries[0]?.state === "delivered") confirm(deliveries[0]);
       if (!continuation && rendered.deliveries.length) {
         const results = wake ? await pallium.acknowledgeRelay(rendered.deliveries, container, signal) :
           await acknowledgeOrdinary(id, item, user.id, claim, rendered.deliveries, identity);
         if (!current()) return;
-        if (wake && results.some((result) => result.success && result.delivery_id === deliveries[0]?.delivery_id)) confirm(deliveries[0]);
+        if (wake && results.some((result) => result.success && result.delivery_id === deliveries[0]?.delivery_id)) confirm(deliveries[0], true);
         if (!wake && claim && results.every((result) => result.success)) claim.acked = true;
       }
       } catch (error) {
