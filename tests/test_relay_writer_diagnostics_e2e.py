@@ -261,6 +261,136 @@ def test_http_busy_writer_observation_and_completion_follow_real_transaction(
         event.remove(storage._relay_engine, "before_cursor_execute", park_count)
 
 
+@pytest.fixture
+def slow_wake_routes(client, monkeypatch, caplog):
+    from contextlib import ExitStack
+    from contextvars import ContextVar
+    from fractions import Fraction
+    from itertools import chain, repeat
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api import routes
+    from core.relay import RelayService
+    from tests.test_opencode_relay_wake_e2e import _setup
+
+    service = client.app.state.pallium_service
+    relay = RelayService(service._storage)
+    clock = ContextVar("route_clock", default=repeat(0))
+    monkeypatch.setattr(routes, "time", SimpleNamespace(monotonic=lambda: next(clock.get())))
+
+    def request(send, finish_ms, duration_ms, *args, **kwargs):
+        start = Fraction(finish_ms - duration_ms, 1000)
+        finish = Fraction(finish_ms, 1000)
+        token = clock.set(chain((start,), repeat(finish)))
+        try:
+            return send(*args, **kwargs)
+        finally:
+            clock.reset(token)
+
+    def reports():
+        return [r.getMessage() for r in caplog.records
+                if r.getMessage().startswith("relay operation=opencode_wake outcome=slow")]
+
+    with ExitStack() as stack:
+        def router_client():
+            app = FastAPI()
+            app.include_router(routes.create_router(service, relay_service=relay))
+            return stack.enter_context(TestClient(app))
+
+        http = router_client()
+        base = _setup(http, session="native-東京")
+        yield http, router_client, relay, base, request, reports
+
+
+def test_http_coalesces_only_successful_slow_wake_warnings(slow_wake_routes, monkeypatch, caplog):
+    from core.errors import ImmediateTransactionBusyError
+    from tests.test_opencode_relay_wake_e2e import _wake
+
+    http, router_client, relay, base, request, reports = slow_wake_routes
+    assert request(_wake, 999, 99, http, base, "poll").status_code == 200
+    assert not reports()
+    first = request(_wake, 1_000, 100, http, base, "poll")
+    assert first.status_code == 200
+    assert len(reports()) == 1
+    hidden = request(_wake, 10_999, 340, http, base, "poll")
+    assert hidden.status_code == 200 and hidden.json()["wake"] == first.json()["wake"]
+    assert len(reports()) == 1, "a successful slow completion inside the window must not log"
+
+    def busy(**_kwargs):
+        raise ImmediateTransactionBusyError(
+            "private-東京", acquisition_stage="late_begin", acquisition_phase_ms={"begin_immediate": 7},
+        )
+
+    with monkeypatch.context() as hooks:
+        hooks.setattr(relay, "opencode_wake", busy)
+        response = request(_wake, 11_000, 900, http, base, "poll")
+    assert response.status_code == 503 and response.headers["Retry-After"] == "1"
+    assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+    busy_record, = (r.getMessage() for r in caplog.records
+                    if r.getMessage().startswith("relay operation=opencode_wake outcome=busy"))
+    assert busy_record == (
+        "relay operation=opencode_wake outcome=busy duration_ms=900 acquisition_stage=late_begin "
+        "acquisition_phase_ms={'begin_immediate': 7} observed_relay_writer=unknown"
+    )
+
+    response = request(http.get, 11_000, 220, "/relay/sessions",
+                       params={"container_ref": base["container_ref"]})
+    assert response.status_code == 200
+    assert any(r.getMessage() == "relay operation=list_sessions outcome=slow duration_ms=220"
+               for r in caplog.records)
+    assert request(_wake, 11_000, 200, http, base, "poll").status_code == 200
+    assert request(_wake, 11_001, 115, router_client(), base, "poll").status_code == 200
+    assert request(_wake, 21_000, 101, http, base, "poll").status_code == 200
+    assert reports() == [
+        f"relay operation=opencode_wake outcome=slow duration_ms={elapsed} count={count} max_duration_ms={peak}"
+        for elapsed, count, peak in ((100, 1, 100), (200, 2, 340), (115, 1, 115), (101, 1, 101))
+    ]
+
+
+def test_http_slow_wake_batch_does_not_hold_lock_during_logging(slow_wake_routes, monkeypatch):
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+    from threading import Barrier, Event
+
+    from api import routes
+    from tests.test_opencode_relay_wake_e2e import _wake
+
+    http, _, relay, base, request, reports = slow_wake_routes
+    overlap = Barrier(2, timeout=5)
+    entered, release = Event(), Event()
+    native_wake, warning = relay.opencode_wake, routes.logger.warning
+
+    def finish_together(**kwargs):
+        result = native_wake(**kwargs)
+        overlap.wait()
+        return result
+
+    def held_warning(message, *args, **kwargs):
+        if args and args[0] == "opencode_wake" and "outcome=slow" in message:
+            entered.set()
+            assert release.wait(10), "test did not release the warning sink"
+        return warning(message, *args, **kwargs)
+
+    with monkeypatch.context() as hooks, ThreadPoolExecutor(max_workers=2) as pool:
+        hooks.setattr(relay, "opencode_wake", finish_together)
+        hooks.setattr(routes.logger, "warning", held_warning)
+        futures = [pool.submit(request, _wake, 1_000, 180, http, base, "poll") for _ in range(2)]
+        try:
+            assert entered.wait(5), "neither completion entered the warning sink"
+            done, pending = wait(futures, timeout=5, return_when=FIRST_COMPLETED)
+            assert len(done) == len(pending) == 1
+            assert next(iter(done)).result().status_code == 200
+        finally:
+            release.set()
+        assert next(iter(pending)).result(timeout=5).status_code == 200
+    assert request(_wake, 11_000, 100, http, base, "poll").status_code == 200
+    assert reports() == [
+        "relay operation=opencode_wake outcome=slow duration_ms=180 count=1 max_duration_ms=180",
+        "relay operation=opencode_wake outcome=slow duration_ms=100 count=2 max_duration_ms=180",
+    ]
+
+
 @pytest.mark.parametrize("verb,held,failing_phase,rollback_fails", (
     ("enroll", "flush", None, False),
     ("enroll", "commit", None, False),

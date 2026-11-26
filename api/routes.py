@@ -8,6 +8,7 @@ import re
 import time
 from asyncio import CancelledError
 from collections.abc import Awaitable
+from threading import Lock
 from typing import Any, Callable
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
@@ -702,6 +703,9 @@ def create_router(
 ) -> APIRouter:
     router = APIRouter()
     wake_registry = claude_wake_registry or ClaudeWakeRegistry()
+    slow_wake_lock = Lock()
+    slow_wake_next_report = float("-inf")
+    slow_wake_count = slow_wake_peak_ms = 0
 
     def _relay() -> RelayService:
         if relay_service is None:
@@ -780,6 +784,7 @@ def create_router(
         return HTTPException(status_code=422, detail=str(exc))
 
     def _relay_sync_call(operation_name: str, operation, *, started=None, delivery_ref=None):
+        nonlocal slow_wake_next_report, slow_wake_count, slow_wake_peak_ms
         if started is None:
             started = time.monotonic()
         try:
@@ -821,7 +826,21 @@ def create_router(
                 raise
             elapsed_ms = int((time.monotonic() - started) * 1000)
             if elapsed_ms >= 100:
-                logger.warning("relay operation=%s outcome=slow duration_ms=%d", operation_name, elapsed_ms)
+                if operation_name == "opencode_wake":
+                    # ponytail: report on qualifying completions only; no timer to flush a quiet tail.
+                    with slow_wake_lock:
+                        slow_wake_count += 1
+                        slow_wake_peak_ms = max(slow_wake_peak_ms, elapsed_ms)
+                        now = time.monotonic()
+                        if now < slow_wake_next_report:
+                            return result
+                        slow_wake_next_report = now + 10.0
+                        count, peak_ms = slow_wake_count, slow_wake_peak_ms
+                        slow_wake_count = slow_wake_peak_ms = 0
+                    logger.warning("relay operation=%s outcome=slow duration_ms=%d count=%d max_duration_ms=%d",
+                                   operation_name, elapsed_ms, count, peak_ms)
+                else:
+                    logger.warning("relay operation=%s outcome=slow duration_ms=%d", operation_name, elapsed_ms)
             return result
         except relay_errors as exc:
             raise _relay_http_error(exc) from exc
