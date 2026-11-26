@@ -992,7 +992,7 @@ def test_same_input_wake_context_recovers_after_outage(
 
 
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
-@pytest.mark.parametrize("fault", ["http503", "transport", "startup"])
+@pytest.mark.parametrize("fault", ["http503", "transport", "startup", "early-ack-http503"])
 def test_same_pending_wake_context_resumes_two_tools_after_outage(
     client, tmp_path, monkeypatch, relay_admission_clock, fault,
 ):
@@ -1191,7 +1191,8 @@ const origin='http://localhost:'+process.env.PALLIUM_PORT;
 const anchor=JSON.parse(process.env.JOURNEY_ANCHOR),scope={container_ref:'git:example.test/team/relay'};
 const scenario=process.env.JOURNEY_SCENARIO,unconfirmed=['lease','ttl'].includes(scenario);
 const recoveryJourney=scenario.startsWith('outage-recover-');
-const admissionPending=scenario==='admission-pending';
+const earlyAck=scenario==='outage-recover-early-ack-http503';
+const admissionPending=scenario==='admission-pending'||earlyAck;
 const savedFetch=globalThis.fetch,savedSpawn=childProcess.spawn,children=[],calls=[],prompts=[],history=[],hooks={},disposed=[];
 const defer=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve}};
 const nativeRelease=defer(),ownedEntered=defer(),ownedRelease=defer(),logs=[],contexts=[];
@@ -1316,8 +1317,20 @@ try{
    assert.equal(delivered.state,unconfirmed?'claimed':'delivered');assert.equal(delivered.attempts,1);
    assert.equal(acks().length,1);assert.equal(waitReturns,0);
    if(admissionPending){
-    assert.equal(operations('admitted').length,0);
-    assert.equal(initial.result.wake.admitted,false);
+     assert.equal(operations('admitted').length,0);
+     assert.equal(initial.result.wake.admitted,false);
+    }
+    if(earlyAck){
+     promptRelease.resolve();
+     await until(()=>waits===1,'admission reported after local ACK');
+     assert.equal(operations('admitted').length,1);
+     assert.equal(operations('admitted')[0].result.wake.admitted,true);
+     const polled=await heartbeat();
+     assert.equal(polled.result.wake.admitted,true);
+     assert.equal(polled.result.wake.native_input_id,first.id);
+     assert.equal(operations('context').length,1,'no intervening successful restore');
+    }
+    if(scenario==='admission-pending'){
     await request('POST','/fixture/tool',{step:'completed-first-step'});
     const next=await context(first,'outage');
     assert.equal(next.status,200);
@@ -1400,8 +1413,9 @@ try{
     assert.equal(outcome.error,null,'same-input callback must recover after the observed outage');
     assert.equal(outcome.attached,true);assert.equal(next.status,200);
     assert.equal(next.result.restored,true);
-     assert.equal(next.result.deliveries[0].delivery_id,delivered.delivery_id);
-     assert.equal(outcome.acks,0);
+      assert.equal(next.result.deliveries[0].delivery_id,delivered.delivery_id);
+    assert.equal(next.result.deliveries[0].attempts,delivered.attempts);
+      assert.equal(outcome.acks,0);
      if(recoveryJourney){
       assert.equal(outageFailures,2);assert.equal(outageMono-1000,90000);
       const secondTool=await request('POST','/fixture/tool',{step:'completed-second-step'});

@@ -1489,6 +1489,50 @@ for (const fault of ["none", "no-ack", "lost-ack", "wrong-attempt", "wrong-gener
   });
 }
 
+for (const fault of ["none", "lost-ack", "wrong-attempt"]) {
+  test(`late admission preserves the locally ACKed wake attempt through an outage: ${fault}`, async (t) => {
+    const admitted = snapshot({ admitted: true });
+    let polled = false;
+    const f = await contextOutageFixture(t, {
+      admitted: false,
+      confirm: fault === "lost-ack" ? "ack-body-lost" : "ack",
+      poll: () => {
+        polled = true;
+        return outageResponse({ session: relaySession, wake: admitted });
+      },
+      reply: (attempt, _body, _init, restored) => {
+        if (attempt === 1) return outageBusy();
+        const value = { ...restored(), wake: admitted };
+        if (fault === "wrong-attempt") value.deliveries[0].attempts++;
+        return outageResponse(value);
+      },
+    });
+    try {
+      const tick = f.tick();
+      await outageUntil(() => polled);
+      await f.advance(20);
+      await tick;
+      const user = projectedWake();
+      const outcome = f.run(user).then(() => null, (error) => error);
+      await outageUntil(() => f.attempts() > 0);
+      await f.advance(2500);
+      const error = await outcome;
+      if (fault === "none") {
+        assert.ifError(error);
+        assert.match(user.content.at(-1).text, /שלום wake payload/);
+        assert.doesNotMatch(user.content.at(-1).text, /claim_token:/);
+      } else {
+        assert.match(error?.message, fault === "lost-ack" ? /usable result/ : /restored authority refused/);
+        assert.equal(user.content.length, 1);
+      }
+      assert.equal(f.attempts(), fault === "lost-ack" ? 1 : 2);
+      assert.equal(f.acks(), 1);
+      assert.equal(f.enrollments(), 0);
+      assert.equal(f.native.prompt.length, 0);
+    } finally { await f.close(); }
+  });
+}
+
 for (const shape of ["valid", "missing-session", "runtime", "session", "container", "endpoint",
   "scope", "scope-type", "closed", "unhealthy", "wake-input", "wake-generation", "wake-delivery",
   "wake-scope", "wake-location", "unadmitted", "terminal", "not-delivered", "missing-state",
