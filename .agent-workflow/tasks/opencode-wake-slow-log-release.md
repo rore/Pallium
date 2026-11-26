@@ -37,7 +37,15 @@
 
 **Plan review:** Agent technical review: independent clean-context GO on plan `a305b2c5f561f3fadb3b87d9273e294ea6e8f739`. API review remains distinct.
 
-**Approvals:** The owner approved implementation. Verbatim evidence is retained privately, so the public approval-record check is outstanding. This is not a human technical verdict.
+**Approvals:** The task owner reaffirmed the existing bug-fix approval and directed release work to proceed without another human review. The plan approval evidence is retained privately. This records the owner's disposition, not a human technical verdict.
+
+**Exceptions:**
+- rule: approval.high_risk_approval_recorded
+  reason: The owner reaffirmed existing approval and directed work to proceed without another approval or review round. Do not publish private chat to meet the public quote format.
+  scope: PR #432 only, with the reviewed route and test blobs below; the exception covers the public verbatim-record format, not actual approval or technical review.
+  approver: Repository task owner
+  expiry: 2026-12-03
+  compensating_validation: Retain the exact approval privately. Preserve independent plan, result, and API-contract review and exact-blob verification.
 
 **State:** Ready for review
 <!-- agent-workflow:end -->
@@ -52,4 +60,8 @@
 
 Agent technical review: independent result GO on the exact revised route and writer-test blobs.
 Reviewed revision: `api/routes.py` blob `5ffb2bd4c190592da3e284fd12573a5b10295cbe`; writer-test blob `04e635c6e70e9e29595fffd11b5697fc2d1d65e5`.
-Verification adequacy: reviewed focused RED/GREEN and warning-field correction, then matched the blobs to the locked full-run composition. Hosted CI, human result review, and the API checkpoint remain open.
+Verification adequacy: reviewed focused RED/GREEN and warning-field correction, then matched the blobs to the locked full-run composition. [Application CI](https://github.com/rore/Pallium/actions/runs/45784836069/attempts/2) passed on the single failed-jobs retry; [attempt 1](https://github.com/rore/Pallium/actions/runs/45784836069/attempts/1) remains failed on a Relay expiry prerequisite.
+
+Independent API-contract review confirmed unchanged HTTP responses, retry
+behavior, busy diagnostics, and other warnings at `d6c5d034`. The task
+owner declined a separate human result review for this release candidate.
