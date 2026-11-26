@@ -4837,7 +4837,7 @@ def test_claude_session_start_compact_keeps_idle_wake_eligibility(client, monkey
     from fastapi.testclient import TestClient
 
     loopback = TestClient(client.app, client=("127.0.0.1", 50000))
-    registrations, wakes = [], []
+    registrations, wakes, acks = [], [], []
 
     class HTTP(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -4849,6 +4849,8 @@ def test_claude_session_start_compact_keeps_idle_wake_eligibility(client, monkey
                 status, body = response.status_code, response.content
                 if self.path == "/internal/claude-wake/register":
                     registrations.append((status, json.loads(raw)["idle"]))
+                if self.path == "/relay/deliveries/ack":
+                    acks.append((status, json.loads(raw)["delivery_id"]))
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -4924,26 +4926,30 @@ def test_claude_session_start_compact_keeps_idle_wake_eligibility(client, monkey
         deadline = time.monotonic() + 5
         while not wakes and time.monotonic() < deadline:
             time.sleep(0.05)
-        attempt = ("accepted", "transport_accepted") if wakes else (lambda result: (result.outcome, result.reason))(
-            registry.attempt(
-                runtime="claude-code", session_ref="target", container_ref=container_ref,
-                transport=lambda *_credential: "accepted", delivery_id=queued["delivery_id"],
-                recipient_endpoint_id=queued["recipient_endpoint_id"],
-            )
+        assert compact.returncode == 0, compact.stderr
+        assert (after.state, compact_registrations) == ("idle", [])
+        assert (after.socket_path, after.token, after.generation) == (before.socket_path, before.token, before.generation)
+        assert wakes == [(socket_path, token)]
+        with registry._lock:
+            reserved = registry._registrations[key]
+            assert reserved.state == "wake_inflight" and reserved.delivery_id == queued["delivery_id"]
+
+        pickup = subprocess.run(
+            [sys.executable, str(hooks / "user_prompt_submit.py")],
+            input=json.dumps({"cwd": str(project), "session_id": "target",
+                              "prompt": "Pallium Relay wake notice: new messages available."}),
+            env=env, text=True, capture_output=True, check=True, timeout=20,
         )
         found, = client.get(f"/relay/messages/{sent.json()['message_id']}", params=scope).json()["deliveries"]
+        assert pickup.stdout.count("idle compact wake payload") == 1
+        assert len(acks) == 1 and acks[0][0] in (200, 204) and acks[0][1] == queued["delivery_id"]
+        assert (found["delivery_id"], found["state"], found["attempts"]) == (queued["delivery_id"], "delivered", 1)
+        settled = registry._registrations[key]
+        assert (settled.state, settled.delivery_id) == ("busy", None)
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
-
-    assert compact.returncode == 0, compact.stderr
-    assert (after.state, compact_registrations, attempt, (found["state"], found["attempts"])) == (
-        "idle", [], ("accepted", "transport_accepted"), ("pending", 0),
-    )
-    assert (after.socket_path, after.token, after.generation) == (before.socket_path, before.token, before.generation)
-    assert wakes == [(socket_path, token)]
-
 
 def test_claude_mid_turn_compact_stays_busy_until_stop_then_wakes(client, monkeypatch, tmp_path):
     """Mid-turn compact keeps busy; Stop's idle registration (not compact) enables the wake."""
@@ -5214,6 +5220,7 @@ def test_claude_session_start_compact_leaves_registry_state_untouched(client, mo
         thread.join(timeout=2)
 
     assert result.returncode == 0, result.stderr
+    assert "/query" in events
     assert requests == []
     assert after == before
     if state == "inflight":
@@ -5324,8 +5331,11 @@ def test_claude_failed_wake_recovers_by_ordinary_pickup_then_wakes_again(client,
             return found["state"], found["attempts"]
 
         message_id, delivery_id = send("failed wake payload")
-        assert wait_for(lambda: registry._registrations[key].state != "idle")
-        failed = registry._registrations[key]
+        assert wait_for(lambda: len(wakes) == 1)
+        # The reservation is visible before transport returns. Take the
+        # snapshot after attempt() releases the lock and settles the outcome.
+        with registry._lock:
+            failed = registry._registrations[key]
         failed_view = (failed.state, failed.delivery_id, delivery(message_id))
 
         # Ordinary pickup: the real UserPromptSubmit hook claims, emits and ACKs.
