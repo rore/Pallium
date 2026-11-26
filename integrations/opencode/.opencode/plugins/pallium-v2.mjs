@@ -849,7 +849,9 @@ export default {
            Object.entries(confirmed.binding).every(([key, value]) => base(id, item)[key] === value) &&
            sameWakeIdentity(confirmed.wake, item.wake) &&
            currentUser(event.messages) === user && internal(user);
-        const continuationProof = () => matchingConfirmation() && confirmed.wake.admitted === true;
+        // An exact poll can confirm admission after the context hook confirmed the ACK.
+        const continuationProof = () => matchingConfirmation() && (confirmed.wake.admitted === true ||
+          confirmed.fromAck === true && confirmed.wake.admitted === false && item.wake.admitted === true);
         const unavailable = (seen) => !seen.headers ||
           seen.status === 503 && (!seen.errorSeen || seen.error?.detail?.retryable === true);
         const observe = () => {
