@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+import asyncio
 import json
+from threading import Barrier
 
+import httpx
 import pytest
 
 from sqlalchemy import text
@@ -117,11 +119,23 @@ def test_same_key_changed_request_is_conflict_and_identical_retry_is_stable(clie
     assert retry.status_code == 200 and retry.json()["diagnostic_id"] == diagnostic_id
 
 
-def test_concurrent_identical_http_creates_converge_on_one_diagnostic(client):
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        responses = list(pool.map(
-            lambda _: _create(client, key="concurrent-http", text="same request"),
-            range(2),
+@pytest.mark.asyncio
+async def test_concurrent_identical_http_creates_converge_on_one_diagnostic(client, monkeypatch):
+    service = client.app.state.pallium_service
+    save = service.save_history_diagnostic
+    overlap = Barrier(2, timeout=5)
+
+    def save_after_both_arrive(row):
+        # Both synchronous handlers must reach the write path before either saves.
+        overlap.wait()
+        return save(row)
+
+    monkeypatch.setattr(service, "save_history_diagnostic", save_after_both_arrive)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=client.app), base_url="http://testserver",
+    ) as http:
+        responses = await asyncio.gather(*(
+            _create(http, key="concurrent-http", text="same request") for _ in range(2)
         ))
 
     assert sorted(response.status_code for response in responses) == [200, 201]
