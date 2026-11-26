@@ -906,7 +906,9 @@ export default {
               throw new Error("Pallium internal wake registration recovery refused");
             continue;
           }
-          if (!unavailable(seen) || !continuationProof())
+          const starting = seen.status === 503 && seen.error?.error === "service not initialized" &&
+            Object.keys(seen.error).length === 1;
+          if ((!unavailable(seen) && !starting) || !continuationProof())
             throw new Error(`Pallium wake context lookup did not return a usable result (delivery_id=${fields.delivery_id})`);
           outage = true;
           await guard.pause();

@@ -1578,7 +1578,7 @@ for (const entry of ["restored", "forged", "unrestorable", "late-owned"]) {
 }
 
 for (const fault of ["retryable503", "unreadable503", "transport", "per-request-timeout",
-  "nonretryable503", "unknown503", "lost200", "empty200", "malformed200", "malformed-shape",
+  "nonretryable503", "unknown503", "startup-lookalike", "lost200", "empty200", "malformed200", "malformed-shape",
   "empty-deliveries", "wrong-attempt", "not-restored", "404", "conflict", "expired"]) {
   test(`outage continuation classifies exact HTTP outcome: ${fault}`, async (t) => {
     const retryable = ["retryable503", "unreadable503", "transport", "per-request-timeout"].includes(fault);
@@ -1591,6 +1591,9 @@ for (const fault of ["retryable503", "unreadable503", "transport", "per-request-
       if (fault === "unreadable503") return { ok: false, status: 503, text: async () => { throw new Error("lost error body"); } };
       if (fault === "nonretryable503") return outageResponse({ detail: { retryable: false } }, 503);
       if (fault === "unknown503") return outageResponse({ detail: "refused" }, 503);
+      if (fault === "startup-lookalike") return outageResponse({
+        error: "service not initialized", detail: { retryable: false },
+      }, 503);
       if (fault === "lost200") return { ok: true, status: 200, text: async () => { throw new Error("lost after 200 headers"); } };
       if (fault === "empty200") return new Response("", { status: 200 });
       if (fault === "malformed200") return new Response("{", { status: 200 });
@@ -1623,9 +1626,11 @@ for (const fault of ["retryable503", "unreadable503", "transport", "per-request-
   });
 }
 
-for (const confirm of ["ack", "restored", "admitted", "uncertain", "ack-body-lost"]) {
-  test(`outage continuation requires confirmed original custody: ${confirm}`, async (t) => {
-    const f = await contextOutageFixture(t, { confirm, reply: (attempt) => attempt === 1 ? outageBusy() : undefined });
+for (const mode of ["ack", "restored", "admitted", "uncertain", "ack-body-lost", "unconfirmed-startup"]) {
+  test(`outage continuation requires confirmed original custody: ${mode}`, async (t) => {
+    const confirm = mode === "unconfirmed-startup" ? "admitted" : mode;
+    const f = await contextOutageFixture(t, { confirm, reply: (attempt) => attempt !== 1 ? undefined :
+      mode === "unconfirmed-startup" ? outageResponse({ error: "service not initialized" }, 503) : outageBusy() });
     const user = projectedWake(), result = f.run(user).then(() => null, (error) => error);
     try {
       await outageUntil(() => f.attempts() === 1);
