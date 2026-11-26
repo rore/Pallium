@@ -3,6 +3,7 @@ import pytest
 import asyncio
 import json
 import threading
+from types import SimpleNamespace
 
 from tests.test_codex_retained_wake import (
     SCOPE, TARGET, _hook_runner, http_wake, recover, retained as retained_fixture,
@@ -114,9 +115,12 @@ async def test_actual_mcp_idle_recovers_same_epoch_enrollment_without_replay(
     "replacement-dispose-continuity", "replacement-stop",
     "replacement-register-deadline", "replacement-register-transport-failed",
     "replacement-exhaustion", "replacement-budget", "replacement-backoff-stop",
+    "replacement-before-ready-expiry", "replacement-after-ready-stop",
+    "replacement-after-ready-expiry", "replacement-after-ready-binding",
+    "replacement-after-ready-unresolved",
 ])
 async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
-    retained, monkeypatch, idle_result,
+    retained, monkeypatch, tmp_path, idle_result,
 ):
     from app import codex_bridge_pipe as bridge
     from app.mcp import codex_desktop_bridge as lifecycle
@@ -135,6 +139,22 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
     replacement_failure = idle_result.startswith("replacement-")
     replacement_fault = idle_result.removeprefix("replacement-")
     replacement_recovers = replacement_fault in {"deadline", "transport-failed"}
+    close_reason = {
+        "before-ready-expiry": "reconnect-window-exhausted",
+        "after-ready-stop": "reconnect-stopped",
+        "after-ready-expiry": "reconnect-window-exhausted",
+        "after-ready-binding": "reconnect-not-eligible",
+        "after-ready-unresolved": "reconnect-not-eligible",
+    }.get(replacement_fault)
+    clock_offset = 0
+    monotonic = lifecycle.time.monotonic
+    monkeypatch.setattr(lifecycle, "time", SimpleNamespace(monotonic=lambda: monotonic() + clock_offset))
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+
+    def close_reasons():
+        log, = (tmp_path / "logs").glob("codex-retained-client-*.log")
+        return [line.split("reason=", 1)[1].split()[0] for line in log.read_text(encoding="utf-8").splitlines()]
+
     expected_clients = 3 if replacement_recovers else 2
     if replacement_failure:
         monkeypatch.setattr(lifecycle, "RECONNECT_INITIAL_BACKOFF_SECONDS", .001)
@@ -164,13 +184,16 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
         unresolved = False
         def __init__(self, index):
             self.index, self.closed = index, False
+            self.ready_calls = self.close_calls = 0
         def write(self, value, deadline):
             self.request = value
         def read(self, deadline):
             value = self.request
+            if value["verb"] == "ready":
+                self.ready_calls += 1
             if value["verb"] == "ready" and registrations:
                 idle_observed.set()
-                if (replacement_failure and self.index > 0
+                if (replacement_failure and close_reason is None and self.index > 0
                         and not replacement_fault.startswith("register-")
                         and (self.index == 1 or replacement_fault == "exhaustion")):
                     if replacement_fault == "unresolved":
@@ -219,6 +242,7 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                     "sequence": value["sequence"]}
         def close(self):
             # The inherited loop EOF proof independently verifies this exact cleanup.
+            self.close_calls += 1
             self.closed = True
             service._drop()
             disposed.set()
@@ -247,6 +271,7 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
                 self.unresolved = True
 
     def native(path, stop, *, retained):
+        nonlocal clock_offset
         client = object.__new__(native_type)
         client.w, client.sid = service.w, service.sid
         client.bootstrap_path, client.manifest = path, dict(manifest)
@@ -261,6 +286,27 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
         client.continuity, client.unresolved = None, False
         source_resources.append((client.io, client.peer, client.source))
         clients.append(client)
+        if close_reason is not None and len(clients) == 2:
+            if replacement_fault == "before-ready-expiry":
+                clock_offset = lifecycle.RECONNECT_WINDOW_SECONDS
+            else:
+                ready = client.ready
+
+                def ready_then_change():
+                    nonlocal clock_offset
+                    result = ready()
+                    assert result["status"] == "ready"
+                    if replacement_fault in {"after-ready-stop", "after-ready-expiry"}:
+                        clock_offset = lifecycle.RECONNECT_WINDOW_SECONDS
+                    if replacement_fault == "after-ready-stop":
+                        stop.set()  # Stop wins even if the reconnect window also expired.
+                    elif replacement_fault == "after-ready-binding":
+                        monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
+                    elif replacement_fault == "after-ready-unresolved":
+                        client.unresolved = True
+                    return result
+
+                client.ready = ready_then_change
         return client
 
     server = _protocol_server(monkeypatch, native, operations)
@@ -292,6 +338,8 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
             assert all(value["epoch"] == manifest["epoch"] for value in registrations)
             assert service.retained_registration is not None and custody is not None
             assert service.caller == service.retained_registration["caller"] == ("actual-runtime", "first")
+            if idle_result == "resolved-transport-failure":
+                assert close_reasons() == ["idle-ready-transport", "cleanup"]
             desktop_count = len(natives)
             if idle_result == "different-thread":
                 fresh = await session.call_tool("pallium_relay_status", {"message_id": "message"},
@@ -327,6 +375,13 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
             assert all(resource.closed for resource in source_resources[0])
             if replacement_fault not in {"unresolved", "dispose-failure"}:
                 assert all(resource.closed for resources in source_resources[1:] for resource in resources)
+            if close_reason is not None:
+                assert recoveries == [(None, True)]
+                assert close_reasons() == ["idle-ready-transport", close_reason, "cleanup"]
+                candidate_io, _, _ = source_resources[1]
+                assert candidate_io.ready_calls == (replacement_fault != "before-ready-expiry")
+                assert candidate_io.close_calls == 1
+                assert clients[1].io is clients[1].source is clients[1].peer is None
             assert all(value["thread_ref"] == "actual-runtime" and value["turn_ref"] == "first"
                        for value in registrations)
         elif idle_result in {"healthy", "busy"}:
