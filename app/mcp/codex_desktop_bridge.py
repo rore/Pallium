@@ -23,6 +23,7 @@ _CLOSE_REASONS = frozenset({
     "initial-ready-unavailable",
     "replacement-ready-unavailable", "initial-register-unavailable", "reregister-unavailable",
     "idle-ready-unavailable", "capability-changed", "continuity-changed",
+    "reconnect-stopped", "reconnect-window-exhausted", "reconnect-not-eligible",
     "worker-error", "worker-finished", "lifespan-stop", "cleanup",
 })
 
@@ -599,7 +600,7 @@ class InventoryWorker:
                 retry_ready = False
                 try:
                     if time.monotonic() - started >= RECONNECT_WINDOW_SECONDS:
-                        self._finish(client)
+                        self._finish(client, reason="reconnect-window-exhausted")
                         return None
                     manifest = getattr(client, "manifest", None)
                     ready_manifest = dict(manifest) if type(manifest) is dict else None
@@ -620,13 +621,19 @@ class InventoryWorker:
                         raise
                     result = inventory_status(ready)
                     if result["status"] == "ready":
-                        if (self.stop_event.is_set()
-                                or time.monotonic() - started >= RECONNECT_WINDOW_SECONDS
-                                or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
+                        if self.stop_event.is_set():
+                            close_reason = "reconnect-stopped"
+                        elif time.monotonic() - started >= RECONNECT_WINDOW_SECONDS:
+                            close_reason = "reconnect-window-exhausted"
+                        elif (os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
                                 or client.continuity != continuity
                                 or getattr(client, "unresolved", False)
                                 or getattr(getattr(client, "io", None), "unresolved", False)):
-                            self._finish(client)
+                            close_reason = "reconnect-not-eligible"
+                        else:
+                            close_reason = None
+                        if close_reason is not None:
+                            self._finish(client, reason=close_reason)
                             return None
                         result = inventory_status(client.register(metadata))
                         if (result["status"] == "registered" and client.continuity == continuity
