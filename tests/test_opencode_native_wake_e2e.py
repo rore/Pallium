@@ -1601,6 +1601,7 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
     subprocess.run(["git", "-C", str(foreign), "remote", "add", "origin", "https://example.test/team/foreign.git"], check=True)
     scope = {"container_ref": "git:example.test/team/relay"}
     requests = []
+    primary_requests = []
     session = None
     first_primary = {"instance": None, "value": None}
     primary_lock = threading.Lock()
@@ -1717,6 +1718,8 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
             requests.append(body)
             if coalesced:
                 primary = _primary_gate(self.headers, session, first_primary, entered, primary_lock)
+                if primary:
+                    primary_requests.append((json.loads(self.headers["x-pallium-fixture"]), body))
             else:
                 entered.set()
                 primary = True
@@ -2088,12 +2091,33 @@ export default {...production,setup:async ctx=>{
 
             entered.clear()
             release.clear()
-            original = send("COALESCED_PAYLOAD_שלום")
+            original_payload = "COALESCED_PAYLOAD_שלום" + "界" * 6000 + "_END_OF_FIXTURE"
+            original = send(original_payload)
             original_delivery = original["deliveries"][0]["delivery_id"]
             assert entered.wait(15), "automatic wake never reached the blocked provider"
             _assert_first_primary(first_primary, session, original_delivery,
                                   [row for row in observations() if row["kind"] == "wake.prompt"])
             assert delivered(original)
+            first_tag, first_body = eventually(lambda: primary_requests and primary_requests[0])
+            assert first_tag == first_primary["value"]["tag"]
+            claimed, = wake_rows("context", original_delivery)[0]["response"]["deliveries"]
+            assert claimed["content_truncated"] is True
+            offset = claimed["next_offset"]
+            assert 0 < offset < len(original_payload)
+            assert claimed["payload"] == original_payload[:offset]
+            original_message = original["message_id"]
+            primary_text = json.dumps(first_body, ensure_ascii=False)
+            assert f"message_id: {original_message}" in primary_text
+            assert f"delivery_id: {original_delivery}" in primary_text
+            pointer = f'pallium_relay_status(message_id="{original_message}", offset={offset})'
+            assert json.dumps(pointer)[1:-1] in primary_text
+            assert claimed["payload"] in primary_text and "_END_OF_FIXTURE" not in primary_text
+            suffix = client.get(f"/relay/messages/{original_message}", params={
+                **scope, "offset": offset, "page_size": 31,
+            })
+            assert suffix.status_code == 200, suffix.text
+            assert suffix.json()["payload_offset"] == offset
+            assert suffix.json()["payload"] == original_payload[offset:offset + 31]
             eventually(lambda: wake_rows("admitted", original_delivery))
             admitted = api("POST", prefix + "/prompt", {"id": "msg_coalesced_ordinary",
                 "text": "ordinary work שלום 😀", "delivery": "steer"})
@@ -2143,6 +2167,13 @@ export default {...production,setup:async ctx=>{
                 assert state["state"] == "delivered" and state["attempts"] == 1
             assert all(any(marker in json.dumps(body, ensure_ascii=False) for body in requests)
                        for marker in ["COALESCED_PAYLOAD_שלום", *[f"AUTOMATIC_BACKLOG_{i}_界" for i in range(4)]])
+            for index, sent in enumerate(backlog):
+                marker = f"AUTOMATIC_BACKLOG_{index}_界"
+                message_id, delivery_id = sent["message_id"], sent["deliveries"][0]["delivery_id"]
+                assert any(
+                    all(value in body for value in (marker, f"message_id: {message_id}", f"delivery_id: {delivery_id}"))
+                    for body in (json.dumps(data, ensure_ascii=False) for _, data in primary_requests)
+                )
             coalesced_summary["attached_before_ack"] = coalesced_summary["provider_payloads"] = True
 
             def reload_plugin():
