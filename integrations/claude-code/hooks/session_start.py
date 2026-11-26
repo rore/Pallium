@@ -170,16 +170,21 @@ def main() -> None:
         source = payload.get("source", "")
         container_ref = resolve_container_ref(cwd, session_id, True, False)
         actor_ref = derive_actor_ref(cwd, session_id)
-        register_claude_wake(session_id, container_ref, idle=False)
+        # Idle compaction has no later Stop to restore idle; keep the existing
+        # registration and its state instead of re-registering busy.
+        if source != "compact":
+            register_claude_wake(session_id, container_ref, idle=False)
 
         relay_scope = format_injection(
             [], container_ref, budget_chars=RELAY_OUTPUT_BUDGET,
             thread_ref=session_id, actor_ref=actor_ref,
             agent_ref="claude-code", visibility="private",
         )
+        # Compaction can run while idle with no model turn to read claimed
+        # Relay context; leave pending work to the next ordinary pickup.
         relay_response = (
             relay_turn("claude-code", session_id, container_ref, max_chars=RELAY_TURN_BUDGET, timeout=0.75, request=relay_request) or {}
-        ) if relay_scope else {}
+        ) if relay_scope and source != "compact" else {}
         relay_output, rendered = format_relay(
             relay_response.get("deliveries") or [],
             budget_chars=RELAY_OUTPUT_BUDGET,

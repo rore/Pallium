@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import sys
 import time
@@ -4702,3 +4703,704 @@ def test_codex_hooks_exhausted_at_main_entry_skip_http(monkeypatch, tmp_path, ca
     assert network_calls == []
     assert common.remaining_safe_time() == 0
     assert capsys.readouterr().out == ""
+
+
+def test_claude_session_start_compact_leaves_relay_custody_for_ordinary_pickup(client, monkeypatch, tmp_path):
+    """Compact may run while idle with no turn; claimed Relay context would go unread."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    from fastapi.testclient import TestClient
+
+    # Hook traffic arrives over loopback; the registration route requires it.
+    loopback = TestClient(client.app, client=("127.0.0.1", 50000))
+    orientation = "KNOWN COMPACT ORIENTATION BLOCK"
+    payload_text = "compact custody payload"
+    events, registrations = [], []
+
+    class HTTP(BaseHTTPRequestHandler):
+        def do_POST(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            events.append(self.path)
+            if self.path == "/query":
+                status, body = 200, json.dumps({"injectable_blocks": [
+                    {"title": "Orientation", "memory_object_id": "orient-1", "text": orientation},
+                ]}).encode()
+            else:
+                response = loopback.post(self.path, content=raw, headers={"Content-Type": "application/json"})
+                status, body = response.status_code, response.content
+                if self.path == "/internal/claude-wake/register":
+                    registrations.append((status, json.loads(raw)))
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HTTP)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    profile, project = tmp_path / "profile", tmp_path / "project"
+    project.mkdir()
+    # Bind the hook to the app's own durable registry, as the installed service does.
+    wake_dir = client.app.state.claude_wake_registry._state_dir
+    relay_id = json.loads((wake_dir / "relay-owner.json").read_text(encoding="utf-8"))["relay_id"]
+    binding = profile / ".pallium" / "hooks" / "claude-wake-binding.json"
+    binding.parent.mkdir(parents=True)
+    binding.write_text(json.dumps({"port": server.server_port, "relay_id": relay_id, "wake_dir": str(wake_dir)}), encoding="utf-8")
+    hooks = ROOT / "integrations" / "claude-code" / "hooks"
+    env = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith("CLAUDE_CODE_") and key != "PALLIUM_HOOK_ACTOR_REF"
+    }
+    env.update({
+        "USERPROFILE": str(profile), "HOME": str(profile),
+        "PALLIUM_CLAUDE_WAKE_DIR": str(wake_dir), "PALLIUM_PORT": str(server.server_port),
+        "CLAUDE_CODE_MESSAGING_SOCKET": r"\\.\pipe\compact-test",
+        "CLAUDE_CODE_MESSAGING_TOKEN": "compact-test-token",
+    })
+    try:
+        # The hook's own resolver, in the hook's environment, names the scope to queue into.
+        container_ref = subprocess.run(
+            [sys.executable, "-c", "import sys, common; print(common.resolve_container_ref(sys.argv[1], 'target', True, False))", str(project)],
+            cwd=hooks, env=env, text=True, capture_output=True, check=True, timeout=10,
+        ).stdout.strip()
+        scope = {"container_ref": container_ref}
+        for turn in ({"runtime": "codex", "session_ref": "sender", **scope},
+                     {"runtime": "claude-code", "session_ref": "target", **scope}):
+            assert client.post("/relay/turn", json=turn).status_code == 200
+        sent = client.post("/relay/messages", json={
+            "sender_runtime": "codex", "sender_session_ref": "sender",
+            "recipient": "claude-code:target", "payload": payload_text, **scope,
+        })
+        assert sent.status_code == 200, sent.text
+        message_id = sent.json()["message_id"]
+
+        def delivery():
+            found, = client.get(f"/relay/messages/{message_id}", params=scope).json()["deliveries"]
+            return found["state"], found["attempts"]
+
+        events.clear()
+        compact = subprocess.run(
+            [sys.executable, str(hooks / "session_start.py")],
+            input=json.dumps({"cwd": str(project), "session_id": "target", "source": "compact"}),
+            env=env, text=True, capture_output=True, check=False, timeout=20,
+        )
+        compact_events = list(events)
+        assert delivery() == ("pending", 0)
+
+        events.clear()
+        monkeypatch.delitem(sys.modules, "common", raising=False)
+        prompt = _load("claude_compact_prompt", "integrations/claude-code/hooks/user_prompt_submit.py")
+        common = prompt.relay_turn.__globals__
+        monkeypatch.setitem(common, "PALLIUM_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+        monkeypatch.setattr(prompt, "read_hook_input", lambda: {
+            "cwd": str(project), "session_id": "target",
+            "prompt": "Pick up the pending Relay work after compaction.",
+        })
+        monkeypatch.setattr(prompt, "register_claude_wake", lambda *_a, **_k: None)
+        monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_args: container_ref)
+        monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_args: "actor")
+        monkeypatch.setattr(prompt, "discover_work_refs", lambda *_args: common["WorkRefDiscovery"]())
+        monkeypatch.setattr(prompt, "get_pending_relay_close_batch", lambda *_args: ([], 0))
+        output = SimpleNamespace(buffer=io.BytesIO(), encoding="utf-8")
+        with monkeypatch.context() as stream:
+            stream.setattr(prompt.sys, "stdout", output)
+            with pytest.raises(SystemExit):
+                prompt.main()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert compact.returncode == 0, compact.stderr
+    # Compact keeps any existing registration; it registers nothing itself.
+    assert registrations == []
+    assert ("claude-code", "target", container_ref) not in client.app.state.claude_wake_registry._registrations
+    assert "/query" in compact_events
+    assert orientation in compact.stdout
+    assert payload_text not in compact.stdout
+    assert not [path for path in compact_events if path.startswith("/relay/")]
+    assert events.count("/relay/deliveries/ack") == 1
+    assert payload_text in output.buffer.getvalue().decode("utf-8")
+    assert delivery() == ("delivered", 1)
+
+
+def test_claude_session_start_compact_keeps_idle_wake_eligibility(client, monkeypatch, tmp_path):
+    """Idle compaction has no later Stop; compact must not leave an idle session busy."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    import app.claude_wake as claude_wake
+    from fastapi.testclient import TestClient
+
+    loopback = TestClient(client.app, client=("127.0.0.1", 50000))
+    registrations, wakes, acks = [], [], []
+
+    class HTTP(BaseHTTPRequestHandler):
+        def do_POST(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            if self.path == "/query":
+                status, body = 200, b'{"injectable_blocks": []}'
+            else:
+                response = loopback.post(self.path, content=raw, headers={"Content-Type": "application/json"})
+                status, body = response.status_code, response.content
+                if self.path == "/internal/claude-wake/register":
+                    registrations.append((status, json.loads(raw)["idle"]))
+                if self.path == "/relay/deliveries/ack":
+                    acks.append((status, json.loads(raw)["delivery_id"]))
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    # Synthetic credentials only; the fake transport records what a wake would use.
+    socket_path, token = r"\\.\pipe\idle-compact-test", "idle-compact-test-token"
+    monkeypatch.setattr(claude_wake, "claude_wake_transport", lambda *credential: wakes.append(credential) or "accepted")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HTTP)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    profile, project = tmp_path / "profile", tmp_path / "project"
+    project.mkdir()
+    registry = client.app.state.claude_wake_registry
+    wake_dir = registry._state_dir
+    relay_id = json.loads((wake_dir / "relay-owner.json").read_text(encoding="utf-8"))["relay_id"]
+    binding = profile / ".pallium" / "hooks" / "claude-wake-binding.json"
+    binding.parent.mkdir(parents=True)
+    binding.write_text(json.dumps({"port": server.server_port, "relay_id": relay_id, "wake_dir": str(wake_dir)}), encoding="utf-8")
+    hooks = ROOT / "integrations" / "claude-code" / "hooks"
+    env = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith("CLAUDE_CODE_") and key != "PALLIUM_HOOK_ACTOR_REF"
+    }
+    env.update({
+        "USERPROFILE": str(profile), "HOME": str(profile),
+        "PALLIUM_CLAUDE_WAKE_DIR": str(wake_dir), "PALLIUM_PORT": str(server.server_port),
+        "CLAUDE_CODE_MESSAGING_SOCKET": socket_path, "CLAUDE_CODE_MESSAGING_TOKEN": token,
+    })
+
+    def hook_python(code, *args):
+        return subprocess.run(
+            [sys.executable, "-c", code, *args], cwd=hooks, env=env,
+            text=True, capture_output=True, check=True, timeout=20,
+        ).stdout.strip()
+
+    try:
+        container_ref = hook_python(
+            "import sys, common; print(common.resolve_container_ref(sys.argv[1], 'target', True, False))", str(project),
+        )
+        key = ("claude-code", "target", container_ref)
+        scope = {"container_ref": container_ref}
+        for turn in ({"runtime": "codex", "session_ref": "sender", **scope},
+                     {"runtime": "claude-code", "session_ref": "target", **scope}):
+            assert client.post("/relay/turn", json=turn).status_code == 200
+        # The turn ended: Stop's real registration call leaves the session idle.
+        assert hook_python(
+            "import sys, common; common.start_hook_deadline(8); print(common.register_claude_wake('target', sys.argv[1], idle=True))",
+            container_ref,
+        ) == "True"
+        before = registry._registrations[key]
+        assert before.state == "idle"
+
+        registrations.clear()
+        compact = subprocess.run(
+            [sys.executable, str(hooks / "session_start.py")],
+            input=json.dumps({"cwd": str(project), "session_id": "target", "source": "compact"}),
+            env=env, text=True, capture_output=True, check=False, timeout=20,
+        )
+        compact_registrations = list(registrations)
+        after = registry._registrations[key]
+
+        # Work arrives after the idle compaction; nothing else runs in the session.
+        sent = client.post("/relay/messages", json={
+            "sender_runtime": "codex", "sender_session_ref": "sender",
+            "recipient": "claude-code:target", "payload": "idle compact wake payload", **scope,
+        })
+        assert sent.status_code == 200, sent.text
+        queued, = sent.json()["deliveries"]
+        deadline = time.monotonic() + 5
+        while not wakes and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert compact.returncode == 0, compact.stderr
+        assert (after.state, compact_registrations) == ("idle", [])
+        assert (after.socket_path, after.token, after.generation) == (before.socket_path, before.token, before.generation)
+        assert wakes == [(socket_path, token)]
+        with registry._lock:
+            reserved = registry._registrations[key]
+            assert reserved.state == "wake_inflight" and reserved.delivery_id == queued["delivery_id"]
+
+        pickup = subprocess.run(
+            [sys.executable, str(hooks / "user_prompt_submit.py")],
+            input=json.dumps({"cwd": str(project), "session_id": "target",
+                              "prompt": "Pallium Relay wake notice: new messages available."}),
+            env=env, text=True, capture_output=True, check=True, timeout=20,
+        )
+        found, = client.get(f"/relay/messages/{sent.json()['message_id']}", params=scope).json()["deliveries"]
+        assert pickup.stdout.count("idle compact wake payload") == 1
+        assert len(acks) == 1 and acks[0][0] in (200, 204) and acks[0][1] == queued["delivery_id"]
+        assert (found["delivery_id"], found["state"], found["attempts"]) == (queued["delivery_id"], "delivered", 1)
+        settled = registry._registrations[key]
+        assert (settled.state, settled.delivery_id) == ("busy", None)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+def test_claude_mid_turn_compact_stays_busy_until_stop_then_wakes(client, monkeypatch, tmp_path):
+    """Mid-turn compact keeps busy; Stop's idle registration (not compact) enables the wake."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    import app.claude_wake as claude_wake
+    from fastapi.testclient import TestClient
+
+    loopback = TestClient(client.app, client=("127.0.0.1", 50000))
+    events, registrations, wakes = [], [], []
+
+    class HTTP(BaseHTTPRequestHandler):
+        def do_POST(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            events.append(self.path)
+            if self.path == "/query":
+                status, body = 200, b'{"injectable_blocks": []}'
+            else:
+                response = loopback.post(self.path, content=raw, headers={"Content-Type": "application/json"})
+                status, body = response.status_code, response.content
+                if self.path == "/internal/claude-wake/register":
+                    registrations.append((status, json.loads(raw)["idle"]))
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    socket_path, token = r"\\.\pipe\mid-turn-compact-test", "mid-turn-compact-test-token"
+    monkeypatch.setattr(claude_wake, "claude_wake_transport", lambda *credential: wakes.append(credential) or "accepted")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HTTP)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    profile, project = tmp_path / "profile", tmp_path / "project"
+    project.mkdir()
+    registry = client.app.state.claude_wake_registry
+    wake_dir = registry._state_dir
+    relay_id = json.loads((wake_dir / "relay-owner.json").read_text(encoding="utf-8"))["relay_id"]
+    binding = profile / ".pallium" / "hooks" / "claude-wake-binding.json"
+    binding.parent.mkdir(parents=True)
+    binding.write_text(json.dumps({"port": server.server_port, "relay_id": relay_id, "wake_dir": str(wake_dir)}), encoding="utf-8")
+    hooks = ROOT / "integrations" / "claude-code" / "hooks"
+    env = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith("CLAUDE_CODE_") and key != "PALLIUM_HOOK_ACTOR_REF"
+    }
+    env.update({
+        "USERPROFILE": str(profile), "HOME": str(profile),
+        "PALLIUM_CLAUDE_WAKE_DIR": str(wake_dir), "PALLIUM_PORT": str(server.server_port),
+        "CLAUDE_CODE_MESSAGING_SOCKET": socket_path, "CLAUDE_CODE_MESSAGING_TOKEN": token,
+    })
+
+    def hook_python(code, *args):
+        return subprocess.run(
+            [sys.executable, "-c", code, *args], cwd=hooks, env=env,
+            text=True, capture_output=True, check=True, timeout=20,
+        ).stdout.strip()
+
+    register = "import sys, common; common.start_hook_deadline(8); print(common.register_claude_wake('target', sys.argv[1], idle=sys.argv[2] == 'idle'))"
+
+    try:
+        container_ref = hook_python(
+            "import sys, common; print(common.resolve_container_ref(sys.argv[1], 'target', True, False))", str(project),
+        )
+        key = ("claude-code", "target", container_ref)
+        scope = {"container_ref": container_ref}
+        for turn in ({"runtime": "codex", "session_ref": "sender", **scope},
+                     {"runtime": "claude-code", "session_ref": "target", **scope}):
+            assert client.post("/relay/turn", json=turn).status_code == 200
+        # A turn is running: the real hook registration marks the session busy.
+        assert hook_python(register, container_ref, "busy") == "True"
+        before = registry._registrations[key]
+
+        registrations.clear()
+        compact = subprocess.run(
+            [sys.executable, str(hooks / "session_start.py")],
+            input=json.dumps({"cwd": str(project), "session_id": "target", "source": "compact"}),
+            env=env, text=True, capture_output=True, check=False, timeout=20,
+        )
+        compact_registrations = list(registrations)
+        after = registry._registrations[key]
+
+        def send(text):
+            sent = client.post("/relay/messages", json={
+                "sender_runtime": "codex", "sender_session_ref": "sender",
+                "recipient": "claude-code:target", "payload": text, **scope,
+            })
+            assert sent.status_code == 200, sent.text
+            return sent.json()["message_id"], sent.json()["deliveries"][0]["delivery_id"]
+
+        def delivery(message_id):
+            found, = client.get(f"/relay/messages/{message_id}", params=scope).json()["deliveries"]
+            return found["state"], found["attempts"]
+
+        def pickup(text):
+            events.clear()
+            monkeypatch.delitem(sys.modules, "common", raising=False)
+            prompt = _load("claude_mid_turn_compact_prompt", "integrations/claude-code/hooks/user_prompt_submit.py")
+            common = prompt.relay_turn.__globals__
+            monkeypatch.setitem(common, "PALLIUM_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+            monkeypatch.setattr(prompt, "read_hook_input", lambda: {
+                "cwd": str(project), "session_id": "target", "prompt": f"Continue with {text}.",
+            })
+            monkeypatch.setattr(prompt, "register_claude_wake", lambda *_a, **_k: None)
+            monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_args: container_ref)
+            monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_args: "actor")
+            monkeypatch.setattr(prompt, "discover_work_refs", lambda *_args: common["WorkRefDiscovery"]())
+            monkeypatch.setattr(prompt, "get_pending_relay_close_batch", lambda *_args: ([], 0))
+            output = SimpleNamespace(buffer=io.BytesIO(), encoding="utf-8")
+            with monkeypatch.context() as stream:
+                stream.setattr(prompt.sys, "stdout", output)
+                with pytest.raises(SystemExit):
+                    prompt.main()
+            return output.buffer.getvalue().decode("utf-8").count(text), events.count("/relay/deliveries/ack")
+
+        # Work that arrives during the turn is not woken; ordinary pickup owns it.
+        during_message, _ = send("mid-turn compact payload")
+        time.sleep(1.5)  # Give dispatch and at least one reconciler pass a chance to (wrongly) wake.
+        during_turn = (registry._registrations[key].state, list(wakes), delivery(during_message))
+        during_pickup = pickup("mid-turn compact payload") + (delivery(during_message),)
+
+        # The turn ends: Stop's own idle registration makes later work wakeable.
+        assert hook_python(register, container_ref, "idle") == "True"
+        later_message, later_delivery = send("after stop payload")
+        deadline = time.monotonic() + 5
+        while not wakes and time.monotonic() < deadline:
+            time.sleep(0.05)
+        woken = registry._registrations[key]
+        woken_view = (woken.state, woken.delivery_id, list(wakes), delivery(later_message))
+        woken_pickup = pickup("after stop payload")
+        released = registry._registrations[key]
+        released_view = (released.state, released.delivery_id, delivery(later_message))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert compact.returncode == 0, compact.stderr
+    assert (before.state, compact_registrations, after.state, after.generation) == ("busy", [], "busy", before.generation)
+    assert during_turn == ("busy", [], ("pending", 0))
+    assert during_pickup == (1, 1, ("delivered", 1))
+    # The accepted wake follows Stop's registration; it is not evidence about compaction.
+    assert woken_view == ("wake_inflight", later_delivery, [(socket_path, token)], ("pending", 0))
+    assert woken_pickup == (1, 1)
+    assert released_view == ("busy", None, ("delivered", 1))
+
+
+@pytest.mark.parametrize("state", ["inflight", "pending_close", "pending_replacement", "refused", "lock_held"])
+def test_claude_session_start_compact_leaves_registry_state_untouched(client, monkeypatch, tmp_path, state):
+    """Compact sends no registry request, so fences, intents, refusal and locks stay exact."""
+    from dataclasses import replace
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    from core.claude_wake import ActivationAttemptResult
+    from fastapi.testclient import TestClient
+
+    loopback = TestClient(client.app, client=("127.0.0.1", 50000))
+    events = []
+
+    class HTTP(BaseHTTPRequestHandler):
+        def do_POST(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            events.append(self.path)
+            if self.path == "/query":
+                status, body = 200, b'{"injectable_blocks": []}'
+            else:
+                response = loopback.post(self.path, content=raw, headers={"Content-Type": "application/json"})
+                status, body = response.status_code, response.content
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HTTP)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    profile, project = tmp_path / "profile", tmp_path / "project"
+    project.mkdir()
+    registry = client.app.state.claude_wake_registry
+    wake_dir = registry._state_dir
+    relay_id = json.loads((wake_dir / "relay-owner.json").read_text(encoding="utf-8"))["relay_id"]
+    binding = profile / ".pallium" / "hooks" / "claude-wake-binding.json"
+    binding.parent.mkdir(parents=True)
+    binding.write_text(json.dumps({"port": server.server_port, "relay_id": relay_id, "wake_dir": str(wake_dir)}), encoding="utf-8")
+    hooks = ROOT / "integrations" / "claude-code" / "hooks"
+    env = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith("CLAUDE_CODE_") and key != "PALLIUM_HOOK_ACTOR_REF"
+    }
+    env.update({
+        "USERPROFILE": str(profile), "HOME": str(profile),
+        "PALLIUM_CLAUDE_WAKE_DIR": str(wake_dir), "PALLIUM_PORT": str(server.server_port),
+        "CLAUDE_CODE_MESSAGING_SOCKET": r"\\.\pipe\compact-state-test",
+        "CLAUDE_CODE_MESSAGING_TOKEN": "compact-state-test-token",
+    })
+
+    def hook_python(code, *args):
+        return subprocess.run(
+            [sys.executable, "-c", code, *args], cwd=hooks, env=env,
+            text=True, capture_output=True, check=True, timeout=20,
+        ).stdout.strip()
+
+    def read(path):
+        return path.read_bytes() if path.exists() else None
+
+    try:
+        container_ref = hook_python(
+            "import sys, common; print(common.resolve_container_ref(sys.argv[1], 'target', True, False))", str(project),
+        )
+        key = ("claude-code", "target", container_ref)
+        assert hook_python(
+            "import sys, common; common.start_hook_deadline(8); print(common.register_claude_wake('target', sys.argv[1], idle=True))",
+            container_ref,
+        ) == "True"
+        identity = {"runtime": "claude-code", "session_ref": "target", "container_ref": container_ref}
+        intent_path = registry._intent_path(*key)
+        if state == "inflight":
+            uncertain = ActivationAttemptResult("uncertain", "transport_uncertain", ("submission_attempted",))
+            fence = {"delivery_id": "relay-delivery-" + "c" * 32, "recipient_endpoint_id": "relay-session-" + "d" * 32}
+            assert registry.attempt(**identity, **fence, transport=lambda *_: uncertain).outcome == "uncertain"
+            with registry._lock:
+                fenced = replace(registry._registrations[key], admission_id="compact-state-admission")
+                assert registry._write_canonical_locked({**registry._registrations, key: fenced})
+                registry._registrations[key] = fenced
+            seeded = registry._registrations[key]
+            assert (seeded.state, seeded.delivery_id, seeded.recipient_endpoint_id, seeded.admission_id) == (
+                "wake_inflight", fence["delivery_id"], fence["recipient_endpoint_id"], "compact-state-admission",
+            )
+        elif state in {"pending_close", "pending_replacement"}:
+            intent = {**identity, "intent_id": "a" * 32}
+            intent.update({"closed": True} if state == "pending_close" else {
+                "socket_path": r"\\.\pipe\compact-state-replacement", "token": "replacement-token", "idle": False,
+            })
+            intent_path.parent.mkdir(parents=True, exist_ok=True)
+            intent_path.write_text(json.dumps(intent, separators=(",", ":")), encoding="utf-8")
+        elif state == "refused":
+            monkeypatch.setattr(registry, "_rehydration_refused", True)
+        capabilities = wake_dir / "capabilities.json"
+        before = (read(capabilities), read(intent_path), registry._registrations[key])
+
+        def compact():
+            events.clear()
+            return subprocess.run(
+                [sys.executable, str(hooks / "session_start.py")],
+                input=json.dumps({"cwd": str(project), "session_id": "target", "source": "compact"}),
+                env=env, text=True, capture_output=True, check=False, timeout=20,
+            )
+
+        if state == "lock_held":
+            with registry._scoped_intent_lock(*key) as acquired:
+                assert acquired
+                result = compact()
+                lock_still_held = not registry._scoped_intent_lock(*key).__enter__()
+        else:
+            result, lock_still_held = compact(), None
+        after = (read(capabilities), read(intent_path), registry._registrations[key])
+        requests = [path for path in events if path != "/query"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert result.returncode == 0, result.stderr
+    assert "/query" in events
+    assert requests == []
+    assert after == before
+    if state == "inflight":
+        assert (after[2].state, after[2].delivery_id, after[2].recipient_endpoint_id, after[2].admission_id) == (
+            "wake_inflight", "relay-delivery-" + "c" * 32, "relay-session-" + "d" * 32, "compact-state-admission",
+        )
+    if state in {"pending_close", "pending_replacement"}:
+        assert after[1] is not None
+    if state == "refused":
+        assert registry._rehydration_refused is True
+    if state == "lock_held":
+        assert lock_still_held is True
+
+
+@pytest.mark.parametrize("failure", ["unreachable", "uncertain"])
+def test_claude_failed_wake_recovers_by_ordinary_pickup_then_wakes_again(client, monkeypatch, tmp_path, failure):
+    """A stale credential's failed wake keeps custody; pickup ACKs once and wake resumes."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    import app.claude_wake as claude_wake
+    from core.claude_wake import ActivationAttemptResult
+    from fastapi.testclient import TestClient
+
+    loopback = TestClient(client.app, client=("127.0.0.1", 50000))
+    events, wakes = [], []
+
+    class HTTP(BaseHTTPRequestHandler):
+        def do_POST(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            events.append(self.path)
+            response = loopback.post(self.path, content=raw, headers={"Content-Type": "application/json"})
+            self.send_response(response.status_code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(response.content)
+
+        def log_message(self, *_args):
+            pass
+
+    first = "unreachable" if failure == "unreachable" else ActivationAttemptResult(
+        "uncertain", "transport_uncertain", ("submission_attempted",),
+    )
+
+    def transport(*credential):
+        wakes.append(credential)
+        return first if len(wakes) == 1 else "accepted"
+
+    socket_path, token = r"\\.\pipe\failed-wake-test", "failed-wake-test-token"
+    monkeypatch.setattr(claude_wake, "claude_wake_transport", transport)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HTTP)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    profile, project = tmp_path / "profile", tmp_path / "project"
+    project.mkdir()
+    registry = client.app.state.claude_wake_registry
+    wake_dir = registry._state_dir
+    relay_id = json.loads((wake_dir / "relay-owner.json").read_text(encoding="utf-8"))["relay_id"]
+    binding = profile / ".pallium" / "hooks" / "claude-wake-binding.json"
+    binding.parent.mkdir(parents=True)
+    binding.write_text(json.dumps({"port": server.server_port, "relay_id": relay_id, "wake_dir": str(wake_dir)}), encoding="utf-8")
+    hooks = ROOT / "integrations" / "claude-code" / "hooks"
+    env = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith("CLAUDE_CODE_") and key != "PALLIUM_HOOK_ACTOR_REF"
+    }
+    env.update({
+        "USERPROFILE": str(profile), "HOME": str(profile),
+        "PALLIUM_CLAUDE_WAKE_DIR": str(wake_dir), "PALLIUM_PORT": str(server.server_port),
+        "CLAUDE_CODE_MESSAGING_SOCKET": socket_path, "CLAUDE_CODE_MESSAGING_TOKEN": token,
+    })
+
+    def hook_python(code, *args):
+        return subprocess.run(
+            [sys.executable, "-c", code, *args], cwd=hooks, env=env,
+            text=True, capture_output=True, check=True, timeout=20,
+        ).stdout.strip()
+
+    register_idle = "import sys, common; common.start_hook_deadline(8); print(common.register_claude_wake('target', sys.argv[1], idle=True))"
+
+    def wait_for(predicate):
+        deadline = time.monotonic() + 5
+        while not predicate() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        return predicate()
+
+    try:
+        container_ref = hook_python(
+            "import sys, common; print(common.resolve_container_ref(sys.argv[1], 'target', True, False))", str(project),
+        )
+        key = ("claude-code", "target", container_ref)
+        scope = {"container_ref": container_ref}
+        for turn in ({"runtime": "codex", "session_ref": "sender", **scope},
+                     {"runtime": "claude-code", "session_ref": "target", **scope}):
+            assert client.post("/relay/turn", json=turn).status_code == 200
+        assert hook_python(register_idle, container_ref) == "True"
+
+        def send(text):
+            sent = client.post("/relay/messages", json={
+                "sender_runtime": "codex", "sender_session_ref": "sender",
+                "recipient": "claude-code:target", "payload": text, **scope,
+            })
+            assert sent.status_code == 200, sent.text
+            return sent.json()["message_id"], sent.json()["deliveries"][0]["delivery_id"]
+
+        def delivery(message_id):
+            found, = client.get(f"/relay/messages/{message_id}", params=scope).json()["deliveries"]
+            return found["state"], found["attempts"]
+
+        message_id, delivery_id = send("failed wake payload")
+        assert wait_for(lambda: len(wakes) == 1)
+        # The reservation is visible before transport returns. Take the
+        # snapshot after attempt() releases the lock and settles the outcome.
+        with registry._lock:
+            failed = registry._registrations[key]
+        failed_view = (failed.state, failed.delivery_id, delivery(message_id))
+
+        # Ordinary pickup: the real UserPromptSubmit hook claims, emits and ACKs.
+        events.clear()
+        monkeypatch.delitem(sys.modules, "common", raising=False)
+        prompt = _load(f"claude_failed_wake_prompt_{failure}", "integrations/claude-code/hooks/user_prompt_submit.py")
+        common = prompt.relay_turn.__globals__
+        monkeypatch.setitem(common, "PALLIUM_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+        monkeypatch.setattr(prompt, "read_hook_input", lambda: {
+            "cwd": str(project), "session_id": "target", "prompt": "Continue.",
+        })
+        monkeypatch.setattr(prompt, "register_claude_wake", lambda *_a, **_k: None)
+        monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_args: container_ref)
+        monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_args: "actor")
+        monkeypatch.setattr(prompt, "discover_work_refs", lambda *_args: common["WorkRefDiscovery"]())
+        monkeypatch.setattr(prompt, "get_pending_relay_close_batch", lambda *_args: ([], 0))
+        output = SimpleNamespace(buffer=io.BytesIO(), encoding="utf-8")
+        with monkeypatch.context() as stream:
+            stream.setattr(prompt.sys, "stdout", output)
+            with pytest.raises(SystemExit):
+                prompt.main()
+        pickup_acks = events.count("/relay/deliveries/ack")
+        emitted = output.buffer.getvalue().decode("utf-8").count("failed wake payload")
+        after_ack = registry._registrations[key]
+        after_ack_view = (after_ack.state, after_ack.delivery_id, delivery(message_id))
+
+        # Stop's normal idle registration, then a distinct later delivery wakes.
+        assert hook_python(register_idle, container_ref) == "True"
+        later_message, later_delivery = send("later wake payload")
+        assert wait_for(lambda: len(wakes) == 2)
+        later = registry._registrations[key]
+        later_view = (later.state, later.delivery_id, delivery(later_message))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    expected_failed = (
+        ("unreachable", None, ("pending", 0)) if failure == "unreachable"
+        else ("wake_inflight", delivery_id, ("pending", 0))
+    )
+    assert failed_view == expected_failed
+    assert (emitted, pickup_acks) == (1, 1)
+    # For uncertain, the exact fence is released by the ACK itself, before Stop runs.
+    assert after_ack_view == ("busy", None, ("delivered", 1))
+    assert later_delivery != delivery_id
+    assert later_view == ("wake_inflight", later_delivery, ("pending", 0))
+    assert wakes == [(socket_path, token), (socket_path, token)]
+
+@pytest.mark.parametrize("source", ["startup", "resume", "clear", "", None])
+def test_claude_session_start_non_compact_keeps_relay_turn(monkeypatch, source):
+    hook = _load(f"claude_start_source_{source}", "integrations/claude-code/hooks/session_start.py")
+    payload = {"cwd": ".", "session_id": "target-session"}
+    if source is not None:
+        payload["source"] = source
+    monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(hook, "pin_container", lambda *_a, **_k: None)
+    registrations, turns, acknowledged = [], [], []
+    monkeypatch.setattr(hook, "register_claude_wake", lambda *args, **kwargs: registrations.append(kwargs))
+    monkeypatch.setattr(hook, "relay_request", lambda *args, **_k: turns.append(args) or _turn_response([DELIVERY]))
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda deliveries, **_scope: acknowledged.append(deliveries))
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert registrations == [{"idle": False}]
+    assert len(turns) == 1
+    assert acknowledged == [[DELIVERY]]
