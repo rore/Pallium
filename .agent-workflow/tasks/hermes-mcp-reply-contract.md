@@ -4,6 +4,14 @@ Branch: `fix/hermes-mcp-reply-contract`. Trusted source base: `16e5a2cc6f631f155
 
 Current phase: the independent architect accepted the `5d33ed57` composition for ordinary CI. It preserves the original adapter and guides and updates only the added reply fixture for #408's generation-owned cleanup. This current-main successor leaves the test-only draft and its RED evidence intact. No local application execution or installed adoption.
 
+Both hosted Linux jobs passed all 101 Hermes reply caller cases.
+The first Linux 3.12 job failed in Relay trace writer contention; one
+failed-job retry hit SQLite setup in a cross-container reply test.
+The independently reviewed [test-only recorder](relay-acquisition-cpu.md)
+is composed for the next ordinary CI. The Hermes product and caller-test
+blobs are unchanged. Interpret any timing only if the selected test
+reports an actual refusal.
+
 <!-- agent-workflow:start -->
 **Outcome:**
 Hermes MCP replies accept nonblank strings through 16000 Unicode code points and report caller-message errors separately without weakening reply authority or changing the legacy direct reply contract.
