@@ -498,7 +498,11 @@ class TestImmediateTransactionRetry:
         local.acquire.assert_called_once()
         local.release.assert_called_once()
 
-    @pytest.mark.parametrize("boundary", ["local_refusal", "local_expired", "setup_expired", "begin_expired", "pause_does_not_fit", "second_pause_does_not_fit", "setup_expired_last", "begin_expired_last"])
+    @pytest.mark.parametrize("boundary", [
+        "local_refusal", "local_expired", "setup_expired", "pragma_at_deadline",
+        "pragma_after_deadline", "pragma_after_deadline_last", "begin_expired",
+        "pause_does_not_fit", "second_pause_does_not_fit", "setup_expired_last", "begin_expired_last",
+    ])
     def test_relay_acquisition_deadline_refuses_without_replaying_work(self, storage, monkeypatch, boundary):
         from storage import sqlite_queue
         if boundary.endswith("_last"):
@@ -527,6 +531,8 @@ class TestImmediateTransactionRetry:
                 return connection
             session.connection.side_effect = connect
             def execute(statement):
+                if str(statement) == "PRAGMA busy_timeout=150":
+                    clock[0] = {"pragma_at_deadline": .45, "pragma_after_deadline": .46}.get(boundary, clock[0])
                 if str(statement) != "BEGIN IMMEDIATE":
                     return
                 attempts.append(1)
@@ -544,6 +550,7 @@ class TestImmediateTransactionRetry:
         assert refusal.value.acquisition_stage == {
             "local_refusal": "local_gate", "local_expired": "pre_attempt_deadline",
             "setup_expired": "setup_deadline", "begin_expired": "late_begin",
+            "pragma_at_deadline": "setup_deadline", "pragma_after_deadline": "setup_deadline",
             "pause_does_not_fit": "backoff_no_fit", "second_pause_does_not_fit": "backoff_no_fit",
         }[boundary]
         assert refusal.value.args == ("database is locked (immediate transaction retry exhausted)",)
@@ -559,6 +566,10 @@ class TestImmediateTransactionRetry:
             assert "COMMIT" not in statements and statements[-1] == "PRAGMA busy_timeout=15000"
             if boundary == "begin_expired":
                 assert statements.count("ROLLBACK") == 1
+            elif boundary.startswith("pragma_"):
+                assert statements == ["PRAGMA busy_timeout=150", "PRAGMA busy_timeout=15000"]
+                assert "setup_pragma" in refusal.value.acquisition_phase_ms
+                assert "begin_immediate" not in refusal.value.acquisition_phase_ms
 
     @pytest.mark.parametrize(
         ("attempt_count", "setup_expired", "expected_stage", "expected_phases"),

@@ -190,6 +190,59 @@ def test_owner_detail_rejects_impossible_sql_observation_boundaries(flags):
     assert _relay_owner_detail_fields(detail) == "unknown"
 
 
+@pytest.mark.parametrize("boundary", ("before", "equal", "after", "late_begin"))
+def test_http_relay_deadline_at_setup_and_begin_boundaries(client, monkeypatch, caplog, boundary):
+    from storage import sqlite_queue
+
+    storage = client.app.state.pallium_service._storage
+    deadline = storage._RELAY_IMMEDIATE_ACQUISITION_SECONDS
+    setup = f"PRAGMA busy_timeout={storage._RELAY_IMMEDIATE_BUSY_TIMEOUT_MS}"
+    reset = f"PRAGMA busy_timeout={storage._DEFAULT_BUSY_TIMEOUT_MS}"
+    clock = 0.0
+    statements = []
+    trigger = "BEGIN IMMEDIATE" if boundary == "late_begin" else setup
+    finish = deadline + {"before": -.001, "equal": 0, "after": .001, "late_begin": .001}[boundary]
+
+    def after_execute(_connection, _cursor, statement, *_):
+        nonlocal clock
+        if statement in (setup, reset, "BEGIN IMMEDIATE", "COMMIT", "ROLLBACK"):
+            statements.append(statement)
+        if statement == trigger:
+            clock = finish
+
+    scope = {"container_ref": "git:example.test/diagnostics"}
+    payload = {"runtime": "codex", "session_ref": "deadline-東京", **scope}
+    engine = storage._relay_engine
+    event.listen(engine, "after_cursor_execute", after_execute)
+    try:
+        with monkeypatch.context() as local:
+            local.setattr(sqlite_queue, "time", SimpleNamespace(**{
+                **vars(sqlite_queue.time), "monotonic": lambda: clock,
+            }))
+            response = client.post("/relay/turn", json=payload)
+    finally:
+        event.remove(engine, "after_cursor_execute", after_execute)
+
+    if boundary == "before":
+        assert response.status_code == 200
+        assert statements == [setup, "BEGIN IMMEDIATE", "COMMIT", reset]
+    else:
+        assert response.status_code == 503
+        assert response.json()["detail"] == {"code": "relay_busy", "retryable": True}
+        assert response.headers["Retry-After"] == "1"
+        assert client.get("/relay/sessions", params=scope).json() == []
+        if boundary == "late_begin":
+            assert statements == [setup, "BEGIN IMMEDIATE", "ROLLBACK", reset]
+            assert "acquisition_stage=late_begin" in caplog.text
+        else:
+            assert statements == [setup, reset]
+            assert "acquisition_stage=setup_deadline" in caplog.text
+        assert client.post("/relay/turn", json=payload).status_code == 200
+    assert [item["session_ref"] for item in client.get("/relay/sessions", params=scope).json()] == [
+        payload["session_ref"],
+    ]
+
+
 @pytest.mark.parametrize("outcome", ("commit", "rollback"))
 def test_http_busy_writer_observation_and_completion_follow_real_transaction(
     client, caplog, outcome,
