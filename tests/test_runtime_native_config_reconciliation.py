@@ -1,6 +1,7 @@
 """Caller regressions for the deployed native/config/hook/dashboard source slice."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from itertools import count
 import os
@@ -208,7 +209,20 @@ def test_dashboard_session_projection_avoids_global_collision_summary(
             "payload": "private-dashboard-sentinel", "container_ref": "scope-a", "expires_in_seconds": 3600,
         })
         assert sent.status_code == 200
-    before = client.get("/dashboard/api/relay/summary").json()
+    observed_at = datetime.now(timezone.utc)
+
+    class SummaryClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return observed_at.astimezone(tz) if tz else observed_at.astimezone().replace(tzinfo=None)
+
+    def summary():
+        # Compare the full delivery state at the same observation time.
+        with monkeypatch.context() as patch:
+            patch.setattr(dashboard, "datetime", SummaryClock)
+            return client.get("/dashboard/api/relay/summary").json()
+
+    before = summary()
     calls = []
     original = dashboard._dashboard_relay_identity_collisions
     def record(session, *args, **kwargs):
@@ -240,7 +254,7 @@ def test_dashboard_session_projection_avoids_global_collision_summary(
                    for row in messages.json()["endpoint_sessions"])
     else:
         assert messages.json()["endpoint_sessions"] == []
-    after = client.get("/dashboard/api/relay/summary").json()
+    after = summary()
     assert before["deliveries"] == after["deliveries"]
     assert before["possible_identity_collisions"]["group_count"] == after["possible_identity_collisions"]["group_count"] == (1 if endpoints else 0)
     assert "private-dashboard-sentinel" not in json.dumps(body)
