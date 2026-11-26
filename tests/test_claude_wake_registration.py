@@ -868,6 +868,7 @@ def test_restricted_claude_prompt_still_delivers_and_acks_pending_relay(
 ) -> None:
     import time
     from contextlib import contextmanager
+    from itertools import count
 
     stages: list[dict[str, object]] = []
 
@@ -933,7 +934,16 @@ def test_restricted_claude_prompt_still_delivers_and_acks_pending_relay(
     assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": session_ref, **scope}).status_code == 200
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "socket")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token")
-    assert common.register_claude_wake(session_ref, scope["container_ref"], idle=True)
+    native_time, native_monotonic = common.time, time.monotonic
+    try:
+        with monkeypatch.context() as registration:
+            setup_time = SimpleNamespace(**vars(native_time))
+            setup_time.monotonic = count(step=.001).__next__
+            registration.setattr(common, "time", setup_time)
+            assert common.register_claude_wake(session_ref, scope["container_ref"], idle=True)
+    finally:
+        assert common.time is native_time
+        assert time.monotonic is native_monotonic
     monkeypatch.delenv("CLAUDE_CODE_MESSAGING_SOCKET")
     assert not common.register_claude_wake(session_ref, scope["container_ref"])
     sent = client.post("/relay/messages", json={
