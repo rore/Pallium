@@ -869,7 +869,7 @@ export default {
               restoredWakeContext(id, item, user, response, confirmed.attempt, false);
             if (response.restored && !earlyRestore &&
                 !restoredWakeContext(id, item, user, response, matchingConfirmation() ? confirmed.attempt : undefined))
-              throw new Error("Pallium internal wake restored authority refused");
+              throw new Error(`Pallium internal wake restored authority refused (delivery_id=${fields.delivery_id})`);
             if ((outage || continuationProof()) && (!continuationProof() ||
                 !restoredWakeContext(id, item, user, response, confirmed.attempt)))
               throw new Error("Pallium internal wake continuation recovery refused");

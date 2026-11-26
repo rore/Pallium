@@ -353,6 +353,13 @@ If the delivery-specific wake appears without that block, inspect its exact
 delivery ID with `pallium_relay_trace`; do not call receive or resend merely
 because the injection is absent.
 
+If OpenCode reports `Pallium internal wake restored authority refused
+(delivery_id=…)`, pass that exact delivery ID to `pallium_relay_trace`.
+If it says `delivered`, the ACK was recorded; check the existing task output
+before assuming work resumed. If the trace is unavailable, record that
+limitation and check service status separately. Do not resend, claim again,
+or reset the session based on missing evidence.
+
 The ordered `prepared`, `associated`, and `completed` events describe bounded
 native activation evidence. Several deliveries can share one activation attempt. A shared stage is returned with
 `shared: true` and `delivery_id: null`; only message-local delivery IDs are exposed.
