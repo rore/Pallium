@@ -673,7 +673,7 @@ def test_opencode_primary_provider_actual_first_gate_and_public_oracle() -> None
             waits.append(timeout)
             assert not coalesced or kind == "primary", "auxiliary/invalid request waited on closed primary gate"
             return True
-        namespace.update(coalesced=coalesced, requests=[], session="ses_fixture", first_primary=first,
+        namespace.update(coalesced=coalesced, requests=[], primary_requests=[], session="ses_fixture", first_primary=first,
                          entered=entered, primary_lock=lock, release=SimpleNamespace(wait=wait),
                          tool_emitted=threading.Event(), assistant_outputs=[])
         actual_tag = tag if kind == "primary" else {**{key: tag[key] for key in ("version", "instance", "session")}, "kind": kind}
@@ -683,6 +683,7 @@ def test_opencode_primary_provider_actual_first_gate_and_public_oracle() -> None
                                   end_headers=lambda: None)
         namespace["do_POST"](handler)
         assert namespace["requests"] == [{}] and b"NATIVE_ASSISTANT_" in output.getvalue()
+        assert namespace["primary_requests"] == ([(tag, {})] if coalesced and kind == "primary" else [])
         assert bool(waits) == (not coalesced or kind == "primary")
         assert entered.is_set() == (not coalesced or kind in ("primary", "unknown"))
         if coalesced and kind == "unknown":
