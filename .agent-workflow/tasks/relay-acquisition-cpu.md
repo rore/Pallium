@@ -17,11 +17,11 @@
 **Relationships:**
 {"schema_version":1,"sources":[{"provider":"minimap","scope_ref":"roadmap:v1:git:github.com/rore/pallium#roadmap","local_ref":"item:v1:add-wake-first-relay-delivery"}],"pull_requests":[]}
 
-**Risk:** Routine
+**Risk:** Elevated
 
 **Complexity:** Moderate
 
-**Reason:** All intended paths are Redline blue. The test-only wraps need review for correct timing boundaries, exact delegation and coexistence with the semantic-clock fixture.
+**Reason:** The recorder's paths are Redline blue. The combined #439 change includes the separately reviewed Hermes adapter and inherits its Elevated floor. The test-only wraps need review for correct timing boundaries, exact delegation and coexistence with the semantic-clock fixture.
 
 **Discovery:** On [#439 Linux 3.12, attempt 2](https://github.com/rore/Pallium/actions/runs/45837429813/job/139980717771), the final claim in the reply chain used the native budget after the two semantic setup registrations. `setup_pragma` took 1,394 ms; acquisition and failed-entry cleanup measured 1,394.783 ms wall and 1,385.589 ms thread CPU, with no native SQLite error recorded. These totals do not isolate checkout, SQLAlchemy or the driver. The failing node, shared fixture, observer and acquisition helper are unchanged between `fb5f891a` and base `cfb5b5ae`.
 
