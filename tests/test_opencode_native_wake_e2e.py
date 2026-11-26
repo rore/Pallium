@@ -992,7 +992,7 @@ def test_same_input_wake_context_recovers_after_outage(
 
 
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
-@pytest.mark.parametrize("fault", ["http503", "transport"])
+@pytest.mark.parametrize("fault", ["http503", "transport", "startup"])
 def test_same_pending_wake_context_resumes_two_tools_after_outage(
     client, tmp_path, monkeypatch, relay_admission_clock, fault,
 ):
@@ -1030,6 +1030,8 @@ def test_context_recovery_does_not_renew_unconfirmed_context(client, tmp_path, m
 def _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admission_clock, scenario):
     """Real plugin/HTTP; native ownership and backend time are controlled boundaries."""
     from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from app.main import _StartupGate
     import storage.sqlite_relay as sqlite_relay
     import socket
     from tests.test_opencode_relay_wake_e2e import _setup, _send
@@ -1067,6 +1069,8 @@ def _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admiss
     outage_faults, tool_actions = [], []
     recovery_journey = scenario.startswith("outage-recover-")
     hide_discovery = False
+    startup = (TestClient(_StartupGate(client.app, SimpleNamespace(_initialized_app=None)))
+               if scenario == "outage-recover-startup" else None)
 
     def control(body):
         nonlocal controlled
@@ -1125,8 +1129,13 @@ def _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admiss
                 outage_active.clear()
                 payload, status = b'{"outage":"released-after-observed-context"}', 200
             elif outage_response:
-                payload = b'{"detail":{"code":"relay_busy","retryable":true}}'
-                status = None if scenario == "outage-recover-transport" else 503
+                if startup is not None:
+                    response = startup.post(self.path, json=body)
+                    payload, status = response.content, response.status_code
+                    assert status == 503 and response.json() == {"error": "service not initialized"}
+                else:
+                    payload = b'{"detail":{"code":"relay_busy","retryable":true}}'
+                    status = None if scenario == "outage-recover-transport" else 503
             elif self.path == "/relay/deliveries/ack" and scenario in ("lease", "ttl"):
                 payload, status = b'{"detail":{"code":"relay_busy","retryable":true}}', 503
             elif self.path == "/fixture/advance":
@@ -1558,6 +1567,8 @@ try{
         server.shutdown()
         thread.join(timeout=10)
         server.server_close()
+        if startup is not None:
+            startup.close()
         assert not thread.is_alive() and server.fileno() == -1
 
 
