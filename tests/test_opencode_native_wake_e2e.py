@@ -2098,7 +2098,9 @@ export default {...production,setup:async ctx=>{
             _assert_first_primary(first_primary, session, original_delivery,
                                   [row for row in observations() if row["kind"] == "wake.prompt"])
             assert delivered(original)
-            first_tag, first_body = eventually(lambda: primary_requests and primary_requests[0])
+            first_tag, first_body = eventually(lambda: next(
+                ((tag, body) for tag, body in primary_requests if tag["prefix"]), None,
+            ))
             assert first_tag == first_primary["value"]["tag"]
             claimed, = wake_rows("context", original_delivery)[0]["response"]["deliveries"]
             assert claimed["content_truncated"] is True
