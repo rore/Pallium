@@ -1494,6 +1494,7 @@ for (const shape of ["valid", "missing-session", "runtime", "session", "containe
   "wake-scope", "wake-location", "unadmitted", "terminal", "not-delivered", "missing-state",
   "zero-attempt", "attempt-type"]) {
   test(`outage bootstrap validates first restored authority: ${shape}`, async (t) => {
+    const otherDeliveryID = "relay-delivery-" + "f".repeat(32);
     const f = await contextOutageFixture(t, { confirm: "admitted", reply: (attempt, _body, _init, restored) => {
       if (attempt === 2) return outageBusy();
       const value = restored();
@@ -1511,7 +1512,7 @@ for (const shape of ["valid", "missing-session", "runtime", "session", "containe
       value.wake = { ...value.wake };
       if (shape === "wake-input") value.wake.native_input_id = "msg_wrong";
       if (shape === "wake-generation") value.wake.generation = 2;
-      if (shape === "wake-delivery") value.wake.delivery_id = "relay-delivery-" + "f".repeat(32);
+      if (shape === "wake-delivery") value.wake.delivery_id = otherDeliveryID;
       if (shape === "wake-scope") value.wake.scope_generation = 1;
       if (shape === "wake-location") value.wake.native_location = location + "/other";
       if (shape === "unadmitted") value.wake.admitted = false;
@@ -1530,6 +1531,10 @@ for (const shape of ["valid", "missing-session", "runtime", "session", "containe
       await f.advance(2500);
       const laterError = await result;
       assert.equal(Boolean(initialError), shape !== "valid", "first bootstrap must validate before attachment");
+      if (shape === "wake-delivery") {
+        assert.equal(initialError.message, `Pallium internal wake restored authority refused (delivery_id=${deliveryID})`);
+        assert.ok(!initialError.message.includes(otherDeliveryID));
+      }
       assert.equal(Boolean(laterError), shape !== "valid", "a rejected bootstrap cannot authorize outage retry");
       assert.equal(first.content.length, shape === "valid" ? 2 : 1);
       assert.equal(second.content.length, shape === "valid" ? 2 : 1);
