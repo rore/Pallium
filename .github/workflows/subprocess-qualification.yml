@@ -1,0 +1,596 @@
+# Source-only until independent implementation-result review and ordinary publication gates.
+# Before execution: owner records actual reviewed control C, tags it subprocess-qualification-control-C, and separately releases the fixed pair.
+# Thresholds request cancellation; neither these nor upload limits guarantee teardown or bound live logs/disk/memory/processes.
+name: Fixed subprocess helper qualification
+'on':
+  workflow_dispatch:
+    inputs:
+      candidate_revision:
+        description: Exact reviewed lowercase 40-hex candidate commit; control must use its reviewed SHA-named tag
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: fixed-subprocess-helper-qualification
+  cancel-in-progress: false
+jobs:
+  helper:
+    name: Fixed helper Python 3.13 / ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      max-parallel: 1
+      fail-fast: true
+      matrix:
+        include:
+        - os: ubuntu-24.04
+          platform: Linux
+          runtime_url: https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.13.18%2B20261110-x86_64-unknown-linux-gnu-install_only.tar.gz
+          runtime_sha256: 50c774f6674740739f791c05a9177ed03e2fe02abebda9bca3512eb7309b37cc
+        - os: windows-2025
+          platform: Windows
+          runtime_url: https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.13.18%2B20261110-x86_64-pc-windows-msvc-install_only.tar.gz
+          runtime_sha256: 7e93813bd362c6413f30788b248590e2f169df2d17dcac81aafbcc7a6eeb542c
+    env:
+      SQ_CONTROL: ${{ github.workflow_sha }}
+      SQ_CANDIDATE: ${{ inputs.candidate_revision }}
+      SQ_REF: ${{ github.ref }}
+      SQ_RUN_ATTEMPT: ${{ github.run_attempt }}
+      SQ_PLATFORM: ${{ matrix.platform }}
+      SQ_RUNTIME_URL: ${{ matrix.runtime_url }}
+      SQ_RUNTIME_SHA: ${{ matrix.runtime_sha256 }}
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+      PYTEST_ADDOPTS: ''
+      PYTEST_PLUGINS: ''
+      SQ_MANIFEST: |-
+        {
+          "authority": "manager-accepted-r1",
+          "files": {
+            "tests/subprocess_helpers.py": "ff7290a8e6e12ad234931f2160a6a771622c49d56315c889c05703333e653c96",
+            "tests/test_subprocess_helpers.py": "24ccbc18fa94d893c50054ad41500bdc370f431ce44693be0369ee1ed14f3a7b"
+          },
+          "control_files": {
+            "tests/__init__.py": "8d59fa56c515a193065022203626052e83ca7ae73f3f13bc9309022af61f5be0"
+          },
+          "pytest_ini": "[pytest]\naddopts =\npythonpath = .\ntmp_path_retention_policy = all\ntmp_path_retention_count = 1\nmarkers =\n    slow: fixed helper lifecycle qualification\n",
+          "pytest_ini_sha256": "72fb6c2ac6e1f901611a2ccba5b8f2ed3edb4b0c98a339a1eef09ce622f8c273",
+          "python_version": "3.13.18",
+          "case_counts": {
+            "test_text_unicode_nonzero_and_cwd_env": 1,
+            "test_empty_and_exact_per_stream_capture_limit": 2,
+            "test_overflow_is_visible_and_both_buffers_remain_bounded": 3,
+            "test_invalid_budgets_fail_before_owner_creation": 18,
+            "test_unsupported_modes_fail_before_launch": 2,
+            "test_missing_executable_preserves_launch_error": 1,
+            "test_root_exit_cleans_pipe_holding_child_and_grandchild": 1,
+            "test_timeout_cleans_child_and_grandchild_and_retains_output": 1,
+            "test_overflow_cleans_child_and_grandchild": 1,
+            "test_cancellation_cleans_child_and_grandchild": 1,
+            "test_cleanup_failure_cannot_hide_original_failure_or_return_success": 3,
+            "test_decoding_failure_occurs_only_after_owned_cleanup": 3,
+            "test_windows_creation_failure_prevents_target_execution": 1,
+            "test_windows_native_job_reaches_active_zero_before_handles_close": 1,
+            "test_both_streams_are_drained_after_observed_backpressure": 1,
+            "test_invalid_argv_fails_before_launch": 3,
+            "test_post_spawn_errors_still_dispose_owned_resources": 3,
+            "test_pipe_drain_has_a_separate_finite_deadline": 1,
+            "test_dispose_is_idempotent_and_repeated_calls_use_new_owners": 1,
+            "test_posix_missing_waitid_fails_before_target_execution": 1,
+            "test_windows_setup_error_closes_allocated_handles_and_never_runs_target": 8,
+            "test_posix_never_sends_termination_after_reaping_leader": 1,
+            "test_posix_auto_reaping_is_rejected_before_launch": 1,
+            "test_nonzero_exit_and_raw_diagnostics_survive_cleanup_failure": 1,
+            "test_original_start_or_read_failure_retains_real_child_result": 2,
+            "test_overflow_before_recoverable_read_error_retains_truncation_and_raw_result": 1,
+            "test_real_sigint_deferral_and_handler_restoration_in_disposable_runner": 2,
+            "test_live_job_failure_uses_kill_on_close_in_disposable_runner": 2
+          },
+          "allowed_skips": {
+            "Linux": {
+              "test_windows_creation_failure_prevents_target_execution": "native Windows Job Object contract",
+              "test_windows_native_job_reaches_active_zero_before_handles_close": "native Windows Job Object contract",
+              "test_windows_setup_error_closes_allocated_handles_and_never_runs_target": "native Windows setup failure paths",
+              "test_live_job_failure_uses_kill_on_close_in_disposable_runner": "live Windows native cleanup failure and fallback"
+            },
+            "Windows": {
+              "test_posix_missing_waitid_fails_before_target_execution": "POSIX retained-leader capability check",
+              "test_posix_never_sends_termination_after_reaping_leader": "POSIX leader identity contract",
+              "test_posix_auto_reaping_is_rejected_before_launch": "POSIX auto-reaping is incompatible with retained identity"
+            }
+          },
+          "wheels": [
+            {
+              "name": "pytest",
+              "version": "9.2.0",
+              "filename": "pytest-9.2.0-py3-none-any.whl",
+              "url": "https://files.pythonhosted.org/packages/51/39/1f5d8c8877a0fa327db959c19341d4be61660de1ab6b7391f9eb805bcd67/pytest-9.2.0-py3-none-any.whl",
+              "sha256": "07acdcf88ec174f907dc01af70bf52d49b014bbab03faeeade31c96b18c2e588",
+              "platforms": [
+                "Linux",
+                "Windows"
+              ]
+            },
+            {
+              "name": "pytest-xdist",
+              "version": "3.8.0",
+              "filename": "pytest_xdist-3.8.0-py3-none-any.whl",
+              "url": "https://files.pythonhosted.org/packages/ca/31/d4e37e9e550c2b92a9cbc2e4d0b7420a27224968580b5a447f420847c975/pytest_xdist-3.8.0-py3-none-any.whl",
+              "sha256": "202ca578cfeb7370784a8c33d6d05bc6e13b4f25b5053c30a152269fd10f0b88",
+              "platforms": [
+                "Linux",
+                "Windows"
+              ]
+            },
+            {
+              "name": "execnet",
+              "version": "2.1.2",
+              "filename": "execnet-2.1.2-py3-none-any.whl",
+              "url": "https://files.pythonhosted.org/packages/ab/84/02fc1827e8cdded4aa65baef11296a9bbe595c474f0d6d758af082d849fd/execnet-2.1.2-py3-none-any.whl",
+              "sha256": "67fba928dd5a544b783f6056f449e5e3931a5c378b128bc18501f7ea79e296ec",
+              "platforms": [
+                "Linux",
+                "Windows"
+              ]
+            },
+            {
+              "name": "iniconfig",
+              "version": "2.3.1",
+              "filename": "iniconfig-2.3.1-py3-none-any.whl",
+              "url": "https://files.pythonhosted.org/packages/56/43/4ca9e49d27a1fcf6bece6f6aec0ea46bb9112489b93d4b688fb415457bdb/iniconfig-2.3.1-py3-none-any.whl",
+              "sha256": "9121e2c1fdb355232495be3194c8dfe87ccc2d5dee45947b78e68f499790d7a7",
+              "platforms": [
+                "Linux",
+                "Windows"
+              ]
+            },
+            {
+              "name": "packaging",
+              "version": "26.3",
+              "filename": "packaging-26.3-py3-none-any.whl",
+              "url": "https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl",
+              "sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c",
+              "platforms": [
+                "Linux",
+                "Windows"
+              ]
+            },
+            {
+              "name": "pluggy",
+              "version": "1.7.0",
+              "filename": "pluggy-1.7.0-py3-none-any.whl",
+              "url": "https://files.pythonhosted.org/packages/40/9e/2b38731e0fc536806f16490e1a12d7f0dc2a1235aa8cc07bcc75416a7daa/pluggy-1.7.0-py3-none-any.whl",
+              "sha256": "7dd7b0d8832ba3cb632c306926ded123429211b83641b35dc5c41ad2d34f9bec",
+              "platforms": [
+                "Linux",
+                "Windows"
+              ]
+            },
+            {
+              "name": "pygments",
+              "version": "2.21.0",
+              "filename": "pygments-2.21.0-py3-none-any.whl",
+              "url": "https://files.pythonhosted.org/packages/71/46/17f022dd3e953bf20a04a028a21ec746d942f8d2af30fa0f124fa0e6a684/pygments-2.21.0-py3-none-any.whl",
+              "sha256": "2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9",
+              "platforms": [
+                "Linux",
+                "Windows"
+              ]
+            },
+            {
+              "name": "colorama",
+              "version": "0.4.6",
+              "filename": "colorama-0.4.6-py2.py3-none-any.whl",
+              "url": "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl",
+              "sha256": "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6",
+              "platforms": [
+                "Windows"
+              ]
+            },
+            {
+              "name": "pip",
+              "version": "26.3",
+              "filename": "pip-26.3-py3-none-any.whl",
+              "url": "https://files.pythonhosted.org/packages/07/25/ee8c38ae72d66b844ce8eb9711ba905dba21ca1a8a0c960057c41cd23337/pip-26.3-py3-none-any.whl",
+              "sha256": "f3b60b20ffaadd4415ed7957212a38ac63fa4c5fa375bd0f4a797777940fad13",
+              "platforms": [
+                "Linux",
+                "Windows"
+              ]
+            }
+          ]
+        }
+    steps:
+    - name: Checkout reviewed control revision
+      id: control
+      timeout-minutes: 1
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.workflow_sha }}
+        path: control
+        persist-credentials: false
+        set-safe-directory: false
+        fetch-depth: 1
+        submodules: false
+        lfs: false
+    - name: Admit immutable dispatch and acquire candidate objects
+      id: candidate
+      timeout-minutes: 1
+      shell: pwsh
+      env:
+        SQ_ROOT: ${{ runner.temp }}/subprocess-qualification-${{ github.run_id }}-${{ matrix.platform }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $PSNativeCommandUseErrorActionPreference = $false
+        if ($env:SQ_CANDIDATE.Length -ne 40 -or $env:SQ_CANDIDATE -cnotmatch '^[a-f0-9]{40}$') { throw 'Unmodified lowercase full candidate SHA required' }
+        if ($env:SQ_CONTROL.Length -ne 40 -or $env:SQ_CONTROL -cnotmatch '^[a-f0-9]{40}$') { throw 'Full reviewed control SHA required' }
+        if ($env:SQ_REF -cne ('refs/tags/subprocess-qualification-control-' + $env:SQ_CONTROL) -or $env:GITHUB_SHA -cne $env:SQ_CONTROL) { throw 'Frozen control ref moved or does not identify the actual workflow commit' }
+        if ($env:SQ_RUN_ATTEMPT -cne '1') { throw 'Rerun attempts are not admitted' }
+        if ($env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or $env:GITHUB_SERVER_URL -cne 'https://github.com') { throw 'Manual GitHub dispatch required' }
+        if ($env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_ARCH -cne 'X64' -or $env:RUNNER_OS -cne $env:SQ_PLATFORM) { throw 'Fixed disposable hosted x64 platform required' }
+        if ($PSVersionTable.PSVersion -lt [version]'7.4' -or !$env:ImageOS -or !$env:ImageVersion) { throw 'Image policy / binary-safe PowerShell prerequisites missing' }
+        $temp = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd([IO.Path]::DirectorySeparatorChar)
+        $root = [IO.Path]::GetFullPath($env:SQ_ROOT)
+        if (!$root.StartsWith($temp + [IO.Path]::DirectorySeparatorChar, [StringComparison]::Ordinal) -or (Test-Path -LiteralPath $root)) { throw 'Fresh job-contained root required' }
+        if ((Get-Item -LiteralPath $temp).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Reparse temp refused' }
+        New-Item -ItemType Directory -Path $root | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $root 'work') | Out-Null
+        # No candidate checkout, attributes, hooks, configuration or Python code is executed.
+        $repo = Join-Path $root 'candidate.git'
+        git init --bare $repo
+        if ($LASTEXITCODE) { throw 'Candidate object store creation failed' }
+        git --git-dir=$repo fetch --no-tags --depth=1 "https://github.com/$env:GITHUB_REPOSITORY.git" $env:SQ_CANDIDATE
+        if ($LASTEXITCODE) { throw 'Exact candidate acquisition failed' }
+        $actual = & git --git-dir=$repo rev-parse FETCH_HEAD
+        if ($LASTEXITCODE -or $actual -cne $env:SQ_CANDIDATE) { throw 'Candidate SHA mismatch' }
+        "SQ_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+    - name: Admit independent source and selected pins before runtime installation
+      id: admission
+      timeout-minutes: 1
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $PSNativeCommandUseErrorActionPreference = $false
+        $m = ConvertFrom-Json -AsHashtable $env:SQ_MANIFEST
+        if ($m.authority -cne 'manager-accepted-r1' -or $m.files.Count -ne 2 -or $m.control_files.Count -ne 1) { throw 'Independent approved-source manifest missing' }
+        $control = Join-Path $env:GITHUB_WORKSPACE 'control'
+        $actual = & git -C $control rev-parse HEAD
+        if ($LASTEXITCODE -or $actual -cne $env:SQ_CONTROL) { throw 'Trusted checkout differs from workflow control' }
+        $repo = Join-Path $env:SQ_ROOT 'candidate.git'
+        $actual = & git --git-dir=$repo rev-parse FETCH_HEAD
+        if ($LASTEXITCODE -or $actual -cne $env:SQ_CANDIDATE) { throw 'Candidate changed before admission' }
+        $kind = & git --git-dir=$repo cat-file -t $actual
+        if ($LASTEXITCODE -or $kind -cne 'commit') { throw 'Candidate must be a commit object' }
+        $payload = Join-Path $env:SQ_ROOT 'payload'
+        New-Item -ItemType Directory -Path (Join-Path $payload 'tests') | Out-Null
+        function Copy-ApprovedBlob($gitArgs, $revision, $relative, $expected) {
+            if ($relative -cnotin @('tests/subprocess_helpers.py','tests/test_subprocess_helpers.py','tests/__init__.py') -or $expected -cnotmatch '^[a-f0-9]{64}$') { throw 'Unapproved source path/digest' }
+            $entry = & git @gitArgs ls-tree $revision -- $relative
+            if ($LASTEXITCODE -or $entry -cnotmatch '^100644 blob ') { throw 'Regular committed source blob required' }
+            $object = $revision + ':' + $relative
+            $size = & git @gitArgs cat-file -s $object
+            if ($LASTEXITCODE -or [long]$size -gt 1048576 -or [long]$size -lt 0) { throw 'Source blob outside budget' }
+            $destination = Join-Path $payload $relative
+            git @gitArgs cat-file blob $object > $destination
+            if ($LASTEXITCODE -or (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expected) { throw 'Independent source approval mismatch' }
+        }
+        foreach ($relative in $m.files.Keys) { Copy-ApprovedBlob -gitArgs @('--git-dir=' + $repo) -revision $env:SQ_CANDIDATE -relative $relative -expected $m.files[$relative] }
+        foreach ($relative in $m.control_files.Keys) { Copy-ApprovedBlob -gitArgs @('-C', $control) -revision $env:SQ_CONTROL -relative $relative -expected $m.control_files[$relative] }
+        $config = [Text.Encoding]::UTF8.GetBytes($m.pytest_ini)
+        if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($config)).ToLowerInvariant() -cne $m.pytest_ini_sha256) { throw 'Control-owned config mismatch' }
+        [IO.File]::WriteAllBytes((Join-Path $payload 'pytest.ini'), $config)
+        if ($m.python_version -cne '3.13.18' -or $m.wheels.Count -ne 9 -or $m.case_counts.Count -ne 28) { throw 'Incomplete runtime/wheel/case selection' }
+        foreach ($wheel in $m.wheels) {
+            if ($wheel.sha256 -cnotmatch '^[a-f0-9]{64}$' -or $wheel.url -cnotmatch '^https://files\.pythonhosted\.org/packages/' -or $wheel.filename -cnotmatch '^[A-Za-z0-9_.-]+none-any\.whl$' -or $wheel.version -cnotmatch '^[0-9]+(\.[0-9]+)+$') { throw 'Unpinned wheel selection' }
+        }
+        if ($env:SQ_RUNTIME_SHA -cnotmatch '^[a-f0-9]{64}$' -or $env:SQ_RUNTIME_URL -cnotmatch '^https://github\.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3\.13\.18%2B20261110-') { throw 'Unselected runtime artifact' }
+        $files = @{}; foreach ($key in $m.files.Keys) { $files[$key] = $m.files[$key] }; foreach ($key in $m.control_files.Keys) { $files[$key] = $m.control_files[$key] }
+        @{control=$env:SQ_CONTROL;candidate=$env:SQ_CANDIDATE;manifest_sha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($env:SQ_MANIFEST))).ToLowerInvariant();files=$files;runner=$env:RUNNER_OS;image_os=$env:ImageOS;image_version=$env:ImageVersion} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $env:SQ_ROOT 'work/source.json') -Encoding utf8NoBOM
+    - name: Acquire hash-verified CPython runtime
+      id: runtime
+      timeout-minutes: 2
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $archive = Join-Path $env:SQ_ROOT 'python.tar.gz'
+        $PSNativeCommandUseErrorActionPreference = $false
+        Invoke-WebRequest -Uri $env:SQ_RUNTIME_URL -OutFile $archive -TimeoutSec 90
+        if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:SQ_RUNTIME_SHA) { throw 'Runtime archive digest mismatch before extraction/execution' }
+        $runtimeRoot = Join-Path $env:SQ_ROOT 'runtime'
+        New-Item -ItemType Directory -Path $runtimeRoot | Out-Null
+        tar -xzf $archive -C $runtimeRoot
+        if ($LASTEXITCODE) { throw 'Verified runtime extraction failed' }
+        $python = if ($env:SQ_PLATFORM -ceq 'Windows') { Join-Path $runtimeRoot 'python/python.exe' } else { Join-Path $runtimeRoot 'python/bin/python3.13' }
+        $program = @'
+        import hashlib, json, os, platform, sys, sysconfig
+        from pathlib import Path
+        assert sys.version_info[:3] == (3, 13, 18) and sys.implementation.name == 'cpython'
+        assert not sysconfig.get_config_var('Py_GIL_DISABLED')
+        assert sys.platform == ('win32' if os.environ['SQ_PLATFORM'] == 'Windows' else 'linux')
+        assert platform.machine().lower() in {'amd64', 'x86_64'}
+        receipt = {'version': platform.python_version(), 'artifact_sha256': os.environ['SQ_RUNTIME_SHA'],
+                   'executable_sha256': hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()}
+        (Path(os.environ['SQ_ROOT']) / 'work/runtime.json').write_text(json.dumps(receipt), encoding='utf-8')
+        '@
+        & $python -I -B -X utf8 -c $program
+        if ($LASTEXITCODE) { throw 'Approved CPython identity mismatch' }
+        "SQ_BASE_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+    - name: Install only the preselected complete wheel lock
+      id: dependencies
+      timeout-minutes: 5
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $m = ConvertFrom-Json -AsHashtable $env:SQ_MANIFEST
+        $wheelRoot = Join-Path $env:SQ_ROOT 'wheels'
+        $PSNativeCommandUseErrorActionPreference = $false
+        $env:PIP_CONFIG_FILE = if ($env:SQ_PLATFORM -ceq 'Windows') { 'NUL' } else { '/dev/null' }
+        New-Item -ItemType Directory -Path $wheelRoot | Out-Null
+        $selected = @($m.wheels | Where-Object { $env:SQ_PLATFORM -cin $_.platforms })
+        foreach ($wheel in $selected) {
+            $file = Join-Path $wheelRoot $wheel.filename
+            Invoke-WebRequest -Uri $wheel.url -OutFile $file -TimeoutSec 45
+            if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -cne $wheel.sha256) { throw 'Wheel digest mismatch before any installer execution' }
+        }
+        $venv = Join-Path $env:SQ_ROOT 'venv'
+        & $env:SQ_BASE_PYTHON -I -B -X utf8 -m venv --without-pip $venv
+        if ($LASTEXITCODE) { throw 'Isolated environment creation failed' }
+        $python = if ($env:SQ_PLATFORM -ceq 'Windows') { Join-Path $venv 'Scripts/python.exe' } else { Join-Path $venv 'bin/python' }
+        $program = @'
+        import hashlib, json, os, sysconfig, zipfile
+        from pathlib import Path, PurePosixPath
+        root = Path(os.environ['SQ_ROOT'])
+        m = json.loads(os.environ['SQ_MANIFEST'])
+        selected = [w for w in m['wheels'] if os.environ['SQ_PLATFORM'] in w['platforms']]
+        for w in selected:
+            archive = root / 'wheels' / w['filename']
+            assert hashlib.sha256(archive.read_bytes()).hexdigest() == w['sha256']
+            with zipfile.ZipFile(archive) as z:
+                for member in z.infolist():
+                    p = PurePosixPath(member.filename)
+                    assert not p.is_absolute() and '..' not in p.parts and '\\' not in member.filename
+                    assert not member.filename.endswith(('.pth', '/sitecustomize.py', '/usercustomize.py'))
+                if w['name'] == 'pip':
+                    z.extractall(sysconfig.get_path('purelib'))
+        requirements = [w['name'] + '==' + w['version'] + ' --hash=sha256:' + w['sha256']
+                        for w in selected if w['name'] != 'pip']
+        (root / 'work/requirements.txt').write_text('\n'.join(requirements) + '\n', encoding='utf-8')
+        '@
+        & $python -I -B -X utf8 -c $program
+        if ($LASTEXITCODE) { throw 'Verified installer bootstrap failed' }
+        & $python -I -B -X utf8 -m pip --isolated install --disable-pip-version-check --no-cache-dir --no-index --find-links $wheelRoot --only-binary=:all: --require-hashes --no-deps --no-compile -r (Join-Path $env:SQ_ROOT 'work/requirements.txt')
+        if ($LASTEXITCODE) { throw 'Hash-locked dependency installation failed' }
+        $program = @'
+        import importlib.metadata, json, os
+        from pathlib import Path
+        m = json.loads(os.environ['SQ_MANIFEST'])
+        expected = {w['name']: w['version'] for w in m['wheels'] if os.environ['SQ_PLATFORM'] in w['platforms']}
+        rows = [(d.metadata['Name'].lower().replace('_', '-'), d.version) for d in importlib.metadata.distributions()]
+        actual = dict(rows)
+        assert len(rows) == len(actual) and actual == expected
+        root = Path(os.environ['SQ_ROOT'])
+        assert 'include-system-site-packages = false' in (root / 'venv/pyvenv.cfg').read_text(encoding='utf-8')
+        (root / 'work/dependencies.json').write_text(json.dumps({'distributions': actual}), encoding='utf-8')
+        '@
+        & $python -I -B -X utf8 -c $program
+        if ($LASTEXITCODE) { throw 'Installed distributions differ from preselected complete wheel lock' }
+        "SQ_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+    - name: Collect fixed helper and independent inventory
+      id: collection
+      timeout-minutes: 1
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $PSNativeCommandUseErrorActionPreference = $false
+        $m = ConvertFrom-Json -AsHashtable $env:SQ_MANIFEST
+        $payload = Join-Path $env:SQ_ROOT 'payload'
+        $files = @{}; foreach ($key in $m.files.Keys) { $files[$key] = $m.files[$key] }; foreach ($key in $m.control_files.Keys) { $files[$key] = $m.control_files[$key] }; $files['pytest.ini'] = $m.pytest_ini_sha256
+        foreach ($relative in $files.Keys) {
+            $file = Join-Path $payload $relative
+            if ((Get-Item -LiteralPath $file).Attributes -band [IO.FileAttributes]::ReparsePoint -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -cne $files[$relative]) { throw 'Approved import/config closure drifted before collection/execution' }
+        }
+        Set-Location -LiteralPath $payload
+        & $env:SQ_PYTHON -I -B -X utf8 -m pytest tests/test_subprocess_helpers.py --noconftest -c (Join-Path $payload 'pytest.ini') -o addopts= -o xfail_strict=true -m slow -n 0 --import-mode=importlib -p xdist.plugin -p no:cacheprovider --color=no --collect-only -q 1> (Join-Path $env:SQ_ROOT 'work/collect.txt') 2> (Join-Path $env:SQ_ROOT 'work/collect.stderr')
+        $code = $LASTEXITCODE
+        if ($code -ne 0) { exit $code }
+        $program = @'
+        import collections, json, os
+        from pathlib import Path
+        root = Path(os.environ['SQ_ROOT'])
+        p = root / 'work/collect.txt'
+        assert p.is_file() and not p.is_symlink() and p.stat().st_size <= 1048576
+        stderr = root / 'work/collect.stderr'
+        assert stderr.stat().st_size <= 65536
+        nodes = [line for line in p.read_text(encoding='utf-8').splitlines()
+                 if line.startswith('tests/test_subprocess_helpers.py::')]
+        assert nodes and len(nodes) == len(set(nodes))
+        counts = collections.Counter(n.split('::')[1].split('[', 1)[0] for n in nodes)
+        assert counts == json.loads(os.environ['SQ_MANIFEST'])['case_counts']
+        (root / 'work/collection.json').write_text(json.dumps({'nodeids': nodes}), encoding='utf-8')
+        '@
+        & $env:SQ_BASE_PYTHON -I -B -X utf8 -c $program
+        if ($LASTEXITCODE) { throw 'Collection missing, deselected, duplicated or outside independent inventory' }
+    - name: Execute only fixed helper tests
+      id: execution
+      timeout-minutes: 2
+      continue-on-error: true
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $PSNativeCommandUseErrorActionPreference = $false
+        $m = ConvertFrom-Json -AsHashtable $env:SQ_MANIFEST
+        $payload = Join-Path $env:SQ_ROOT 'payload'
+        $files = @{}; foreach ($key in $m.files.Keys) { $files[$key] = $m.files[$key] }; foreach ($key in $m.control_files.Keys) { $files[$key] = $m.control_files[$key] }; $files['pytest.ini'] = $m.pytest_ini_sha256
+        foreach ($relative in $files.Keys) {
+            $file = Join-Path $payload $relative
+            if ((Get-Item -LiteralPath $file).Attributes -band [IO.FileAttributes]::ReparsePoint -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -cne $files[$relative]) { throw 'Approved import/config closure drifted before collection/execution' }
+        }
+        Set-Location -LiteralPath $payload
+        & $env:SQ_PYTHON -I -B -X utf8 -m pytest tests/test_subprocess_helpers.py --noconftest -c (Join-Path $payload 'pytest.ini') -o addopts= -o xfail_strict=true -m slow -n 0 --import-mode=importlib -p xdist.plugin -p no:cacheprovider --color=no -x -q --basetemp (Join-Path $env:SQ_ROOT 'work/tests') --junitxml (Join-Path $env:SQ_ROOT 'work/results.xml') 1> (Join-Path $env:SQ_ROOT 'work/stdout.txt') 2> (Join-Path $env:SQ_ROOT 'work/stderr.txt')
+        $code = $LASTEXITCODE
+        @{code=$code} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:SQ_ROOT 'work/exit.json') -Encoding utf8NoBOM
+        exit $code
+    - name: Preserve original outcome and validate bounded evidence
+      id: evidence
+      timeout-minutes: 1
+      if: always()
+      shell: pwsh
+      env:
+        SQ_ROOT: ${{ runner.temp }}/subprocess-qualification-${{ github.run_id }}-${{ matrix.platform }}
+        SQ_EXECUTION_OUTCOME: ${{ steps.execution.outcome }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $PSNativeCommandUseErrorActionPreference = $false
+        $normalized = Join-Path $env:SQ_ROOT 'normalized'
+        $code = 1
+        if ($env:SQ_BASE_PYTHON -and (Test-Path -LiteralPath $env:SQ_BASE_PYTHON)) {
+        $program = @'
+        import collections, hashlib, json, os, stat, sys, xml.etree.ElementTree as ET
+        from pathlib import Path
+        root = Path(os.environ['SQ_ROOT'])
+        work, output = root / 'work', root / 'normalized'
+        if root.is_symlink() or root.is_junction() or output.is_symlink() or output.is_junction():
+            raise SystemExit('Unsafe evidence root; no writes permitted')
+        output.mkdir(parents=True, exist_ok=True)
+        if any(output.iterdir()):
+            raise SystemExit('Evidence destination is not fresh; no existing data overwritten')
+        errors = []
+        outcome = os.environ['SQ_EXECUTION_OUTCOME']
+        if outcome not in {'success', 'failure', 'cancelled', 'skipped'}:
+            outcome = 'unknown'
+        exit_code = None
+        def read(path, limit):
+            path = Path(path)
+            for ancestor in (path, *path.parents):
+                assert not ancestor.is_symlink() and not ancestor.is_junction()
+                if ancestor == root:
+                    break
+            else:
+                raise AssertionError('Read outside the job root')
+            assert stat.S_ISREG(path.lstat().st_mode) and not path.is_symlink()
+            assert path.stat().st_size <= limit
+            return path.read_bytes()
+        def receipt(name):
+            return json.loads(read(work / name, 8192))
+        def emit(name, data, limit):
+            raw = json.dumps(data, ensure_ascii=True, sort_keys=True).encode('utf-8')
+            assert len(raw) <= limit
+            (output / name).write_bytes(raw)
+        try:
+            assert not output.is_symlink() and not any(output.iterdir())
+            m = json.loads(os.environ['SQ_MANIFEST'])
+            source, runtime, deps = receipt('source.json'), receipt('runtime.json'), receipt('dependencies.json')
+            assert source['control'] == os.environ['SQ_CONTROL'] and source['candidate'] == os.environ['SQ_CANDIDATE']
+            assert source['manifest_sha256'] == hashlib.sha256(os.environ['SQ_MANIFEST'].encode()).hexdigest()
+            files = {**m['files'], **m['control_files']}
+            assert source['files'] == files
+            for relative, digest in {**files, 'pytest.ini': m['pytest_ini_sha256']}.items():
+                assert hashlib.sha256(read(root / 'payload' / relative, 1048576)).hexdigest() == digest
+            assert runtime['version'] == m['python_version'] and runtime['artifact_sha256'] == os.environ['SQ_RUNTIME_SHA']
+            expected = {w['name']: w['version'] for w in m['wheels'] if os.environ['SQ_PLATFORM'] in w['platforms']}
+            assert deps['distributions'] == expected
+            provenance = {'control': source['control'], 'candidate': source['candidate'],
+                          'manifest_sha256': source['manifest_sha256'], 'files': files,
+                          'runtime_version': runtime['version'], 'runtime_artifact_sha256': runtime['artifact_sha256'],
+                          'distributions': deps['distributions'], 'platform': os.environ['SQ_PLATFORM'],
+                          'image_os': source.get('image_os'), 'image_version': source.get('image_version')}
+            emit('provenance.json', provenance, 8192)
+            try:
+                execution = receipt('exit.json')
+                assert set(execution) == {'code'} and type(execution['code']) is int
+                exit_code = execution['code']
+            except Exception:
+                errors.append('missing-or-invalid-exit')
+            for stream in ('stdout.txt', 'stderr.txt'):
+                try:
+                    (output / stream).write_bytes(read(work / stream, 65536))
+                except Exception:
+                    errors.append('missing-or-invalid-' + stream)
+            collected = json.loads(read(work / 'collection.json', 1048576))
+            nodes = collected['nodeids']
+            assert nodes and len(nodes) == len(set(nodes))
+            prefix = 'tests/test_subprocess_helpers.py::'
+            assert all(isinstance(n, str) and n.startswith(prefix) for n in nodes)
+            assert collections.Counter(n.split('::')[1].split('[', 1)[0] for n in nodes) == m['case_counts']
+            emit('collection.json', collected, 1048576)
+            xml = read(work / 'results.xml', 1048576)
+            assert b'<!DOCTYPE' not in xml and b'<!ENTITY' not in xml
+            tree = ET.fromstring(xml)
+            assert tree.tag in {'testsuite', 'testsuites'}
+            cases = list(tree.iter('testcase'))
+            assert all(case.get('classname') == 'tests.test_subprocess_helpers' for case in cases)
+            observed = [prefix + case.attrib['name'] for case in cases]
+            assert observed and len(observed) == len(set(observed)) and set(observed) <= set(nodes)
+            (output / 'results.xml').write_bytes(xml)
+            assert outcome == 'success' and exit_code == 0
+            assert set(observed) == set(nodes)
+            allowed = m['allowed_skips'][os.environ['SQ_PLATFORM']]
+            for case in cases:
+                function = case.attrib['name'].split('[', 1)[0]
+                assert case.find('failure') is None and case.find('error') is None
+                skips = case.findall('skipped')
+                if function in allowed:
+                    assert len(skips) == 1 and skips[0].get('type') == 'pytest.skip'
+                    assert skips[0].get('message') == allowed[function]
+                else:
+                    assert not skips
+            modes = {'signal_setup', 'signal_cleanup'}
+            if os.environ['SQ_PLATFORM'] == 'Windows':
+                modes |= {'native_query', 'native_terminate'}
+            reports = {}
+            required_keys = {'ok', 'mode', 'handler_restored', 'leases_released', 'retained_root_exited',
+                             'resources_closed', 'native_failure_observed'}
+            for path in (work / 'tests').rglob('case-result.json'):
+                report = json.loads(read(path, 8192))
+                assert set(report) == required_keys
+                mode = report['mode']
+                assert mode in modes and mode not in reports
+                assert all(report[k] is True for k in required_keys - {'mode', 'native_failure_observed'})
+                assert report['native_failure_observed'] is mode.startswith('native_')
+                reports[mode] = report
+            assert set(reports) == modes
+            for mode, report in reports.items():
+                emit('case-' + mode + '.json', report, 8192)
+        except Exception as exc:
+            errors.append('missing-invalid-or-incomplete-' + type(exc).__name__)
+        emit('summary.json', {'complete': not errors, 'errors': errors,
+                              'execution_outcome': outcome, 'exit_code': exit_code,
+                              'limits': 'cancellation and retained evidence only; no guaranteed provider teardown'}, 8192)
+        assert all(p.is_file() and not p.is_symlink() and p.stat().st_size <= 1048576 for p in output.iterdir())
+        assert sum(p.stat().st_size for p in output.iterdir()) <= 4 * 1048576
+        raise SystemExit(1 if errors else 0)
+        '@
+            & $env:SQ_BASE_PYTHON -I -B -X utf8 -c $program
+            $code = $LASTEXITCODE
+        } else {
+            if ((Test-Path -LiteralPath $normalized) -or ((Test-Path -LiteralPath $env:SQ_ROOT) -and ((Get-Item -LiteralPath $env:SQ_ROOT).Attributes -band [IO.FileAttributes]::ReparsePoint))) { throw 'Unsafe or non-fresh fallback evidence root' }
+            New-Item -ItemType Directory -Path $normalized -Force | Out-Null
+            '{"complete":false,"errors":["pinned-runtime-unavailable"]}' | Set-Content -LiteralPath (Join-Path $normalized 'summary.json') -Encoding utf8NoBOM
+        }
+        if ((Get-Item -LiteralPath $normalized).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Evidence root reparse refused' }
+        $files = @(Get-ChildItem -LiteralPath $normalized -Force)
+        $names = @('provenance.json','collection.json','results.xml','stdout.txt','stderr.txt','summary.json','case-signal_setup.json','case-signal_cleanup.json','case-native_query.json','case-native_terminate.json')
+        [long]$total = 0
+        foreach ($file in $files) {
+            if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $file.Name -cnotin $names -or $file.Length -gt 1048576) { throw 'Evidence outside fixed per-file allowlist/budget' }
+            if ($file.Extension -ceq '.json' -and $file.Name -cne 'collection.json' -and $file.Length -gt 8192) { throw 'Synthetic JSON exceeds eight KiB' }
+            if ($file.Extension -ceq '.txt' -and $file.Length -gt 65536) { throw 'Retained stream exceeds 64 KiB' }
+            $total += $file.Length
+        }
+        if (!$files.Count -or $files.Count -gt 10 -or $total -gt (4 * 1048576 - 65536)) { throw 'Evidence aggregate/ZIP-reserve budget exhausted' }
+        "path=$normalized/" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        'upload_ready=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        exit $code
+    - name: Upload only normalized bounded evidence
+      id: upload
+      timeout-minutes: 1
+      if: always() && steps.evidence.outputs.upload_ready == 'true'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: subprocess-helper-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ steps.evidence.outputs.path }}
+        if-no-files-found: error
+        retention-days: 7
+        compression-level: 0
+        overwrite: false
+        include-hidden-files: false
