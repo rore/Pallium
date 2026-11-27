@@ -64,6 +64,123 @@ def _activation(client, base):
 
 
 @pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+@pytest.mark.parametrize("pending", [False, True], ids=["idle", "pending"])
+def test_poll_activation_opt_out_preserves_poll_contract(request, monkeypatch, relay_admission_clock, pending):
+    from app import dependencies
+    from storage import sqlite_relay
+    from storage.sqlite_schema import RelayOpenCodeWakeRecord, RelaySessionRecord
+
+    events = []
+    create_router = dependencies.create_router
+
+    def observe_router(service, **kwargs):
+        wake_runner = kwargs["relay_wake_runner"]
+        relay_runner = kwargs["relay_runner"]
+        project = kwargs["relay_activation_callback"]
+
+        async def wake(operation):
+            events.append("wake admission")
+            return await wake_runner(operation)
+
+        async def relay(operation):
+            events.append("ordinary admission")
+            return await relay_runner(operation)
+
+        def activation(row):
+            events.append("projection")
+            return project(row)
+
+        return create_router(service, **{
+            **kwargs, "relay_wake_runner": wake, "relay_runner": relay,
+            "relay_activation_callback": activation,
+        })
+
+    monkeypatch.setattr(dependencies, "create_router", observe_router)
+    client = request.getfixturevalue("client")
+    store = client.app.state.pallium_service._storage
+    path = "/relay/opencode/wake"
+    started = datetime.now(timezone.utc)
+    clock = [started]
+    real_now = sqlite_relay._now
+    monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: real_now(value) if value is not None else clock[0])
+    baseline = None
+    for name in (None, "true", "False", "false"):
+        clock[0] = started
+        base = _setup(client, session=f"native-{name}", relay_admission_clock=relay_admission_clock)
+        message = _send(client, base, relay_admission_clock=relay_admission_clock).json() if pending else None
+        delivery_id = message["deliveries"][0]["delivery_id"] if pending else None
+        clock[0] += timedelta(seconds=5)
+        params = {} if name is None else {"include_activation": name}
+        events.clear()
+        with relay_admission_clock(store, expected_admissions=1):
+            response = client.post(path, params=params, json={**base, "operation": "poll"})
+        assert response.status_code == 200, response.text
+        expected = ["wake admission"] if name == "false" else ["wake admission", "wake admission", "projection"]
+        assert events == expected
+        result = response.json()
+        session = result["session"]
+        assert session["endpoint_id"] == base["endpoint_id"] and session["session_ref"] == base["session_ref"]
+        get_activation = _activation(client, base)
+        assert get_activation["behavior"] == "busy_queue"
+        assert session.pop("activation") == (None if name == "false" else get_activation)
+        assert real_now(datetime.fromisoformat(session["last_seen_at"])) == clock[0]
+        with store._relay_session_factory() as db:
+            row = db.get(RelayOpenCodeWakeRecord, base["endpoint_id"])
+            assert row.owner_id == base["owner_id"]
+            assert real_now(row.owner_expires_at) == clock[0] + timedelta(seconds=15)
+            registered = db.get(RelaySessionRecord, base["endpoint_id"])
+            assert real_now(registered.last_seen_at) == clock[0]
+            assert (row.delivery_id, row.generation, row.admitted, row.terminal, row.claim_attempts) == (
+                delivery_id, int(pending), 0, 0, None,
+            )
+            if pending:
+                assert result["wake"]["native_input_id"] == store._opencode_native_id(row)
+
+        if pending:
+            assert result["wake"]["delivery_id"] == delivery_id
+            message_path = "/relay/messages/" + message["message_id"]
+            queued, = client.get(message_path, params=SCOPE).json()["deliveries"]
+            assert (queued["state"], queued["attempts"], queued["claim_token"]) == ("pending", 0, None)
+            context = _wake(client, base, "context", **_snapshot(base, result["wake"]))
+            assert context.status_code == 200, context.text
+            claimed, = context.json()["deliveries"]
+            assert (claimed["delivery_id"], claimed["state"], claimed["attempts"]) == (delivery_id, "claimed", 1)
+            ack = client.post("/relay/deliveries/ack", json={
+                "delivery_id": delivery_id, "claim_token": claimed["claim_token"], **SCOPE,
+            })
+            assert ack.status_code == 200, ack.text
+            settled, = client.get(message_path, params=SCOPE).json()["deliveries"]
+            assert (settled["state"], settled["attempts"]) == ("delivered", 1)
+            result["wake"].update(delivery_id="delivery", native_input_id="native input")
+        else:
+            assert result["wake"] is None
+
+        session.update(endpoint_id="endpoint", session_ref="session")
+        if baseline is None:
+            baseline = result
+        else:
+            assert result == baseline
+
+
+def test_poll_activation_query_preserves_body_validation_and_non_poll_projection(client):
+    base = _setup(client, enroll=False)
+    path = "/relay/opencode/wake?include_activation=false"
+    enroll = client.post(path, json={**base, "operation": "enroll"})
+    assert enroll.status_code == 200 and enroll.json()["session"]["activation"]["behavior"] == "busy_queue"
+    assert _wake(client, base, "poll", include_activation=False).status_code == 422
+
+    wrong_owner = {**base, "owner_id": "opencode-owner-" + "f" * 32}
+    for operation in ("poll", "detach"):
+        default = _wake(client, wrong_owner, operation)
+        opt_out = client.post(path, json={**wrong_owner, "operation": operation})
+        assert default.status_code == opt_out.status_code == 409
+        assert default.json() == opt_out.json()
+
+    detach = client.post(path, json={**base, "operation": "detach"})
+    assert detach.status_code == 200 and detach.json()["session"]["activation"]["behavior"] == "passive"
+
+
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 def test_context_batch_loss_restores_only_anchor_then_collects_expired_sibling(
     client, monkeypatch, relay_admission_clock,
 ):
