@@ -4,13 +4,13 @@ Branch: `fix/hermes-mcp-reply-contract`. Trusted source base: `16e5a2cc6f631f155
 
 Current phase: the independent architect accepted the `5d33ed57` composition for ordinary CI. It preserves the original adapter and guides and updates only the added reply fixture for #408's generation-owned cleanup. This current-main successor leaves the test-only draft and its RED evidence intact. No local application execution or installed adoption.
 
-Both hosted Linux jobs passed all 101 Hermes reply caller cases.
-The first Linux 3.12 job failed in Relay trace writer contention; one
-failed-job retry hit SQLite setup in a cross-container reply test.
-The independently reviewed [test-only recorder](relay-acquisition-cpu.md)
-is composed for the next ordinary CI. The Hermes product and caller-test
-blobs are unchanged. Interpret any timing only if the selected test
-reports an actual refusal.
+Both hosted Linux lanes passed all 101 Hermes reply caller cases on the
+original successor composition and on `f3a0ebaf`. The earlier Linux
+3.12 runs failed in Relay trace writer contention and cross-container
+reply setup, respectively. The [test-only recorder](relay-acquisition-cpu.md)
+in `f3a0ebaf` was armed and saw no matching refusal. That run's Linux
+3.12 job failed on unchanged Claude ordinary pickup; aggregate CI
+remains failed. The review corrections below have static evidence only.
 
 <!-- agent-workflow:start -->
 **Outcome:**
@@ -38,7 +38,7 @@ The reviewable plan names actual base anchors, the smallest adapter/test paths, 
 {"target":"task-context.scope","classification":"equivalent","before":"Hermes MCP reply-message validation in integrations/hermes/__init__.py, directly affected caller-surface tests and their existing hook/middleware/bridge/stdio/HTTP fixture join, and this Work Record. The reviewed first slice is tests/test_hermes_mcp.py plus this record only. Current release permits their commit, ordinary non-force push on the existing branch, DRAFT PR and existing normal remote CI for actual named-node RED evidence. Product edits wait for valid observed RED review and release; local tests/imports/setup, merge and installed changes remain excluded.","after":"Hermes MCP reply-message validation in integrations/hermes/__init__.py, directly affected caller-surface tests and their existing hook/middleware/bridge/stdio/HTTP fixture join, and this Work Record. After accepted actual RED, the bounded product-source release covers that adapter, tests/test_hermes_mcp.py and the technical clarifications in docs/hermes-integration.md and integrations/hermes/README.md, plus this record. New material awaits existing independent RESULT review/publication gates before updating PR #400 and normal remote CI for GREEN/full qualification. Local tests/imports/setup, merge and installed changes remain excluded.","reason":"The original product-before-valid-RED condition is now satisfied by independently accepted exact CI evidence. Record the released source phase and already-required technical guide clarification without changing the caller contract, original baseline, completion obligations or local execution/installed boundaries. New material still requires result review and publication gates."}]
 
 **Relationships:**
-{"schema_version":1,"sources":null,"pull_requests":["https://github.com/rore/Pallium/pull/400"]}
+{"schema_version":1,"sources":[{"provider":"minimap","scope_ref":"roadmap:v1:git:github.com/rore/pallium#roadmap","local_ref":"item:v1:add-hermes-agent-integration"}],"pull_requests":["https://github.com/rore/Pallium/pull/400","https://github.com/rore/Pallium/pull/439"]}
 
 **Risk:** Elevated
 
@@ -65,7 +65,7 @@ Original-base discovery: the approved base combines MCP message and receipt chec
 **Verification plan:**
 - Source milestone -> verify the committed Requirement baseline and equivalent Task Context chain; statically parse source, derive parameter IDs without collection, check explicit identity on every MCP invocation, constrain the product AST delta and preserve unaffected definitions/helpers; inspect the outgoing diff for private disclosures. These are static checks, not RED or GREEN.
 - Admitted 2401/16000 success and exact peer text -> test_hook_mcp_reply_message_contract_e2e below in existing normal remote CI, with fresh admission and actual bridge/stdio/HTTP/readback; inspect the actual named-node result, not only aggregate job status.
-- Explicit invalid-message failure, zero dispatch and same-turn recovery -> test_hook_mcp_reply_invalid_message_preserves_admission_e2e with real bridge forwarding/readback; the expanded input matrix is now authored, not executed. Actual GREEN/full feature qualification remains required after current-material review and publication release.
+- Explicit invalid-message failure, zero dispatch and same-turn recovery -> test_hook_mcp_reply_invalid_message_preserves_admission_e2e with real bridge forwarding/readback; the matrix passed on the hosted predecessors below. The corrected candidate still needs ordinary hosted qualification after review and publication release.
 - Trusted gates, authority/lifecycle/batch privacy and legacy2400/2401 -> the full matrix and existing control nodes below before feature completion; no private receipt/lifetime changes or protected-contract weakening.
 - Whole-change selection and compliance -> existing static selector, current Redline/Workflow/native prepush checks and ordinary CI lanes; boundary reuse requires genuine report provenance plus unchanged relevant code/config and never substitutes for actual node execution.
 
@@ -84,6 +84,18 @@ Manager now accepts the independently verified valid RED and releases only the p
 <!-- agent-workflow:end -->
 
 ## Implementation
+
+#439 review checkpoint: the task owner authorized an isolated test/record
+correction at `f3a0ebaf`. The existing Elevated/Moderate classification
+still applies to the whole PR. This correction adds coverage only in
+the existing test file, outside the protected contract paths. Preserve
+the settled product requirements and prior reviews. Track each generation
+when the fixture's bridge acquires it, leave disposal to the bridge,
+capture the reply API response at the existing forwarding handler, and
+try the retired delivery under the new live turn before valid recovery.
+Reconcile the record against the hosted JUnit and job results. Verify
+the two-path diff, static source and Work Record only; the owner retains
+current-candidate review and hosted validation.
 
 Current-main composition: transplanted byte-identical adapter and both
 guides. Added the existing 18 reply fixture/test definitions without
@@ -157,13 +169,20 @@ python -m pytest 'tests/test_hermes_mcp.py::test_hook_mcp_reply_message_contract
 python -m pytest 'tests/test_hermes_mcp.py::test_hook_mcp_reply_invalid_message_preserves_admission_e2e[over-16000]' -q -n 0
 ```
 
-At the first-test source checkpoint, the first two asserted successful exact peer replies, not the old reject2401/short-valid diagnostic. The third asserted the explicit16001 error, zero dispatch, same-admission recovery and replay refusal. No runtime result existed at that historical checkpoint. The accepted actual mcp-2401 RED below supersedes that unexecuted status for that node only;16000/16001 and all expanded cases are still not runtime-qualified. Fixture/import/collection/timeout/skip/cleanup failures never count as valid RED.
+At the first-test source checkpoint, the first two asserted successful exact peer replies, not the old reject2401/short-valid diagnostic. The third asserted the explicit16001 error, zero dispatch, same-admission recovery and replay refusal. No runtime result existed at that historical checkpoint. The accepted mcp-2401 RED and the later successor matrix results are recorded below. Fixture/import/collection/timeout/skip/cleanup failures never count as valid RED.
 
 Historical first-test release: corrected-delta PLAN GO permitted that source slice, while product work awaited valid observed RED/release. That condition is now satisfied. The already-assigned two-guide technical clarification is included in the current product-source delta, not claimed as installed behavior. Local execution remains excluded independently of the existing remote-CI path.
 
-### Current authored feature matrix — source evidence only
+### Feature matrix and hosted evidence
 
-Static parameter expansion derives 101 caller-surface cases without pytest collection. Every invocation supplies an explicit session and turn. These definitions are not 101 passing tests; none of the expanded source has run.
+Static parameter expansion derives 101 caller-surface cases. Every
+invocation supplies an explicit session and turn. The Linux 3.12 and
+3.13 JUnit reports for [45837429813](https://github.com/rore/Pallium/actions/runs/45837429813)
+and [45852723290](https://github.com/rore/Pallium/actions/runs/45852723290)
+each show all 101 named cases passed, with no failures, errors or skips
+in the matrix. Both runs retained a failed Linux 3.12 lane and failed
+aggregate; neither establishes full-job, local or installed qualification.
+The corrected teardown and assertions below have not run.
 
 | Test function suffix after test_hook_mcp_reply_ | Cases | Observable contract asserted |
 |---|---:|---|
@@ -175,15 +194,25 @@ Static parameter expansion derives 101 caller-surface cases without pytest colle
 | message_and_admission_errors_are_distinct_e2e | 12 | Valid/blank messages crossed with wrong turn, another registered session, missing/unknown/overlong/numeric delivery; no mutation, exact error class and original-admission recovery. |
 | rejects_model_authority_and_bad_envelopes_e2e | 7 | Null/list argument envelopes and model-supplied receipt/session/turn/scope/unknown fields rejected; direct invocation cannot forge middleware authority; real recovery succeeds. |
 | preserves_host_authorization_e2e | 2 | Host denial/exception dispatch nothing and clear ambient binding; later authorized16000 succeeds. |
-| keeps_downstream_content_validation_e2e | 3 | NUL/line-separator/paragraph-separator reach the actual server and fail there; private admission survives and valid recovery is peer-visible. |
+| keeps_downstream_content_validation_e2e | 3 | NUL/line-separator/paragraph-separator reach the actual server and return HTTP 422 with the exact Relay validation detail; private admission survives and valid recovery is peer-visible. |
 | requires_confirmed_admission_e2e | 4 | Unobserved context, failed ACK, lost ACK response and failed admission persistence refuse a valid2401 reply; real hook retry restores confirmed admission and succeeds. |
 | batch_receipts_remain_independent_e2e | 2 | Three-target sibling-before-anchor/anchor/remaining-sibling journey; invalid message/replay consume no other receipt. Failed-sibling ACK refuses that sibling while confirmed targets remain usable. Peer readback verifies every reply's identity/text. |
 | does_not_restore_retired_authority_e2e | 4 | Exact turn end, unload, reload and successful-reply replay never restore retired authority for16000; no additional bridge/HTTP reply. |
-| new_turn_does_not_revive_old_delivery_e2e | 1 | End old admitted turn, admit a new delivery through the real hook, refuse the old turn and accept the new16000-astral reply; final owned cleanup still applies. |
+| new_turn_does_not_revive_old_delivery_e2e | 1 | End old admitted turn, admit a new delivery through the real hook, refuse the old delivery in both the ended and new live turn without bridge dispatch, and accept the new16000-astral reply. |
 
 Unchanged controls remain required in ordinary CI: tests/test_hermes_relay_plugin.py::test_plugin_reply_boundaries preserves direct2400/2401; test_hermes_exact_batch_observes_all_envelopes_and_replies_independently covers the original batch contract; test_turn_end_retires_admitted_no_reply_wakes_for_successive_deliveries covers three successive turns; test_inexact_turn_end_keeps_the_admitted_wake, test_turn_end_is_scoped_to_one_of_two_hermes_sessions, test_late_ack_after_turn_end_keeps_the_uncertain_persisted_fence and test_unload_disables_old_callbacks_and_reload_preserves_uncertain_authority_fence retain wider lifetime/identity controls. Their prior evidence is reused only for unchanged behavior; no fresh pass is claimed. Reply messages have no enum; existing unrelated enum/expiry and transport contracts remain in their unchanged server/bridge suites, not a new integration policy.
 
 ## Evidence
+
+#439 correction: static syntax and AST comparison against `f3a0ebaf`
+found exactly the intended fixture and two test bodies changed, with test
+signatures, decorators, explicit MCP identity and requirement fields
+preserved. All four retained Linux JUnit reports agree on the 101 unique
+named passes. Git whitespace and two-path scope checks passed. Static
+import-linter reported no violations. Redline was GRAY for the whole PR,
+and Workflow reported only commit-order advisories. The selector returned
+the full ordinary lane. The corrected tests have not been executed.
+Test Git blob: `94d096b1fba102561a666aff19b6aa72b0b6f9df`.
 
 Accepted actual RED (manager independently verified, reused without rerun/reapproval): PR #400 remained DRAFT at head64ea91f897e8d1aff905559c1be09e1d294e8de9. Ordinary CI43207158783/job131145417732 executed test_hook_mcp_reply_message_contract_e2e[mcp-2401]; exact ACK/current-admission preconditions passed, then the actual acceptance assertion failed with No delivery is admitted for this host session and turn. Summary1 failed/3901 passed/37 skipped/1 xfailed, no teardown error. This is valid message-contract RED, not fixture failure, GREEN or full-suite qualification. Published evidence: https://github.com/rore/Pallium/pull/400#issuecomment-6822268741.
 
@@ -198,6 +227,17 @@ Git confirmed the requested branch/path were absent, the trusted base object exi
 First test-source static verification passed: native edit syntax checks; isolated stdlib AST parsing (no source imports/execution); AST equality of every pre-existing top-level function/class against the trusted base; explicit session/turn keywords on every new MCP invocation; exact derivation of the three authored parameter IDs without pytest collection; equality of Requirement baseline JSON against the first local record-only commit and exact agreement with all four current Task Context fields; Git diff whitespace checks and an exact two-path changed-set check with no untracked files. Targeted disclosure scans found no machine-local identifiers/paths in the record or authored source. The introduced optional-server-access static diagnostic was corrected with explicit narrowing. No full type/lint/Workflow evaluator, application/helper imports, pytest/collection, server, setup or SDK subprocess ran. Test source SHA256: 9915cc81456782fc6fb0370e8dda6de54455d26fd85f150bc61c98984b0f48c3. These are STATIC results, not observed RED or E2E execution evidence.
 
 ## Result review
+
+Agent technical review: The independent architect accepted all five
+review corrections for ordinary CI on #439. No product code changed.
+
+Reviewed revision: `f3a0ebaf` plus caller-test blob `94d096b1` and
+reviewed Work Record blob `8513b03e`.
+
+Verification adequacy: Source GO covers each connection generation,
+the actual downstream error, and old-delivery refusal in a new live
+turn. Hosted execution of those exact assertions remains required.
+The predecessor's failed Linux 3.12 lane remains failed.
 
 Agent technical review: Independent architect accepted the corrected current-main composition for ordinary CI after inspecting the exact fixture and unchanged adapter/guides.
 
@@ -215,4 +255,11 @@ Agent technical review: the existing independent architect accepted the admissio
 
 ## Recovery
 
-The released source milestone is ready for existing independent RESULT review, not publication or completion. Branch fix/hermes-mcp-reply-contract retains unpublished changes in exactly the adapter, MCP test file, both technical guides and this record over HEAD64ea91f897e8d1aff905559c1be09e1d294e8de9. PR #400 and its accepted RED remain unchanged. Next: manager routes the actual delta/static evidence to the same independent reviewer; after actual current-material acceptance and publication release, use ordinary existing remote CI for GREEN/full qualification. Do not rerun/reapprove RED or restart the plan. No local tests/setup/application/helper imports, helper dispatch, new worker/runner/framework, merge, environment/skill changes or installed adoption. Retain this owner-created checkout for pending review/corrections and preserve private evidence in ignored metadata. Primary ownership/unfinished trees and their separate containment/interpreter/serialized-slot holds remain unchanged. Native final is the substantive handoff; Relay delivery/participant state is unverified.
+The independently reviewed successor is already open as [#439](https://github.com/rore/Pallium/pull/439).
+The isolated `fix/hermes439-review-corrections` branch holds only the test
+and Work Record corrections over `f3a0ebaf`. The manager owns correction
+readback, any publication, and ordinary CI on the corrected successor.
+Verify the named caller cases and the required lanes on that revision;
+retain the failed prior runs. Keep [#400](https://github.com/rore/Pallium/pull/400)
+as historical RED evidence and preserve its draft until the successor
+merges. Local Hermes execution and installed adoption remain out of scope.

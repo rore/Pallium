@@ -1228,6 +1228,7 @@ def joined_mcp_reply_context(client, plugin_context, monkeypatch):
     """Join existing host callbacks to real bridge/stdio/HTTP, without live config."""
     module, create, config = plugin_context
     contexts, bridges, pollers, requests, reply_calls, errors = [], [], [], [], [], []
+    reply_responses = []
     resource_lock = threading.Lock()
     server = listener = None
     startup_error = None
@@ -1250,7 +1251,11 @@ def joined_mcp_reply_context(client, plugin_context, monkeypatch):
         assert not thread.is_alive(), f"Owned thread did not exit: {thread.name}"
 
     class Handler(_RelayHandler):
-        pass
+        def _write_response(self, response):
+            if self.command == "POST" and self.path == "/relay/replies":
+                with self.lock:
+                    reply_responses.append(response)
+            super()._write_response(response)
 
     Handler.client, Handler.calls, Handler.lock = client, [], threading.Lock()
 
@@ -1278,8 +1283,20 @@ def joined_mcp_reply_context(client, plugin_context, monkeypatch):
     class Bridge(RelayMcpBridge):
         def __init__(self, **kwargs):
             self.close_completed = False
+            self.generations = []
             bridges.append(self)  # Retain partial construction for failure cleanup.
             super().__init__(**kwargs)
+
+        @property
+        def _connection(self):
+            return self._current_connection
+
+        @_connection.setter
+        def _connection(self, connection):
+            # Capture ownership before worker start, even if acquisition fails.
+            if connection is not None:
+                self.generations.append(connection)
+            self._current_connection = connection
 
         def close(self):
             super().close()
@@ -1339,13 +1356,13 @@ def joined_mcp_reply_context(client, plugin_context, monkeypatch):
         ))
         yield SimpleNamespace(
             create=create, bridges=bridges, reply_calls=reply_calls, http_calls=Handler.calls,
+            reply_responses=reply_responses,
             session="ses_שלום", turn="wake", unload=unload,
         )
     except BaseException as error:
         startup_error = error
         raise
     finally:
-        generations = [(bridge, getattr(bridge, "_connection", None)) for bridge in bridges]
         # Retire every callback before attempting any: an early failure must not
         # leave callbacks for plugin_context to run after proxy/client teardown.
         callbacks = []
@@ -1354,10 +1371,10 @@ def joined_mcp_reply_context(client, plugin_context, monkeypatch):
             ctx.cleanups.clear()
         for callback in callbacks:
             attempt(callback)
-        for bridge, generation in generations:
-            if generation is not None:
-                if not bridge.close_completed:
-                    attempt(bridge.close)
+        for bridge in bridges:
+            if bridge.generations and not bridge.close_completed:
+                attempt(bridge.close)
+            for generation in bridge.generations:
                 attempt(check_generation, generation)
         for poller in pollers:
             attempt(join_owned, poller)
@@ -1794,6 +1811,9 @@ def test_hook_mcp_reply_keeps_downstream_content_validation_e2e(
     assert _persisted_wake(ctx, session=joined.session) == before
     requests = [body for path, body in joined.http_calls if path == "/relay/replies"]
     assert len(requests) == 1 and requests[0]["payload"] == unsafe
+    response, = joined.reply_responses
+    assert response.status_code == 422
+    assert response.json()["detail"] == "payload contains unsafe control characters"
     _assert_no_joined_peer_reply(client)
     recovery = "valid content survives downstream refusal"
     accepted = json.loads(_mcp_tool(
@@ -1993,6 +2013,10 @@ def test_hook_mcp_reply_new_turn_does_not_revive_old_delivery_e2e(client, joined
     _assert_joined_admission(client, joined, ctx, next_incoming, request)
     refused = json.loads(_mcp_tool(
         ctx, "pallium_relay_reply", old_args, session=joined.session, turn=old_turn,
+    ))
+    assert refused == _MCP_ADMISSION_ERROR
+    refused = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", old_args, session=joined.session, turn=joined.turn,
     ))
     assert refused == _MCP_ADMISSION_ERROR
     assert not joined.reply_calls
