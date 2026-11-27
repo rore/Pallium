@@ -16,6 +16,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 LOG = logging.getLogger("pallium.hermes")
 RUNTIME, TOOL_NAME = "hermes", "pallium_relay_reply"
 MAX_CONTEXT_CHARS, MAX_PAYLOAD_CHARS, MAX_REPLY_CHARS = 48_000, 16_000, 2400
+MAX_MCP_REPLY_CHARS = 16_000
 MAX_WAKE_DELIVERIES = 3
 MAX_RESPONSE_BYTES = 256 * 1024
 POLL_SECONDS, HTTP_TIMEOUT_SECONDS = 0.25, 1.0
@@ -921,10 +922,14 @@ def register(ctx):
             view, private_reply = None, None
             if name == TOOL_NAME:
                 delivery_id, message = args.get("delivery_id"), args.get("message")
+                if (not isinstance(message, str) or not message.strip()
+                        or len(message) > MAX_MCP_REPLY_CHARS):
+                    return json.dumps({"error": (
+                        "Invalid reply message: expected a nonblank string of at most "
+                        "16000 Unicode code points."
+                    )})
                 view, receipt = reply_receipt(session_id, identity[1], delivery_id)
-                if (not _text(receipt, 64)
-                        or not isinstance(message, str) or not message.strip()
-                        or len(message) > MAX_REPLY_CHARS):
+                if not _text(receipt, 64):
                     return json.dumps({"error": "No delivery is admitted for this host session and turn"})
                 private_reply = {"delivery_id": delivery_id, "receipt": receipt}
             if not profile_ok():

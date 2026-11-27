@@ -85,8 +85,20 @@ not invent replacements.
 
 <a id="relay-behavior"></a>
 
-Incoming messages support 16,000 Unicode code points and host-bound replies
-2,400. The plugin renews the exact Relay endpoint during trusted host activity;
+Incoming messages support 16,000 Unicode code points. For this source version,
+the plugin-owned MCP reply tool accepts a nonblank `message` through 16,000 code
+points; the legacy direct plugin reply accepts `payload` through 2,400. These are
+code-point limits, not byte or grapheme limits. Accepted text is forwarded exactly,
+without trimming or Unicode normalization. Invalid MCP message shape, blankness
+or length produces an explicit argument error without dispatching or consuming
+admission, after trusted identity and active-scope gates. Delivery-specific private
+receipts, turn lifetime and downstream server content validation are unchanged.
+
+Installed copies can differ from this checkout. Verify the serving and loaded
+plugin revisions before assuming this MCP limit is available; no installation,
+update or live adoption is performed by this source change.
+
+The plugin renews the exact Relay endpoint during trusted host activity;
 background polling and MCP reads do not renew presence. Closed, replaced and
 wrong-generation endpoints are refused.
 

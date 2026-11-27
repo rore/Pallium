@@ -23,7 +23,7 @@ def test_db_url(tmp_path: Path) -> str:
 
 
 @pytest.fixture()
-def client(test_db_url: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+def client(test_db_url: str, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> Iterator[TestClient]:
     from app import main as app_main
 
     monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", lambda *_args, **_kwargs: None)
@@ -51,8 +51,12 @@ def client(test_db_url: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestCl
         )
     service = app.state.pallium_service
     if os.environ.get("GITHUB_ACTIONS") == "true" and isinstance(service._storage, SQLiteStorageProvider):
-        from tests.codex_wake_setup import observe_relay_acquisition_failures
-        observe_relay_acquisition_failures(service._storage, monkeypatch)
+        from tests.codex_wake_setup import observe_relay_acquisition_failures, relay_acquisition_split_enabled
+
+        split = relay_acquisition_split_enabled(request.node.nodeid)
+        observe_relay_acquisition_failures(service._storage, monkeypatch, split=split)
+        if split:
+            request.node.user_properties.append(("relay_acquisition_split", "armed"))
     if all(storage is not service._storage for storage in storages):
         storages.append(service._storage)
     http = TestClient(app)

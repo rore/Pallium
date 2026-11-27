@@ -52,8 +52,21 @@ service does not enable this Hermes tool catalog.
 
 <a id="delivery-and-history-behavior"></a>
 
-Incoming Relay payloads support up to 16,000 Unicode code points; host-bound
-replies support 2,400. Acknowledgement means the complete delivery context reached
+Incoming Relay payloads support up to 16,000 Unicode code points. In this source
+version, plugin-owned MCP replies (`pallium_relay_reply`, `message`) support
+16,000; the legacy direct plugin reply (`payload`) remains limited to 2,400.
+Limits count code points, not UTF-8 bytes or displayed graphemes. Accepted text,
+including surrounding whitespace and combining sequences, is not trimmed or
+normalized. Non-string, blank and oversized MCP messages receive an explicit
+argument error without consuming the admission, after trusted identity and active
+scope checks. Valid replies still need the exact live delivery admission; server
+content rules remain authoritative.
+
+This source contract is not proof of installed behavior. Verify the serving and
+loaded plugin revisions before relying on the MCP limit; this change does not
+install, update or adopt an integration automatically.
+
+Acknowledgement means the complete delivery context reached
 the host request, before provider completion. It does **not** prove that the agent
 acted or replied. The hook owns claim and ACK; do not receive or acknowledge an
 injected delivery again. Use status and trace when an outcome is uncertain.

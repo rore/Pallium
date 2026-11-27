@@ -10,7 +10,7 @@ import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -30,6 +30,19 @@ from app.mcp.context import (
 from app.mcp.client import PalliumMcpClient
 from app.mcp.hermes import HERMES_MEMORY_TOOLS, HERMES_TOOLS, _read_identity, create_hermes_server, make_tool_adapter
 from app.mcp.server import create_server
+from integrations.hermes.mcp_bridge import RelayMcpBridge
+from tests.test_hermes_relay_plugin import (
+    SCOPE,
+    _admit_plugin_wake,
+    _await as _plugin_await,
+    _mcp_tool,
+    _persisted_wake,
+    _plugin_wake,
+    _request_stage,
+    plugin_context as plugin_context,
+    send as _plugin_send,
+    status as _plugin_message_status,
+)
 
 
 class _RelayHandler(BaseHTTPRequestHandler):
@@ -1208,6 +1221,813 @@ def test_bridge_close_during_work_is_terminal_and_disposes_owners_e2e(
     assert len(joined.stdio_contexts) == count
     assert all(entry.exited for entry in [*joined.sessions, *joined.stdio_contexts])
     assert all(process.returncode is not None for process in joined.processes)
+
+
+@pytest.fixture
+def joined_mcp_reply_context(client, plugin_context, monkeypatch):
+    """Join existing host callbacks to real bridge/stdio/HTTP, without live config."""
+    module, create, config = plugin_context
+    contexts, bridges, pollers, requests, reply_calls, errors = [], [], [], [], [], []
+    reply_responses = []
+    resource_lock = threading.Lock()
+    server = listener = None
+    startup_error = None
+
+    def attempt(callback, *args):
+        try:
+            callback(*args)
+        except BaseException as error:
+            errors.append(error)
+
+    def unload(ctx):
+        callbacks = tuple(ctx.cleanups)
+        ctx.cleanups.clear()
+        for callback in callbacks:
+            attempt(callback)
+
+    def join_owned(thread):
+        if thread.ident is not None:
+            thread.join(timeout=2)
+        assert not thread.is_alive(), f"Owned thread did not exit: {thread.name}"
+
+    class Handler(_RelayHandler):
+        def _write_response(self, response):
+            if self.command == "POST" and self.path == "/relay/replies":
+                with self.lock:
+                    reply_responses.append(response)
+            super()._write_response(response)
+
+    Handler.client, Handler.calls, Handler.lock = client, [], threading.Lock()
+
+    class Proxy(ThreadingHTTPServer):
+        def process_request(self, request, client_address):
+            # Keep exact handles before start; do not enumerate unrelated threads.
+            worker = threading.Thread(
+                target=self.process_request_thread, args=(request, client_address),
+                name="hermes-reply-test-http-request", daemon=True,
+            )
+            with resource_lock:
+                requests.append(worker)
+            try:
+                worker.start()
+            except BaseException as error:
+                with resource_lock:
+                    errors.append(error)
+                attempt(self.shutdown_request, request)
+                raise
+
+        def handle_error(self, request, client_address):
+            with resource_lock:
+                errors.append(os.sys.exception() or RuntimeError("Proxy request failed"))
+
+    class Bridge(RelayMcpBridge):
+        def __init__(self, **kwargs):
+            self.close_completed = False
+            self.generations = []
+            bridges.append(self)  # Retain partial construction for failure cleanup.
+            super().__init__(**kwargs)
+
+        @property
+        def _connection(self):
+            return self._current_connection
+
+        @_connection.setter
+        def _connection(self, connection):
+            # Capture ownership before worker start, even if acquisition fails.
+            if connection is not None:
+                self.generations.append(connection)
+            self._current_connection = connection
+
+        def close(self):
+            super().close()
+            self.close_completed = True
+
+        def call(self, name, arguments, identity, reply=None):
+            if name == "pallium_relay_reply":
+                reply_calls.append(tuple(identity))
+            return super().call(name, arguments, identity, reply)
+
+    def owned_poller(*args, **kwargs):
+        thread = threading.Thread(*args, **kwargs)
+        pollers.append(thread)
+        return thread
+
+    register = module.register
+
+    def owned_register(ctx):
+        contexts.append(ctx)  # Existing create() only retains successful register().
+        return register(ctx)
+
+    def check_generation(generation):
+        assert generation.finished.is_set(), "Owned MCP stdio context did not finish"
+        assert not generation.thread.is_alive(), "Owned MCP worker did not exit"
+        assert not generation.cleanup_failed, "Owned MCP cleanup reported failure"
+        assert generation.failure is None, "Owned MCP serve reported failure"
+
+    def serve():
+        try:
+            assert server is not None
+            server.serve_forever(poll_interval=.01)
+        except BaseException as error:
+            with resource_lock:
+                errors.append(error)
+
+    try:
+        server = Proxy(("127.0.0.1", 0), Handler)
+        listener = threading.Thread(
+            target=serve,
+            name="hermes-reply-test-http", daemon=True,
+        )
+        listener.start()
+        settings = config["plugins"]["entries"]["pallium-hermes-relay"]["settings"]
+        settings.update(
+            service_url=f"http://127.0.0.1:{server.server_port}", **SCOPE,
+            mcp_python=os.sys.executable, mcp_repo=str(Path(__file__).resolve().parents[1]),
+            actor_ref="hermes-test", visibility="private", memory_enabled=False,
+        )
+        bridge_module = ModuleType(module.__name__ + ".mcp_bridge")
+        bridge_module.RelayMcpBridge = Bridge
+        monkeypatch.setitem(os.sys.modules, bridge_module.__name__, bridge_module)
+        monkeypatch.setattr(module, "register", owned_register)
+        # Only the test-loaded plugin's namespace changes, not global threading.
+        monkeypatch.setattr(module, "threading", SimpleNamespace(
+            RLock=threading.RLock, Event=threading.Event,
+            Thread=owned_poller, current_thread=threading.current_thread,
+        ))
+        yield SimpleNamespace(
+            create=create, bridges=bridges, reply_calls=reply_calls, http_calls=Handler.calls,
+            reply_responses=reply_responses,
+            session="ses_שלום", turn="wake", unload=unload,
+        )
+    except BaseException as error:
+        startup_error = error
+        raise
+    finally:
+        # Retire every callback before attempting any: an early failure must not
+        # leave callbacks for plugin_context to run after proxy/client teardown.
+        callbacks = []
+        for ctx in reversed(contexts):
+            callbacks.extend(ctx.cleanups)
+            ctx.cleanups.clear()
+        for callback in callbacks:
+            attempt(callback)
+        for bridge in bridges:
+            if bridge.generations and not bridge.close_completed:
+                attempt(bridge.close)
+            for generation in bridge.generations:
+                attempt(check_generation, generation)
+        for poller in pollers:
+            attempt(join_owned, poller)
+        if server is not None:
+            if listener is not None and listener.is_alive():
+                attempt(server.shutdown)
+            attempt(server.server_close)
+        if listener is not None:
+            attempt(join_owned, listener)
+        # Listener is quiescent, so no more request handles can be acquired.
+        with resource_lock:
+            workers = list(requests)
+        for worker in workers:
+            attempt(join_owned, worker)
+        if errors:
+            failures = ([startup_error] if startup_error is not None else []) + errors
+            # Pytest separately retains a test-body failure and this teardown
+            # failure; construction failures also remain explicit group members.
+            raise BaseExceptionGroup("Joined MCP fixture cleanup failed", failures) from None
+
+
+def _admitted_joined_reply(client, joined):
+    ctx, marker, incoming = _plugin_wake(client, joined.create)
+    admission_request = _admit_plugin_wake(
+        ctx, marker, turn=joined.turn, session=joined.session,
+    )
+    _assert_joined_admission(client, joined, ctx, incoming, admission_request)
+    return ctx, incoming
+
+
+def _assert_joined_admission(client, joined, ctx, incoming, admission_request):
+    assert len(joined.bridges) == 1
+    bridge = joined.bridges[0]
+    assert isinstance(bridge, RelayMcpBridge)
+    assert bridge.config[1] == SCOPE["container_ref"]
+    reply = next(tool for tool in bridge.catalog if tool["name"] == "pallium_relay_reply")
+    assert "message" in reply["parameters"]["properties"]
+    assert "payload" not in reply["parameters"]["properties"]
+    assert "receipt" not in reply["parameters"]["properties"]
+    # Prove the joined transport and exact admitted identity BEFORE the subject
+    # assertion; a setup/stdio failure must not masquerade as a contract RED.
+    address = json.loads(_mcp_tool(
+        ctx, "pallium_relay_address", {}, session=joined.session, turn=joined.turn,
+    ))
+    assert "error" not in address, address
+    assert address["runtime"] == "hermes"
+    assert address["session_ref"] == joined.session
+    # A healthy address call is NOT admission proof. These existing read paths
+    # must establish the exact hook-owned ACK and still-current session/turn
+    # before any subject reply. Failure here is fixture/admission failure, NOT
+    # message-limit RED; no receipt is seeded/read and no reply is consumed.
+    admission_failure = "Fixture/admission precondition failed (not message-limit RED)"
+    delivery_id = incoming["deliveries"][0]["delivery_id"]
+    deliveries = [
+        row for row in _plugin_message_status(client, incoming)["deliveries"]
+        if row["delivery_id"] == delivery_id
+    ]
+    assert len(deliveries) == 1, admission_failure + ": exact delivery missing"
+    delivery = deliveries[0]
+    assert delivery["state"] == "delivered", admission_failure + ": hook ACK missing"
+    assert delivery["delivered_at"] is not None, admission_failure + ": ACK not persisted"
+    assert delivery["recipient_session_ref"] == joined.session, admission_failure + ": session"
+    assert delivery["recipient_container_ref"] == SCOPE["container_ref"], admission_failure + ": scope"
+    try:
+        wake = _persisted_wake(ctx, session=joined.session)
+    except StopIteration as error:
+        raise AssertionError(admission_failure + ": no current admitted wake") from error
+    expected = {
+        "state": "admitted", "delivery_id": delivery_id,
+        "session_ref": joined.session, "turn_id": joined.turn,
+        "container_ref": SCOPE["container_ref"], "profile": ctx.profile_name,
+        "endpoint_id": delivery["recipient_endpoint_id"],
+    }
+    assert {key: wake.get(key) for key in expected} == expected, admission_failure + ": wake binding"
+    # This existing request-stage helper is read-only: recheck current in-memory
+    # scope/turn/profile/end fences without invoking admission or another ACK.
+    observed = _request_stage(
+        ctx, admission_request, session=joined.session, turn=joined.turn,
+        api_request_id="api-" + joined.turn,
+    )
+    assert observed is not admission_request, admission_failure + ": current context unavailable"
+    assert incoming["payload"] in observed["messages"][0]["content"], admission_failure + ": context"
+    assert not joined.reply_calls
+
+
+def _assert_joined_peer_reply(client, joined, incoming, result, message, *, attempts=1):
+    assert "error" not in result, result
+    assert joined.reply_calls == [(joined.session, joined.turn)] * attempts
+    received = client.post("/relay/turn", json={
+        # No render clipping: one known reply, bounded by the 16000 contract.
+        "runtime": "claude-code", "session_ref": "sender", "max_chars": 0,
+        "max_messages": 1, **SCOPE,
+    })
+    assert received.status_code == 200, received.text
+    deliveries = received.json()["deliveries"]
+    assert len(deliveries) == 1
+    delivery = deliveries[0]
+    assert delivery["message_id"] == result["message_id"]
+    assert delivery["payload"] == message
+    assert not delivery["content_truncated"] and delivery["next_offset"] is None
+    assert delivery["sender_runtime"] == "hermes"
+    assert delivery["sender_session_ref"] == joined.session
+    assert delivery["recipient_container_ref"] == SCOPE["container_ref"]
+    assert delivery["in_reply_to"] == incoming["message_id"]
+    status = client.get(f"/relay/messages/{result['message_id']}", params={
+        **SCOPE, "offset": 0, "page_size": len(message),
+    })
+    assert status.status_code == 200, status.text
+    view = status.json()
+    assert view["payload"] == message and view["payload_total_chars"] == len(message)
+    assert view["payload_offset"] == 0 and view["next_offset"] is None
+    assert not view["content_truncated"]
+    assert view["deliveries"][0]["recipient_container_ref"] == SCOPE["container_ref"]
+    replies = [body for path, body in joined.http_calls if path == "/relay/replies"]
+    assert len(replies) == attempts
+    assert all(body["container_ref"] == SCOPE["container_ref"] for body in replies)
+    assert replies[-1]["payload"] == message
+
+
+_MISSING_MESSAGE = object()
+_MCP_MESSAGE_ERROR = {"error": (
+    "Invalid reply message: expected a nonblank string of at most 16000 Unicode code points."
+)}
+_MCP_ADMISSION_ERROR = {"error": "No delivery is admitted for this host session and turn"}
+
+
+@pytest.mark.parametrize("size", [
+    pytest.param(2401, id="mcp-2401"),
+    pytest.param(16000, id="mcp-16000"),
+    pytest.param(1, id="mcp-1"),
+    pytest.param(2400, id="mcp-2400"),
+    pytest.param(15999, id="mcp-15999"),
+])
+def test_hook_mcp_reply_message_contract_e2e(client, joined_mcp_reply_context, size):
+    joined = joined_mcp_reply_context
+    ctx, incoming = _admitted_joined_reply(client, joined)
+    message = "x" * size
+    assert len(message) == size
+    result = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply",
+        {"delivery_id": incoming["deliveries"][0]["delivery_id"], "message": message},
+        session=joined.session, turn=joined.turn,
+    ))
+    _assert_joined_peer_reply(client, joined, incoming, result, message)
+
+
+@pytest.mark.parametrize("invalid", [
+    pytest.param("x" * 16001, id="over-16000"),
+    pytest.param("é" * 16001, id="over-bmp"),
+    pytest.param("🌍" * 16001, id="over-astral"),
+    pytest.param(("e\u0301" * 8001)[:16001], id="over-combining"),
+    pytest.param("", id="empty"),
+    pytest.param(" \t\r\n", id="blank"),
+    pytest.param("\u2003\u3000", id="unicode-blank"),
+    pytest.param(None, id="null"),
+    pytest.param(False, id="boolean"),
+    pytest.param(0, id="integer"),
+    pytest.param(1.5, id="float"),
+    pytest.param([], id="list"),
+    pytest.param({}, id="object"),
+    pytest.param(_MISSING_MESSAGE, id="missing"),
+])
+def test_hook_mcp_reply_invalid_message_preserves_admission_e2e(
+    client, joined_mcp_reply_context, invalid,
+):
+    joined = joined_mcp_reply_context
+    ctx, incoming = _admitted_joined_reply(client, joined)
+    delivery_id = incoming["deliveries"][0]["delivery_id"]
+    wake_before = json.loads(json.dumps(_persisted_wake(ctx, session=joined.session)))
+    invalid_args = {"delivery_id": delivery_id}
+    if invalid is not _MISSING_MESSAGE:
+        invalid_args["message"] = invalid
+    result = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", invalid_args,
+        session=joined.session, turn=joined.turn,
+    ))
+    assert result == _MCP_MESSAGE_ERROR
+    assert _persisted_wake(ctx, session=joined.session) == wake_before
+    assert not joined.reply_calls
+    assert not any(path == "/relay/replies" for path, _body in joined.http_calls)
+    empty = client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "sender", "max_chars": 2400, **SCOPE,
+    })
+    assert empty.status_code == 200, empty.text
+    assert empty.json()["deliveries"] == []
+    message = "same admission survives שלום"
+    args = {"delivery_id": delivery_id, "message": message}
+    accepted = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", args, session=joined.session, turn=joined.turn,
+    ))
+    _assert_joined_peer_reply(client, joined, incoming, accepted, message)
+    replay = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", args, session=joined.session, turn=joined.turn,
+    ))
+    assert replay == {"error": "No delivery is admitted for this host session and turn"}
+    assert joined.reply_calls == [(joined.session, joined.turn)]
+    assert len([path for path, _body in joined.http_calls if path == "/relay/replies"]) == 1
+
+
+def _assert_no_joined_peer_reply(client):
+    response = client.get("/relay/pending-candidate", params={
+        "runtime": "claude-code", "session_ref": "sender", **SCOPE,
+    })
+    assert response.status_code == 200, response.text
+    assert response.json() is None
+
+
+@pytest.mark.parametrize("size", [1, 2400, 2401, 15999, 16000])
+@pytest.mark.parametrize("unit", [
+    pytest.param("é", id="bmp"),
+    pytest.param("🌍", id="astral"),
+    pytest.param("e\u0301", id="combining"),
+])
+def test_hook_mcp_reply_unicode_codepoint_boundaries_e2e(
+    client, joined_mcp_reply_context, size, unit,
+):
+    joined = joined_mcp_reply_context
+    ctx, incoming = _admitted_joined_reply(client, joined)
+    message = (unit * (size // len(unit) + 1))[:size]
+    assert len(message) == size
+    result = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply",
+        {"delivery_id": incoming["deliveries"][0]["delivery_id"], "message": message},
+        session=joined.session, turn=joined.turn,
+    ))
+    _assert_joined_peer_reply(client, joined, incoming, result, message)
+
+
+@pytest.mark.parametrize("message", [
+    pytest.param(" \tשלום 🌍\r\n", id="surrounding-whitespace"),
+    pytest.param(" " + ("e\u0301" * 8000)[:15998] + " ", id="max-whitespace-combining"),
+])
+def test_hook_mcp_reply_preserves_exact_text_e2e(client, joined_mcp_reply_context, message):
+    joined = joined_mcp_reply_context
+    ctx, incoming = _admitted_joined_reply(client, joined)
+    assert 0 < len(message) <= 16000
+    result = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply",
+        {"delivery_id": incoming["deliveries"][0]["delivery_id"], "message": message},
+        session=joined.session, turn=joined.turn,
+    ))
+    _assert_joined_peer_reply(client, joined, incoming, result, message)
+
+
+@pytest.mark.parametrize("scenario", [
+    "blank-session", "blank-turn", "unknown-session", "inactive",
+    "profile", "owned-config", "endpoint", "lookup-error", "missing", "duplicate",
+])
+@pytest.mark.parametrize("message", ["valid", None, "x" * 16001], ids=["valid", "null", "oversized"])
+def test_hook_mcp_reply_trusted_gates_precede_message_errors_e2e(
+    client, joined_mcp_reply_context, plugin_context, monkeypatch, scenario, message,
+):
+    joined = joined_mcp_reply_context
+    module, _, config = plugin_context
+    ctx, incoming = _admitted_joined_reply(client, joined)
+    session, turn = joined.session, joined.turn
+    expected = "Pallium MCP requires this host's trusted session and turn"
+    if scenario == "blank-session":
+        session = ""
+    elif scenario == "blank-turn":
+        turn = ""
+    elif scenario == "unknown-session":
+        session = "unknown_世界"
+        expected = "Pallium session is not registered by this host"
+    elif scenario == "inactive":
+        response = client.post("/relay/sessions/close", json={
+            "runtime": "hermes", "session_ref": joined.session, **SCOPE,
+        })
+        assert response.status_code == 200, response.text
+        expected = "Pallium current session is inactive or changed"
+    elif scenario == "profile":
+        ctx.profile_name = "changed-profile"
+    elif scenario == "owned-config":
+        config["plugins"]["entries"]["pallium-hermes-relay"]["settings"]["actor_ref"] = "changed-actor"
+    elif scenario == "endpoint":
+        for key, value in ctx.state.values.items():
+            if key.startswith("session:") and value.get("session_ref") == joined.session:
+                value["endpoint_id"] = "relay-session-" + "f" * 32
+        expected = "Pallium current session is inactive or changed"
+    else:
+        original_http = module._json_request
+
+        def lookup(base, method, path, **kwargs):
+            if path == "/relay/sessions":
+                if scenario == "lookup-error":
+                    raise OSError("test session lookup unavailable")
+                rows = original_http(base, method, path, **kwargs)
+                return [] if scenario == "missing" else rows * 2
+            return original_http(base, method, path, **kwargs)
+
+        monkeypatch.setattr(module, "_json_request", lookup)
+        expected = ("Pallium could not verify the current session" if scenario == "lookup-error"
+                    else "Pallium current session is inactive or changed")
+    result = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply",
+        {"delivery_id": incoming["deliveries"][0]["delivery_id"], "message": message},
+        session=session, turn=turn,
+    ))
+    assert result == {"error": expected}
+    assert result != _MCP_MESSAGE_ERROR
+    assert not joined.reply_calls
+    assert not any(path == "/relay/replies" for path, _body in joined.http_calls)
+    _assert_no_joined_peer_reply(client)
+
+
+@pytest.mark.parametrize("scenario", [
+    "wrong-turn", "other-session", "missing-delivery", "unknown-delivery", "overlong-delivery", "numeric-delivery",
+])
+@pytest.mark.parametrize("message", ["valid", ""], ids=["valid", "invalid"])
+def test_hook_mcp_reply_message_and_admission_errors_are_distinct_e2e(
+    client, joined_mcp_reply_context, scenario, message,
+):
+    joined = joined_mcp_reply_context
+    ctx, incoming = _admitted_joined_reply(client, joined)
+    args = {"delivery_id": incoming["deliveries"][0]["delivery_id"], "message": message}
+    session, turn = joined.session, joined.turn
+    if scenario == "wrong-turn":
+        turn = "other-turn"
+    elif scenario == "other-session":
+        session = "ses_世界"
+        ctx.hooks["pre_llm_call"](session_id=session, turn_id="other-seed", user_message="ordinary input")
+    elif scenario == "missing-delivery":
+        args.pop("delivery_id")
+    else:
+        args["delivery_id"] = {
+            "unknown-delivery": "relay-delivery-" + "f" * 32,
+            "overlong-delivery": "x" * 65, "numeric-delivery": 1,
+        }[scenario]
+    before = json.loads(json.dumps(_persisted_wake(ctx, session=joined.session)))
+    result = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", args, session=session, turn=turn,
+    ))
+    assert result == (_MCP_MESSAGE_ERROR if not message else _MCP_ADMISSION_ERROR)
+    assert _persisted_wake(ctx, session=joined.session) == before
+    assert not joined.reply_calls
+    _assert_no_joined_peer_reply(client)
+    recovery = "exact admission still available"
+    accepted = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply",
+        {"delivery_id": incoming["deliveries"][0]["delivery_id"], "message": recovery},
+        session=joined.session, turn=joined.turn,
+    ))
+    _assert_joined_peer_reply(client, joined, incoming, accepted, recovery)
+
+
+@pytest.mark.parametrize("malformed", [
+    pytest.param(None, id="null-args"), pytest.param([], id="list-args"),
+    pytest.param({"receipt": "model-forged"}, id="model-receipt"),
+    pytest.param({"session_id": "model-session"}, id="model-session"),
+    pytest.param({"turn_id": "model-turn"}, id="model-turn"),
+    pytest.param({"container_ref": "git:example.test/team/elsewhere"}, id="model-scope"),
+    pytest.param({"unexpected": True}, id="unknown-argument"),
+])
+def test_hook_mcp_reply_rejects_model_authority_and_bad_envelopes_e2e(
+    client, joined_mcp_reply_context, malformed,
+):
+    joined = joined_mcp_reply_context
+    ctx, incoming = _admitted_joined_reply(client, joined)
+    args = malformed
+    if isinstance(malformed, dict):
+        args = {"delivery_id": incoming["deliveries"][0]["delivery_id"], "message": "valid", **malformed}
+    result = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", args, session=joined.session, turn=joined.turn,
+    ))
+    assert result == {"error": "Pallium MCP received unsupported tool arguments"}
+    assert not joined.reply_calls
+    _assert_no_joined_peer_reply(client)
+    direct = json.loads(ctx.tools["pallium_relay_reply"](
+        {"delivery_id": incoming["deliveries"][0]["delivery_id"], "message": "valid"},
+        session_id=joined.session, turn_id=joined.turn,
+    ))
+    assert direct == {"error": "Pallium MCP requires this host's trusted session and turn"}
+    recovery = "host authority was not replaced"
+    accepted = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply",
+        {"delivery_id": incoming["deliveries"][0]["delivery_id"], "message": recovery},
+        session=joined.session, turn=joined.turn,
+    ))
+    _assert_joined_peer_reply(client, joined, incoming, accepted, recovery)
+
+
+@pytest.mark.parametrize("outcome", ["deny", "raise"])
+def test_hook_mcp_reply_preserves_host_authorization_e2e(client, joined_mcp_reply_context, outcome):
+    joined = joined_mcp_reply_context
+    ctx, incoming = _admitted_joined_reply(client, joined)
+    args = {"delivery_id": incoming["deliveries"][0]["delivery_id"], "message": "x" * 16000}
+
+    def authorize(actual):
+        assert actual is args
+        if outcome == "raise":
+            raise PermissionError("test host authorization refused")
+        return {"error": "host denied"}
+
+    def invoke():
+        return ctx.middleware["tool_execution"](
+            tool_name="pallium_relay_reply", args=args, next_call=authorize,
+            session_id=joined.session, turn_id=joined.turn,
+        )
+
+    if outcome == "raise":
+        with pytest.raises(PermissionError, match="authorization refused"):
+            invoke()
+    else:
+        assert invoke() == {"error": "host denied"}
+    assert not joined.reply_calls
+    _assert_no_joined_peer_reply(client)
+    assert json.loads(ctx.tools["pallium_relay_reply"](args, session_id=joined.session)) == {
+        "error": "Pallium MCP requires this host's trusted session and turn",
+    }
+    accepted = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", args, session=joined.session, turn=joined.turn,
+    ))
+    _assert_joined_peer_reply(client, joined, incoming, accepted, args["message"])
+
+
+@pytest.mark.parametrize("unsafe", [
+    pytest.param("content\x00", id="nul"),
+    pytest.param("content\u2028", id="line-separator"),
+    pytest.param("content\u2029", id="paragraph-separator"),
+])
+def test_hook_mcp_reply_keeps_downstream_content_validation_e2e(
+    client, joined_mcp_reply_context, unsafe,
+):
+    joined = joined_mcp_reply_context
+    ctx, incoming = _admitted_joined_reply(client, joined)
+    before = json.loads(json.dumps(_persisted_wake(ctx, session=joined.session)))
+    refused = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply",
+        {"delivery_id": incoming["deliveries"][0]["delivery_id"], "message": unsafe},
+        session=joined.session, turn=joined.turn,
+    ))
+    assert "error" in refused and refused != _MCP_MESSAGE_ERROR
+    assert joined.reply_calls == [(joined.session, joined.turn)]
+    assert _persisted_wake(ctx, session=joined.session) == before
+    requests = [body for path, body in joined.http_calls if path == "/relay/replies"]
+    assert len(requests) == 1 and requests[0]["payload"] == unsafe
+    response, = joined.reply_responses
+    assert response.status_code == 422
+    assert response.json()["detail"] == "payload contains unsafe control characters"
+    _assert_no_joined_peer_reply(client)
+    recovery = "valid content survives downstream refusal"
+    accepted = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply",
+        {"delivery_id": incoming["deliveries"][0]["delivery_id"], "message": recovery},
+        session=joined.session, turn=joined.turn,
+    ))
+    _assert_joined_peer_reply(client, joined, incoming, accepted, recovery, attempts=2)
+
+
+@pytest.mark.parametrize("failure", [
+    "unobserved", "before-ack", "lost-ack-response", "admission-persistence",
+])
+def test_hook_mcp_reply_requires_confirmed_admission_e2e(
+    client, joined_mcp_reply_context, plugin_context, failure,
+):
+    joined = joined_mcp_reply_context
+    module, _, _ = plugin_context
+    ctx, marker, incoming = _plugin_wake(client, joined.create)
+    if failure == "unobserved":
+        assert ctx.hooks["pre_llm_call"](
+            session_id=joined.session, turn_id=joined.turn, user_message=marker,
+        )["context"]
+    else:
+        original_http, original_set = module._json_request, ctx.state.set
+
+        def fail_ack(base, method, path, **kwargs):
+            if path == "/relay/deliveries/ack" and failure == "before-ack":
+                raise OSError("test ACK unavailable")
+            result = original_http(base, method, path, **kwargs)
+            if path == "/relay/deliveries/ack" and failure == "lost-ack-response":
+                raise OSError("test ACK response lost")
+            return result
+
+        def fail_persistence(key, value):
+            if key.startswith("wake:") and value.get("state") == "admitted":
+                raise OSError("test admission persistence unavailable")
+            return original_set(key, value)
+
+        with pytest.MonkeyPatch.context() as fault:
+            fault.setattr(module, "_json_request", fail_ack)
+            if failure == "admission-persistence":
+                fault.setattr(ctx.state, "set", fail_persistence)
+                with pytest.raises(OSError, match="admission persistence unavailable"):
+                    _admit_plugin_wake(ctx, marker, turn=joined.turn, session=joined.session)
+            else:
+                _admit_plugin_wake(ctx, marker, turn=joined.turn, session=joined.session)
+    assert _persisted_wake(ctx, session=joined.session)["state"] == "claimed"
+    delivery = _plugin_message_status(client, incoming)["deliveries"][0]
+    assert delivery["state"] == (
+        "delivered" if failure in {"lost-ack-response", "admission-persistence"} else "claimed"
+    )
+    assert delivery["attempts"] == 1
+    args = {"delivery_id": delivery["delivery_id"], "message": "é" * 2401}
+    refused = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", args, session=joined.session, turn=joined.turn,
+    ))
+    assert refused == _MCP_ADMISSION_ERROR
+    assert not joined.reply_calls
+    _assert_no_joined_peer_reply(client)
+    request = _admit_plugin_wake(ctx, marker, turn=joined.turn, session=joined.session)
+    _assert_joined_admission(client, joined, ctx, incoming, request)
+    accepted = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", args, session=joined.session, turn=joined.turn,
+    ))
+    _assert_joined_peer_reply(client, joined, incoming, accepted, args["message"])
+
+
+@pytest.mark.parametrize("failed_sibling", [False, True], ids=["all-admitted", "sibling-ack-failed"])
+def test_hook_mcp_reply_batch_receipts_remain_independent_e2e(
+    client, joined_mcp_reply_context, plugin_context, failed_sibling,
+):
+    joined = joined_mcp_reply_context
+    module, _, _ = plugin_context
+    ctx, marker, anchor = _plugin_wake(client, joined.create, payload="wake anchor")
+    endpoint = _persisted_wake(ctx, session=joined.session)["endpoint_id"]
+    siblings = [_plugin_send(client, endpoint, payload=f"sibling {index} → 東京") for index in range(2)]
+    last_id = siblings[-1]["deliveries"][0]["delivery_id"]
+    original_http = module._json_request
+
+    def fail_sibling_ack(base, method, path, **kwargs):
+        if path == "/relay/deliveries/ack" and kwargs["body"]["delivery_id"] == last_id:
+            raise OSError("test sibling ACK unavailable")
+        return original_http(base, method, path, **kwargs)
+
+    with pytest.MonkeyPatch.context() as fault:
+        if failed_sibling:
+            fault.setattr(module, "_json_request", fail_sibling_ack)
+        request = _admit_plugin_wake(ctx, marker, turn=joined.turn, session=joined.session)
+    _assert_joined_admission(client, joined, ctx, anchor, request)
+    for incoming in [anchor, *siblings]:
+        delivery = _plugin_message_status(client, incoming)["deliveries"][0]
+        expected = "claimed" if failed_sibling and delivery["delivery_id"] == last_id else "delivered"
+        assert delivery["state"] == expected
+    invalid = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", {"delivery_id": last_id, "message": "🌍" * 16001},
+        session=joined.session, turn=joined.turn,
+    ))
+    assert invalid == _MCP_MESSAGE_ERROR
+    assert not joined.reply_calls
+    if failed_sibling:
+        refused = json.loads(_mcp_tool(
+            ctx, "pallium_relay_reply", {"delivery_id": last_id, "message": "not admitted"},
+            session=joined.session, turn=joined.turn,
+        ))
+        assert refused == _MCP_ADMISSION_ERROR
+        assert not joined.reply_calls
+    order = [siblings[0], anchor] + ([] if failed_sibling else [siblings[1]])
+    expected_replies = {}
+    for index, incoming in enumerate(order):
+        message = "é" * 2401 if index == 0 else f"reply {index} → 世界"
+        delivery_id = incoming["deliveries"][0]["delivery_id"]
+        result = json.loads(_mcp_tool(
+            ctx, "pallium_relay_reply", {"delivery_id": delivery_id, "message": message},
+            session=joined.session, turn=joined.turn,
+        ))
+        assert "error" not in result and result.get("message_id"), result
+        expected_replies[incoming["message_id"]] = (result["message_id"], message)
+        assert _persisted_wake(ctx, session=joined.session)["state"] == (
+            "admitted" if index == 0 else "complete"
+        )
+        replay = json.loads(_mcp_tool(
+            ctx, "pallium_relay_reply", {"delivery_id": delivery_id, "message": message},
+            session=joined.session, turn=joined.turn,
+        ))
+        assert replay == _MCP_ADMISSION_ERROR
+    assert joined.reply_calls == [(joined.session, joined.turn)] * len(order)
+    posts = [body for path, body in joined.http_calls if path == "/relay/replies"]
+    assert len(posts) == len(order)
+    assert {body["delivery_id"] for body in posts} == {
+        incoming["deliveries"][0]["delivery_id"] for incoming in order
+    }
+    peer = client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "sender", "max_messages": 3,
+        "max_chars": 0, "max_response_chars": 0, **SCOPE,
+    })
+    assert peer.status_code == 200, peer.text
+    deliveries = peer.json()["deliveries"]
+    assert len(deliveries) == len(expected_replies)
+    assert {item["in_reply_to"]: (item["message_id"], item["payload"]) for item in deliveries} == expected_replies
+    assert len(ctx.injections) == 1
+
+
+@pytest.mark.parametrize("transition", ["ended", "unloaded", "reloaded", "replied"])
+def test_hook_mcp_reply_does_not_restore_retired_authority_e2e(
+    client, joined_mcp_reply_context, transition,
+):
+    joined = joined_mcp_reply_context
+    ctx, incoming = _admitted_joined_reply(client, joined)
+    args = {"delivery_id": incoming["deliveries"][0]["delivery_id"], "message": "x" * 16000}
+    expected = _MCP_ADMISSION_ERROR
+    if transition == "replied":
+        accepted = json.loads(_mcp_tool(
+            ctx, "pallium_relay_reply", args, session=joined.session, turn=joined.turn,
+        ))
+        _assert_joined_peer_reply(client, joined, incoming, accepted, args["message"])
+    elif transition == "ended":
+        ctx.hooks["on_session_end"](session_id=joined.session, turn_id=joined.turn)
+    else:
+        joined.unload(ctx)
+        expected = {"error": "Pallium MCP requires this host's trusted session and turn"}
+        if transition == "reloaded":
+            old = json.loads(_mcp_tool(
+                ctx, "pallium_relay_reply", args, session=joined.session, turn=joined.turn,
+            ))
+            assert old == expected
+            ctx = joined.create(ctx.state)
+            ctx.hooks["pre_llm_call"](
+                session_id=joined.session, turn_id="resumed", user_message="ordinary input",
+            )
+            assert len(joined.bridges) == 2
+            expected = _MCP_ADMISSION_ERROR
+    count = len(joined.reply_calls)
+    refused = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", args, session=joined.session, turn=joined.turn,
+    ))
+    assert refused == expected
+    assert len(joined.reply_calls) == count
+    assert len([path for path, _body in joined.http_calls if path == "/relay/replies"]) == count
+    _assert_no_joined_peer_reply(client)
+
+
+def test_hook_mcp_reply_new_turn_does_not_revive_old_delivery_e2e(client, joined_mcp_reply_context):
+    joined = joined_mcp_reply_context
+    ctx, incoming = _admitted_joined_reply(client, joined)
+    old_turn = joined.turn
+    old_args = {"delivery_id": incoming["deliveries"][0]["delivery_id"], "message": "x" * 16000}
+    ctx.hooks["on_session_end"](session_id=joined.session, turn_id=old_turn)
+    endpoint = _persisted_wake(ctx, session=joined.session)["endpoint_id"]
+    injection_count = len(ctx.injections)
+    next_incoming = _plugin_send(client, endpoint, payload="next turn → 東京")
+    _plugin_await(lambda: len(ctx.injections) > injection_count)
+    marker, target = ctx.injections[-1]
+    assert target == {"role": "user", "session_key": joined.session}
+    joined.turn = "wake-next"
+    request = _admit_plugin_wake(ctx, marker, turn=joined.turn, session=joined.session)
+    _assert_joined_admission(client, joined, ctx, next_incoming, request)
+    refused = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", old_args, session=joined.session, turn=old_turn,
+    ))
+    assert refused == _MCP_ADMISSION_ERROR
+    refused = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply", old_args, session=joined.session, turn=joined.turn,
+    ))
+    assert refused == _MCP_ADMISSION_ERROR
+    assert not joined.reply_calls
+    _assert_no_joined_peer_reply(client)
+    message = "🌍" * 16000
+    accepted = json.loads(_mcp_tool(
+        ctx, "pallium_relay_reply",
+        {"delivery_id": next_incoming["deliveries"][0]["delivery_id"], "message": message},
+        session=joined.session, turn=joined.turn,
+    ))
+    _assert_joined_peer_reply(client, joined, next_incoming, accepted, message)
 
 
 def test_default_server_registration_is_unchanged() -> None:

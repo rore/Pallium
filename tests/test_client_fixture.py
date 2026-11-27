@@ -10,7 +10,7 @@ from tests import conftest
     "failure", [None, "http", "wait", "service", "early_storage", "service_storage", "all"]
 )
 @pytest.mark.parametrize("shared_storage", [False, True])
-def test_client_fixture_attempts_all_cleanup_in_order(monkeypatch, failure, shared_storage):
+def test_client_fixture_attempts_all_cleanup_in_order(monkeypatch, request, failure, shared_storage):
     if shared_storage and failure == "service_storage":
         failure = "early_storage"
     order = ["http", "wait", "service", "early_storage"]
@@ -44,7 +44,7 @@ def test_client_fixture_attempts_all_cleanup_in_order(monkeypatch, failure, shar
     monkeypatch.setattr(app_main, "build_storage_provider", build_storage)
     monkeypatch.setattr(conftest, "create_app", create_app)
     monkeypatch.setattr(conftest, "TestClient", lambda actual_app: http)
-    fixture = conftest.client.__wrapped__("sqlite:///fixture.db", monkeypatch)
+    fixture = conftest.client.__wrapped__("sqlite:///fixture.db", monkeypatch, request)
     assert next(fixture) is http
     assert app_main.build_storage_provider is build_storage
     assert events == []

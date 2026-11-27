@@ -143,6 +143,132 @@ def test_ci_acquisition_diagnostic_preserves_http_refusal(monkeypatch, capsys, r
     assert ("relay acquisition failure: " in capsys.readouterr().err) == (ci == "true")
 
 
+@pytest.mark.parametrize(("ci", "platform", "suffix", "enabled"), [
+    ("true", "linux", "[semantic]", True),
+    ("true", "linux", "[native]", False),
+    ("true", "win32", "[semantic]", False),
+    ("false", "linux", "[semantic]", False),
+])
+def test_relay_acquisition_split_gated_to_one_linux_ci_node(monkeypatch, ci, platform, suffix, enabled):
+    import sys
+    from tests.codex_wake_setup import relay_acquisition_split_enabled
+
+    node = ("tests/test_cross_container_relay_e2e.py::"
+            "test_cross_container_reply_chain_and_bounded_backlog_continuation")
+    with monkeypatch.context() as gate:
+        gate.setenv("GITHUB_ACTIONS", ci)
+        gate.setattr(sys, "platform", platform)
+        observed = relay_acquisition_split_enabled(node + suffix)
+    assert observed is enabled
+
+
+@pytest.mark.parametrize("mode", ["setup", "restore-only", "partial-retry", "semantic", "missing-cpu", "overflow"])
+def test_relay_acquisition_split_brackets_real_sqlite(monkeypatch, capsys, tmp_path, mode):
+    from contextlib import contextmanager
+    import json
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.engine import Connection
+    from storage import sqlite_queue
+    from tests.codex_wake_setup import observe_relay_acquisition_failures
+
+    provider = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'private.sqlite'}")
+    engine = provider._relay_engine
+    pool, dialect = engine.pool, engine.dialect
+    session_type = provider._relay_session_factory.class_
+    other = create_engine("sqlite://")
+    original_methods = (session_type.connection, pool.connect, Connection.execute, dialect.do_execute)
+    error = ImmediateTransactionBusyError("private refusal", acquisition_stage="setup_deadline")
+    statements = []
+    calls = []
+
+    def log_statement(_conn, _cursor, statement, *_args):
+        statements.append(statement)
+
+    @contextmanager
+    def controlled_entry():
+        calls.append("enter")
+        attempts = 2 if mode == "partial-retry" else 1
+        for attempt in range(attempts):
+            with provider._relay_session_factory() as session:
+                conn = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+                with other.connect() as unrelated:
+                    unrelated.execute(text("PRAGMA busy_timeout=75"))
+                if mode != "restore-only" and attempt == 0:
+                    for _ in range(12 if mode == "overflow" else 1):
+                        conn.execute(text("PRAGMA busy_timeout=150"))
+                conn.execute(text("PRAGMA busy_timeout=15000"))
+        raise error
+        yield  # pragma: no cover
+
+    try:
+        with monkeypatch.context() as fixture:
+            observe_relay_acquisition_failures(provider, fixture, split=True)
+            with provider._begin_relay_immediate() as session:
+                assert session.execute(text("SELECT 1")).scalar_one() == 1
+        assert capsys.readouterr().err == ""
+        with monkeypatch.context() as fixture:
+            fixture.setattr(provider, "_begin_relay_immediate", controlled_entry)
+            observe_relay_acquisition_failures(provider, fixture, split=True)
+            if mode == "semantic":
+                fixture.setattr(sqlite_queue, "time", SimpleNamespace(**vars(time)))
+            if mode == "missing-cpu":
+                fixture.setattr(time, "thread_time_ns", lambda: None)
+            event.listen(engine, "before_cursor_execute", log_statement)
+            try:
+                count = 6 if mode == "setup" else 1
+                for _ in range(count):
+                    with pytest.raises(ImmediateTransactionBusyError) as refusal:
+                        with provider._begin_relay_immediate():
+                            pytest.fail("refused acquisition yielded")
+                    assert refusal.value is error
+            finally:
+                event.remove(engine, "before_cursor_execute", log_statement)
+    finally:
+        other.dispose()
+        provider.close()
+
+    assert original_methods == (session_type.connection, pool.connect, Connection.execute, dialect.do_execute)
+    expected_setup = [] if mode == "restore-only" else ["PRAGMA busy_timeout=150"] * (12 if mode == "overflow" else 1)
+    assert calls == ["enter"] * count
+    restores = ["PRAGMA busy_timeout=15000"] * (2 if mode == "partial-retry" else 1)
+    assert statements == (expected_setup + restores) * count
+    lines = capsys.readouterr().err.splitlines()
+    assert len(lines) == min(count, 4)
+    for line in lines:
+        assert "private" not in line and "PRAGMA" not in line
+        row = json.loads(line.removeprefix("relay acquisition failure: "))
+        if mode == "semantic":
+            assert "split_timing" not in row
+            continue
+        timing = row["split_timing"]
+        spans = timing["spans"]
+        assert timing["status"] == ("complete" if mode == "setup" else "incomplete")
+        assert timing["overflow"] is (mode == "overflow")
+        assert timing["attempts_paired"] is (mode in {"setup", "missing-cpu"})
+        assert len(spans) == {"restore-only": 2, "partial-retry": 6, "overflow": 12}.get(mode, 4)
+        assert [(span["phase"], span["parent"]) for span in spans[:2]] == [
+            ("session_connection", None), ("pool_checkout", 0),
+        ]
+        if mode == "restore-only":
+            assert timing["missing"] == ["setup_driver", "setup_execute"]
+        else:
+            assert timing["missing"] == []
+            assert [(span["phase"], span["parent"]) for span in spans[2:4]] == [
+                ("setup_execute", None), ("setup_driver", 2),
+            ]
+        assert all(span["wall_ns"] >= 0 for span in spans)
+        for span in spans:
+            if mode == "missing-cpu":
+                assert span["thread_cpu_ns"] is None
+            else:
+                assert span["thread_cpu_ns"] >= 0
+            if span["parent"] is not None:
+                parent = spans[span["parent"]]
+                assert span["wall_ns"] <= parent["wall_ns"]
+                if mode != "missing-cpu":
+                    assert span["thread_cpu_ns"] <= parent["thread_cpu_ns"]
+
+
 class TestWithRetryUnit:
     @pytest.fixture
     def storage(self, tmp_path):
