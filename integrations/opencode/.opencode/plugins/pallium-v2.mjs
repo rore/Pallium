@@ -120,7 +120,8 @@ export default {
       scope_generation: item.scopeGeneration, native_location: cwd, owner_id: ownerId,
     });
     const wakeRequest = (id, item, operation, extra = {}, onHttpError, request) => !live(id, item) || !scope(id) || item.endpointId == null ? null :
-      pallium.relayRequest("POST", "/relay/opencode/wake", { operation, ...base(id, item), ...extra },
+      pallium.relayRequest("POST", operation === "poll" ? "/relay/opencode/wake?include_activation=false" : "/relay/opencode/wake",
+        { operation, ...base(id, item), ...extra },
         request?.timeout ?? pallium.HTTP_TIMEOUT_MS, request?.signal ?? item.abort.signal, onHttpError, request?.onHeaders);
     const remember = (id, item, session) => {
       if (!live(id, item) || session?.runtime !== "opencode" || session.session_ref !== id || session.container_ref !== scope(id) ||

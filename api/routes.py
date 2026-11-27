@@ -1061,18 +1061,18 @@ def create_router(
         return await _with_relay_activation(await _relay_call("close_session", lambda: _relay().close_session(**request.model_dump())))
 
     @router.post("/relay/opencode/wake", response_model=RelayOpenCodeWakeResponse)
-    async def opencode_wake(request: RelayOpenCodeWakeRequest):
+    async def opencode_wake(request: RelayOpenCodeWakeRequest, include_activation: str | None = None):
         request_data = request.model_dump()
         if "max_messages" not in request.model_fields_set:
             request_data.pop("max_messages")
         wake_admission = request.operation == "poll"
-        return await _with_relay_activation(
-            await _relay_call(
-                "opencode_wake", lambda: _relay().opencode_wake(**request_data),
-                wake_admission=wake_admission,
-            ),
+        result = await _relay_call(
+            "opencode_wake", lambda: _relay().opencode_wake(**request_data),
             wake_admission=wake_admission,
         )
+        if wake_admission and include_activation == "false":
+            return result
+        return await _with_relay_activation(result, wake_admission=wake_admission)
 
     @router.get("/relay/sessions", response_model=list[RelaySessionResponse])
     async def relay_sessions(

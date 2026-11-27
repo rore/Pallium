@@ -13,7 +13,7 @@ import threading
 import time
 from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 import pytest
@@ -1106,7 +1106,7 @@ def _same_input_wake_context_journey(client, tmp_path, monkeypatch, relay_admiss
             raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
             body = json.loads(raw) if raw else None
             outage_response = (scenario.startswith("outage") and outage_active.is_set()
-                               and self.path == "/relay/opencode/wake" and body
+                                and urlsplit(self.path).path == "/relay/opencode/wake" and body
                                and body.get("operation") == "context")
             if self.path == "/fixture/bootstrap" and scenario == "bootstrap-restored":
                 hide_discovery = True
@@ -1683,7 +1683,8 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
             if service_unavailable.is_set():
                 self.send_error(503, "isolated test outage")
                 return
-            if self.path == "/relay/opencode/wake" and raw:
+            wake_request = urlsplit(self.path).path == "/relay/opencode/wake"
+            if wake_request and raw:
                 body = json.loads(raw)
                 if coalesced and body["operation"] == "poll" and terminal_reload_hold.is_set() and terminal_reload_ready.is_set():
                     assert terminal_reload_release.wait(30), "already-terminal reload gate not released"
@@ -1696,7 +1697,7 @@ def _released_native_journey(client, tmp_path, test_db_url, monkeypatch, *, boot
                 retirement_acks.append(json.loads(raw))
             response = relay_client[0].request(self.command, self.path, content=raw or None,
                                       headers={"Content-Type": "application/json"})
-            if coalesced and self.path == "/relay/opencode/wake":
+            if coalesced and wake_request:
                 body = json.loads(raw)
                 wake_responses.append({"request": body, "status": response.status_code, "response": response.json()})
                 if body["operation"] == "terminal" and response.is_success and terminal_reload_hold.is_set():
@@ -2675,7 +2676,7 @@ def test_capture_callbacks_retry_through_real_http_and_history(client, tmp_path)
             result = response.json()
             # Exercise the existing rebind envelope while source writes/readback
             # still cross production HTTP. This is not native host qualification.
-            if self.path in ("/relay/turn", "/relay/opencode/wake") and result.get("session"):
+            if urlsplit(self.path).path in ("/relay/turn", "/relay/opencode/wake") and result.get("session"):
                 result["session"]["scope_generation"] = generation[0]
             if body and response.is_success:
                 ingested.extend(zip(body, result))

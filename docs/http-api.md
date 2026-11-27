@@ -45,6 +45,10 @@ resolve that identity in another container. If no session exists in the requeste
 scope, it returns 200 with `session: null`, empty `deliveries`, `has_more: false`
 and `remaining_count: 0`. A delivery-bearing turn still requires a session, and
 `POST /relay/opencode/wake` retains its non-null session response.
+For `operation: "poll"`, the exact query `?include_activation=false` skips
+activation projection and returns `session.activation: null`. The poll still
+renews ownership and checks for pending work as usual. Other query values, other
+wake operations, and GET activation responses keep their existing behavior.
 
 ### Optional derived memory
 

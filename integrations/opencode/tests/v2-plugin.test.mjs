@@ -521,7 +521,7 @@ for (const batch of [false, true]) test(`V2 exact ${batch ? "batch" : "singleton
   globalThis.fetch = async (url, init) => {
     const u = new URL(url);
     const body = init?.body ? JSON.parse(init.body) : {};
-    calls.push({ path: u.pathname, body });
+    calls.push({ path: u.pathname, query: u.search, body });
     let result;
     if (u.pathname === "/relay/sessions") result = [relaySession];
     else if (u.pathname === "/relay/opencode/wake") {
@@ -532,7 +532,7 @@ for (const batch of [false, true]) test(`V2 exact ${batch ? "batch" : "singleton
         contextCount++;
         assert.equal(body.max_messages, 3);
       }
-      result = { session: relaySession, wake: { ...wake },
+      result = { session: { ...relaySession, activation: batch ? null : { behavior: "busy_queue" } }, wake: { ...wake },
         deliveries: body.operation !== "context" ? [] : contextCount > 1
           ? [{ ...delivery, state: "delivered", claim_token: undefined }] : batch ? [delivery, sibling] : [delivery],
         has_more: batch, remaining_count: batch ? 1 : 0,
@@ -583,6 +583,12 @@ for (const batch of [false, true]) test(`V2 exact ${batch ? "batch" : "singleton
     assert.equal(contextCount, 2);
     await dispose();
     assert.equal(calls.filter((c) => c.body.operation === "detach").length, 1);
+    const wakeCalls = calls.filter((c) => c.path === "/relay/opencode/wake");
+    assert.equal(wakeCalls.filter((c) => c.body.operation === "poll").length, 1);
+    for (const { query, body } of wakeCalls) {
+      assert.equal(query, body.operation === "poll" ? "?include_activation=false" : "");
+      assert.ok(!Object.hasOwn(body, "include_activation"));
+    }
   } finally { globalThis.fetch = oldFetch; }
 });
 
@@ -725,9 +731,9 @@ async function callerFixture(options = {}) {
   globalThis.setInterval = (fn) => { interval = fn; return { unref() {} }; };
   globalThis.clearInterval = () => {};
   globalThis.fetch = async (url, init) => {
-    const path = new URL(url).pathname;
+    const { pathname: path, search: query } = new URL(url);
     const body = init?.body ? JSON.parse(init.body) : {};
-    calls.push({ path, body, signal: init?.signal });
+    calls.push({ path, query, body, signal: init?.signal });
     if (body.operation) trace.push(body.operation);
     const intercepted = options.fetch ? await options.fetch(path, body, init) : undefined;
     if (intercepted !== undefined) return intercepted;
@@ -2236,7 +2242,11 @@ const terminals = (f) => f.calls.filter((c) => c.body.operation === "terminal");
 
 for (const outcome of ["succeeded", "failed", "interrupted"]) {
   test(`fresh supersession settles exact frozen generation: ${outcome}`, async () => {
-    const f = await callerFixture({ wake: snapshot({ admitted: true }), wait: async (history) => history.push(freshIdle(outcome)) });
+    const wake = snapshot({ admitted: true });
+    const f = await callerFixture({ wake, wait: async (history) => history.push(freshIdle(outcome)),
+      response: (_path, body) => body.operation === "poll" ?
+        { session: { ...relaySession, activation: outcome === "succeeded" ? null : { behavior: "busy_queue" } },
+          wake, deliveries: [] } : undefined });
     try {
       await observePrompt(f); // Real first observation before native preparation/promotion.
       f.history.push(freshUser());
@@ -2249,6 +2259,12 @@ for (const outcome of ["succeeded", "failed", "interrupted"]) {
       assert.deepEqual(f.native, { prompt: [], wait: 1, interrupt: 0 });
       assert.deepEqual(f.trace.slice(f.trace.lastIndexOf("wait") - 2),
         ["get", "raw", "wait", "get", "raw", "poll", "get", "raw", "terminal"], "canonical final raw ordering");
+      const polls = f.calls.filter((c) => c.body.operation === "poll");
+      assert.equal(polls.length, 2, "one scheduled poll and one fresh-witness poll");
+      for (const { query, body } of polls) {
+        assert.equal(query, "?include_activation=false");
+        assert.ok(!Object.hasOwn(body, "include_activation"));
+      }
       await f.tick();
       assert.equal(terminals(f).length, 1, "consumed proof cannot replay even before backend reconciliation");
     } finally { await f.close(); }
