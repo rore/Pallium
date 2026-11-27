@@ -20,6 +20,9 @@ explicit finite diagnostic modes retain their separate lifecycle. A legitimate l
 connection and actual request metadata during ordinary Relay activity. Caller
 metadata is provenance; it is never taken from model-supplied sender arguments.
 Source/channel/Desktop loss or service restart invalidates connection custody.
+`RetainedService` owns saved-registration decisions by named reason; resolved
+transport cleanup remains separate. Source closure invalidates remembered
+authority, and preserved registration never makes a spent attempt retryable.
 The private connection is scoped to the service's actual listening port. MCP
 must configure the matching loopback HTTP URL; remote services, URL credentials,
 path prefixes, queries and fragments cannot enroll a local wake connection.

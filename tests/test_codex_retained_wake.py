@@ -223,7 +223,7 @@ def test_terminal_invalidation_wins_over_inflight_diagnostic_publication(
     service, request, natives = retained
     assert service._process(request, service.source, 0, float("inf"))["status"] == "registered"
     client.app.state.codex_wake_registry.retained_service = service
-    service._drop(preserve_registration=True)
+    service._drop(reason="dispatch-failed", state_read_started=True, category="deadline")
     native = natives[-1]
     native_state = (len(native.writes), len(native.owners))
     entered, release, worker_release = threading.Event(), threading.Event(), threading.Event()
@@ -256,11 +256,13 @@ def test_terminal_invalidation_wins_over_inflight_diagnostic_publication(
     stop_thread = None
     try:
         assert worker_entered.wait(1)
-        original_clear = service._clear_registration
-        def clear_then_signal():
-            original_clear()
-            clear_completed.set()
-        monkeypatch.setattr(service, "_clear_registration", clear_then_signal)
+        original_transition = service._transition_registration
+        def transition_then_signal(reason, **kwargs):
+            outcome = original_transition(reason, **kwargs)
+            if reason == "stop":
+                clear_completed.set()
+            return outcome
+        monkeypatch.setattr(service, "_transition_registration", transition_then_signal)
         def stop_service():
             try:
                 service.stop()
@@ -354,7 +356,7 @@ def test_real_enrollment_lifecycle_is_visible_on_both_http_views(client, retaine
     assert registry.reservations() == durable_before and len(natives) == native_before
     assert len(natives[-1].writes) == writes_before and len(natives[-1].owners) == owners_before
 
-    service._drop(preserve_registration=True)
+    service._drop(reason="dispatch-failed", state_read_started=True, category="deadline")
     assert_state("retained_disconnected")
     continuity = service._process({**request, "sequence": 2, "continuity": None},
                                   service.source, 1, float("inf"))
@@ -371,7 +373,7 @@ def test_real_enrollment_lifecycle_is_visible_on_both_http_views(client, retaine
     service.source.gone = False
     assert service._process({**request, "sequence": 3}, service.source, 2, float("inf"))["status"] == "registered"
     assert_state("registered")
-    service._clear_registration()
+    service._transition_registration("endpoint-mismatch")
     assert_state("authority_cleared")
     service._drop()
     assert_state("released")
@@ -423,7 +425,7 @@ def test_dispatch_reopens_retained_registration_without_http_side_effects(client
     http, _, registry, service, desktop, send, _ = http_wake
     main_registry = client.app.state.codex_wake_registry
     main_registry.retained_service = service
-    service._drop(preserve_registration=True)
+    service._drop(reason="dispatch-failed", state_read_started=True, category="deadline")
     for path in ("/status", "/dashboard/api/relay/summary"):
         assert client.get(path).json()["relay_wake"]["native_enrollment"]["state"] == "retained_disconnected"
 
@@ -1202,14 +1204,42 @@ def test_archive_lookup_failure_after_partial_page_does_not_cache_absence(http_w
 
 
 @pytest.mark.parametrize("retained", ["archive"], indirect=True)
-def test_drop_clears_archive_capability_and_evidence(http_wake):
+@pytest.mark.parametrize("reason,failed_log", [
+    ("dispatch-failed", False),
+    ("unrecognized-private-東京", False),
+    ("unrecognized-private-東京", True),
+])
+def test_drop_clears_archive_capability_and_evidence(http_wake, monkeypatch, reason, failed_log):
     _, _, _, service, desktop, send, _ = http_wake
     desktop.archive_pages = {None: {"threads": [
         {"id": TARGET, "kind": "codex", "hostId": "local"}], "nextCursor": None}}
     send()
     assert service._archive_snapshot is not None
-    service._drop(preserve_registration=True)
+    messages, log_attempts = [], []
+    original_warning = bridge._log.warning
+    def decision_log(message, *args, **kwargs):
+        if message.startswith("codex_retained_registration_decision "):
+            log_attempts.append(True)
+            if failed_log:
+                raise RuntimeError("optional decision log failure")
+            messages.append(message % args)
+        return original_warning(message, *args, **kwargs)
+    monkeypatch.setattr(bridge._log, "warning", decision_log)
+    service._drop(reason=reason, state_read_started=True, category="deadline")
     assert service.archive_schema is None and service._archive_snapshot is None
+    assert service.custody is None and service.desktop is None
+    assert (service.retained_registration is not None) == (reason == "dispatch-failed")
+    assert log_attempts == [True]
+    if failed_log:
+        assert messages == []
+    else:
+        expected = ("reason=dispatch-failed outcome=preserved" if reason == "dispatch-failed"
+                    else "reason=unknown outcome=invalidated")
+        assert messages == ["codex_retained_registration_decision " + expected]
+        assert "unrecognized-private-東京" not in messages[0]
+    if reason != "dispatch-failed":
+        service._drop(reason=reason, state_read_started=True, category="deadline")
+        assert service.retained_registration is None and log_attempts == [True]
 
 
 @pytest.mark.parametrize("retained", ["archive"], indirect=True)

@@ -256,11 +256,21 @@ def test_exact_claim_real_http_recovers_only_known_busy_and_emits_acks_once(tmp_
             held.set()
             assert rejected.wait(5), "test must settle the controlled rejection"
     statuses, wire, preclaim = [], [], []
+    ack_responses = []
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args): pass
         def do_POST(self):
             raw = self.rfile.read(int(self.headers["Content-Length"]))
-            response = backend.post(self.path, json=json.loads(raw))
+            try:
+                response = backend.post(self.path, json=json.loads(raw))
+            except Exception as error:
+                if self.path == "/relay/deliveries/ack":
+                    ack_responses.append({"error_class": type(error).__name__[:64]})
+                    del ack_responses[:-2]
+                raise
+            if self.path == "/relay/deliveries/ack":
+                ack_responses.append({"status": response.status_code})
+                del ack_responses[:-2]
             if self.path == "/relay/turn":
                 statuses.append(response.status_code)
                 wire.append(raw)
@@ -302,7 +312,11 @@ def test_exact_claim_real_http_recovers_only_known_busy_and_emits_acks_once(tmp_
             assert admitted == [delivery]
         text, rendered = hook.format_relay(result["deliveries"])
         assert "Continue the review" in text and len(rendered) == 1 and rendered[0]["attempts"] == 1
-        assert hook.acknowledge_relay(rendered, container_ref=scope["container_ref"]) == rendered
+        assert hook.acknowledge_relay(rendered, container_ref=scope["container_ref"]) == rendered, json.dumps({
+            "ack_responses": ack_responses[-2:],
+            "response_state": "settled" if ack_responses else "unknown_or_unsettled",
+            "durable_state": "unknown; original readback follows confirmed ACK",
+        })[:600]
         final = backend.get("/relay/messages/"+message["message_id"], params=scope).json()["deliveries"][0]
         assert final["state"] == "delivered" and final["attempts"] == 1
     finally:

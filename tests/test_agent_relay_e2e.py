@@ -1435,7 +1435,8 @@ def test_relay_has_no_memory_retrieval_or_processing_side_effects(client, relay_
     assert after == before
 
 
-def test_maximum_message_and_identity_envelope_is_claimable(client):
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_maximum_message_and_identity_envelope_is_claimable(client, relay_admission_clock):
     sender = "s" * 255
     _turn(client, "claude-code", sender)
     _turn(client, "codex", "target")
@@ -1458,10 +1459,17 @@ def test_maximum_message_and_identity_envelope_is_claimable(client):
         in_reply_to=parent_id,
     )
     assert sent.status_code == 200
-    turn = client.post(
-        "/relay/turn",
-        json={"runtime": "codex", "session_ref": "target", "max_chars": 2400, **SCOPE},
-    )
+    from storage import sqlite_queue
+
+    storage = client.app.state.pallium_service._storage
+    native_time, native_begin = sqlite_queue.time, storage._begin_relay_immediate
+    with relay_admission_clock(storage, expected_admissions=1):
+        turn = client.post(
+            "/relay/turn",
+            json={"runtime": "codex", "session_ref": "target", "max_chars": 2400, **SCOPE},
+        )
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
     assert turn.status_code == 200
     claimed = turn.json()["deliveries"]
     assert [delivery["message_id"] for delivery in claimed] == [message_id]
@@ -2012,20 +2020,25 @@ def test_turn_response_budget_is_a_preclaim_guard_not_an_envelope_limit(client):
     assert [delivery["message_id"] for delivery in claimed] == [sent["message_id"]]
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize('runtime',['codex','claude-code','opencode','hermes'])
 def test_impossible_turn_response_budget_skips_candidate_work_and_preserves_claims(
-    client, relay_storage, monkeypatch, runtime,
+    client, relay_storage, monkeypatch, runtime, relay_admission_clock,
 ):
     from sqlalchemy import event
     from threading import local
+    from storage import sqlite_queue
     import storage.sqlite_relay as module
     from storage.sqlite_schema import RelayEndpointGenerationRecord
 
     current = datetime.now(timezone.utc).replace(microsecond=123456)
     original_now = module._now
     monkeypatch.setattr(module,'_now',lambda value=None: original_now(current if value is None else value))
-    _turn(client,'claude-code','budget-sender')
-    target = _turn(client,runtime,'budget-東京',title='"'*255,max_chars=1,max_response_chars=1)['session']
+    native_queue_time, native_begin = sqlite_queue.time, relay_storage._begin_relay_immediate
+    with relay_admission_clock(relay_storage, expected_admissions=2):
+        _turn(client,'claude-code','budget-sender')
+        target = _turn(client,runtime,'budget-東京',title='"'*255,max_chars=1,max_response_chars=1)['session']
+    assert sqlite_queue.time is native_queue_time and relay_storage._begin_relay_immediate == native_begin
     messages = [_send(client,'claude-code','budget-sender',target['endpoint_id'],
         '東京 🌍' if number == 0 else 'x'*(16000 if number == 1 else 32)).json() for number in range(10)]
     ids = [message['message_id'] for message in messages]

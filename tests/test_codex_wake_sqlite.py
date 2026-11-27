@@ -667,9 +667,10 @@ def test_http_committed_generation_preserves_current_authority_boundaries(
             assert final.json()['deliveries'][0]['state'] == 'delivered'
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
 @pytest.mark.parametrize('phase', ['preclaim', 'projection'])
 def test_http_fresh_authority_observation_does_not_wait_for_native_owner(
-    relay_store, tmp_path, monkeypatch, phase,
+    relay_store, tmp_path, monkeypatch, phase, relay_admission_clock,
 ):
     import sys
     import time
@@ -700,7 +701,15 @@ def test_http_fresh_authority_observation_does_not_wait_for_native_owner(
     relay, storage, _ = relay_store
     registry = _registry(relay, tmp_path / 'legacy')
     assert registry.initialize(old_owner_drained=True)
-    reservation = _reserve(registry, _send(relay))
+    from storage import sqlite_queue
+
+    native_time = sqlite_queue.time
+    native_begin = storage._begin_relay_immediate
+    with relay_admission_clock(storage, expected_admissions=3):
+        message = _send(relay)
+    assert sqlite_queue.time is native_time
+    assert storage._begin_relay_immediate == native_begin
+    reservation = _reserve(registry, message)
     captured, gate_errors = [], []
     entered, observed, held, release = (threading.Event() for _ in range(4))
     callback_release = threading.Event()
